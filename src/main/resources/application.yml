@@ -1,0 +1,14 @@
+server:
+  # 内网安全：默认仅本机访问；如需局域网共享，改绑 0.0.0.0 并自行保证网络隔离
+  address: 127.0.0.1
+  port: 8080
+
+spring:
+  application:
+    name: call-graph-analyzer
+  jackson:
+    default-property-inclusion: non_null
+
+logging:
+  level:
+    root: info

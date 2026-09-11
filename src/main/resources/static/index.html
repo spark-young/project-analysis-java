@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Java 方法调用链分析工具</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="header">
+    <div class="container">
+        <h1>Java 方法调用链分析工具</h1>
+        <p class="subtitle">静态分析 · 项目方法 + 依赖方法全链路 · JDK 方法已排除 · 本地路径 / Git 拉取 · 交易入口分析</p>
+    </div>
+</header>
+
+<main class="container">
+    <!-- 分析条件 -->
+    <section class="card">
+        <div class="source-tabs">
+            <button id="tabLocal" type="button" class="source-tab active">本地项目</button>
+            <button id="tabGit" type="button" class="source-tab">Git 仓库</button>
+        </div>
+
+        <div id="paneLocal" class="form-grid">
+            <div class="form-item span-2">
+                <label for="projectPath">项目路径 <span class="req">*</span></label>
+                <div class="input-group">
+                    <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（需已编译，或指向 .jar 文件）">
+                    <button id="btnInfo" type="button" class="btn ghost">检查</button>
+                </div>
+                <div id="projectInfo" class="hint"></div>
+            </div>
+        </div>
+
+        <div id="paneGit" class="form-grid" hidden>
+            <div class="form-item span-2">
+                <label for="repoUrl">仓库地址 <span class="req">*</span></label>
+                <div class="input-group">
+                    <input id="repoUrl" type="text" placeholder="例如 https://gitlab.example.com/group/repo.git">
+                    <button id="btnGitPrepare" type="button" class="btn primary">拉取并编译</button>
+                </div>
+                <div class="hint">GitLab / GitHub / 内网 Git 均可；工具自动克隆 → mvn compile → 扫描交易入口</div>
+            </div>
+            <div class="form-item">
+                <label for="gitBranch">分支 <span class="opt">（可选）</span></label>
+                <input id="gitBranch" type="text" placeholder="默认主分支">
+            </div>
+            <div class="form-item">
+                <label for="gitToken">访问 Token <span class="opt">（私有仓库填）</span></label>
+                <input id="gitToken" type="password" placeholder="PAT，公开仓库可不填">
+            </div>
+            <div class="form-item">
+                <label for="gitUsername">认证用户名 <span class="opt">（可选）</span></label>
+                <input id="gitUsername" type="text" placeholder="默认 github→token，其余→oauth2">
+            </div>
+            <div class="form-item span-2">
+                <div id="gitStatus" class="git-status" hidden></div>
+            </div>
+        </div>
+
+        <div class="form-grid form-grid-common">
+            <div class="form-item">
+                <label for="className">类名 <span class="opt">（手动分析时填）</span></label>
+                <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
+                <datalist id="classList"></datalist>
+                <div class="hint">支持自动补全；同名类需用全限定名</div>
+            </div>
+            <div class="form-item">
+                <label for="methodName">方法名 <span class="opt">（可选）</span></label>
+                <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
+                <div class="hint">重载方法会全部作为入口</div>
+            </div>
+            <div class="form-item">
+                <label for="maxDepth">分析深度</label>
+                <select id="maxDepth">
+                    <option value="5">5 层</option>
+                    <option value="10">10 层</option>
+                    <option value="15">15 层</option>
+                    <option value="20" selected>20 层（默认）</option>
+                    <option value="30">30 层</option>
+                </select>
+                <div class="hint">接口/抽象分派的实现层占一层</div>
+            </div>
+            <div class="form-item actions">
+                <button id="btnScanEntries" type="button" class="btn">扫描交易入口</button>
+                <button id="btnAnalyze" type="button" class="btn primary">开始分析</button>
+                <button id="btnExcel" type="button" class="btn" disabled>下载 Excel 报告</button>
+            </div>
+        </div>
+        <div id="errorBanner" class="error-banner" hidden></div>
+    </section>
+
+    <!-- 交易入口扫描 -->
+    <section id="entrySection" class="card" hidden>
+        <div class="result-head">
+            <div class="result-title">
+                交易入口 <span id="entryProjectName" class="entry-project-name"></span>
+            </div>
+            <div class="tree-controls">
+                <input id="entryFilter" type="text" class="entry-filter"
+                       placeholder="按 URL / 类名 / 方法名过滤">
+                <button id="btnEntryAll" type="button" class="btn small">全选</button>
+                <button id="btnEntryNone" type="button" class="btn small">全不选</button>
+            </div>
+        </div>
+        <div id="entryGroups" class="entry-groups"></div>
+        <div class="entry-actions">
+            <span id="entryCount" class="hint"></span>
+            <button id="btnAnalyzeEntries" type="button" class="btn primary">分析勾选入口</button>
+        </div>
+    </section>
+
+    <!-- 结果 -->
+    <section id="resultSection" class="card" hidden>
+        <div class="result-head">
+            <div class="result-title">
+                <span id="resultTitle"></span>
+            </div>
+            <div class="tree-controls">
+                <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
+                <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
+            </div>
+        </div>
+
+        <div id="statsBar" class="stats-bar"></div>
+        <div id="warnings" class="warnings" hidden></div>
+
+        <div class="legend">
+            <span class="badge source-project">项目</span>
+            <span class="badge source-dependency">依赖</span>
+            <span class="badge source-external">外部</span>
+            <span class="legend-sep">|</span>
+            <span class="badge cycle">♻ 环</span>
+            <span class="badge truncated">✂ 截断</span>
+            <span class="legend-hint">点击节点行展开 / 收起 · 悬停行点 🔎 搜索其调用链是否调用了某方法</span>
+        </div>
+
+        <div class="global-search">
+            <input id="globalSearchInput" type="text"
+                   placeholder="全局搜索：所有入口方法的调用链是否调用了某方法（如 buildRoots / ClassReader）">
+            <select id="globalSearchMode">
+                <option value="fuzzy">模糊</option>
+                <option value="exact">精确</option>
+            </select>
+            <button id="btnGlobalSearch" type="button" class="btn small">搜索</button>
+            <button id="btnGlobalSearchClear" type="button" class="btn small" title="清除高亮">清除</button>
+            <span id="globalSearchResult" class="search-result"></span>
+            <div id="globalSearchChips" class="search-chips"></div>
+        </div>
+
+        <div id="tree" class="tree"></div>
+    </section>
+</main>
+
+<div id="loading" class="loading-overlay" hidden>
+    <div class="loading-box">
+        <div class="spinner"></div>
+        <div id="loadingText">正在分析……</div>
+    </div>
+</div>
+
+<footer class="footer">
+    <div class="container">
+        内网工具 · 零出站网络 · 对被分析项目只读不执行 ·
+        <a href="https://asm.ow2.io/" target="_blank" rel="noopener">ASM</a> 字节码静态分析
+    </div>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
