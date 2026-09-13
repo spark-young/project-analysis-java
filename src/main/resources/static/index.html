@@ -120,10 +120,15 @@
             <div class="tree-controls">
                 <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
                 <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
+                <button id="btnTopMethods" type="button" class="btn small" disabled>高频方法 (Top 20)</button>
             </div>
         </div>
 
         <div id="statsBar" class="stats-bar"></div>
+        <div id="topMethodsPanel" class="card" hidden>
+            <div class="panel-head">高频被调方法 <span class="hint">点击方法行查看调用方与行号</span></div>
+            <div id="topMethodsList"></div>
+        </div>
         <div id="warnings" class="warnings" hidden></div>
 
         <div class="legend">

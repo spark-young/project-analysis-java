@@ -22,18 +22,92 @@ public class MavenCompileService {
 
     private static final long DEFAULT_TIMEOUT_MIN = 15;
     private static final int TAIL_MAX = 8000;
+    /** 遇到本地仓库锁冲突后的等待时间：给对方进程留出下载完成的时间，重试可直接命中缓存 */
+    private static final long LOCK_RETRY_WAIT_MS = 4000;
 
     public CompileResult compile(Path projectDir) {
-        return compile(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES);
+        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES);
     }
 
     public CompileResult compile(Path projectDir, long timeout, TimeUnit unit) {
+        return compileWithLockRetry(projectDir, timeout, unit);
+    }
+
+    /**
+     * 带"本地仓库锁冲突"自动重试的编译。
+     * 现象：多个 Maven 进程（例如本工具与用户本机 IDEA 的 Maven daemon）并发解析依赖、下载
+     * 同一 artifact 时，会产生 ".part.lock 拒绝访问(Access denied)" 错误——这是并发锁冲突，
+     * 不是代码问题。本工具自身是单线程串行编译，但无法阻止用户 IDEA 同时占用同一个本地仓库。
+     * 解决：失败结果若命中锁冲突特征，等待片刻（等对方下载完成）后清理残留的 .part 临时文件
+     * 再重试一次——重试时往往已能直接命中本地缓存，不再需要网络。
+     */
+    private CompileResult compileWithLockRetry(Path projectDir, long timeout, TimeUnit unit) {
+        CompileResult first = runCompile(projectDir, timeout, unit);
+        if (first.isSuccess() || !looksLikeRepoLock(first.getOutputTail())) {
+            return first;
+        }
+        try {
+            Thread.sleep(LOCK_RETRY_WAIT_MS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return first;
+        }
+        clearPartialArtifacts();
+        return runCompile(projectDir, timeout, unit);
+    }
+
+    /** 命中 Maven 本地仓库并发锁特征：出现 .part 文件 + 访问被拒 */
+    private static boolean looksLikeRepoLock(String output) {
+        if (output == null || output.isEmpty()) return false;
+        return output.contains(".part.lock") && output.contains("拒绝访问");
+    }
+
+    /** 清理本地仓库根目录下残留的 .part / .part.lock 临时下载文件（仅当能定位仓库目录时）。 */
+    private void clearPartialArtifacts() {
+        String repo = mavenRepoPath();
+        if (repo == null || repo.trim().isEmpty()) return;
+        File repoDir = new File(repo);
+        if (!repoDir.isDirectory()) return;
+        // 避免全盘递归过深，仅清理最近一次编译涉及的时间范围内的残留
+        long threshold = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(10);
+        try {
+            java.io.FileFilter filter = f -> {
+                String n = f.getName();
+                if (!(n.endsWith(".part") || n.endsWith(".part.lock"))) return false;
+                return f.lastModified() >= threshold;
+            };
+            // 先收集再删，避免遍历中并发修改
+            List<File> toDelete = new ArrayList<>();
+            index(java.nio.file.Paths.get(repo), filter, toDelete, 0);
+            for (File f : toDelete) {
+                if (!f.delete()) {
+                    f.deleteOnExit();
+                }
+            }
+        } catch (Exception ignore) {
+            // 清理失败不影响重试本身（mvn 对已存在文件会自行跳过）
+        }
+    }
+
+    private static void index(Path root, java.io.FileFilter filter, List<File> out, int depth) {
+        if (depth > 6) return;
+        File dir = root.toFile();
+        File[] children = dir.listFiles();
+        if (children == null) return;
+        for (File c : children) {
+            if (c.isDirectory()) {
+                index(c.toPath(), filter, out, depth + 1);
+            } else if (filter.accept(c)) {
+                out.add(c);
+            }
+        }
+    }
+
+    /** 单次实际执行 mvn 编译 */
+    private CompileResult runCompile(Path projectDir, long timeout, TimeUnit unit) {
         List<String> cmd = new ArrayList<>(Arrays.asList(mavenCommand(), "-B", "-DskipTests", "compile"));
         // 与本工具的仓库定位保持一致：显式覆盖时传给 mvn
-        String repoOverride = System.getProperty("callgraph.maven.repo");
-        if (repoOverride == null || repoOverride.trim().isEmpty()) {
-            repoOverride = System.getenv("CALLGRAPH_M2_REPO");
-        }
+        String repoOverride = mavenRepoPath();
         if (repoOverride != null && !repoOverride.trim().isEmpty()) {
             cmd.add(2, "-Dmaven.repo.local=" + repoOverride.trim());
         }
@@ -78,6 +152,15 @@ public class MavenCompileService {
             Thread.currentThread().interrupt();
             return CompileResult.failure("编译被中断");
         }
+    }
+
+    /** 定位 Maven 本地仓库路径：优先 callgraph 显式配置，否则调用者传入；无法确定时返回 null */
+    private String mavenRepoPath() {
+        String repoOverride = System.getProperty("callgraph.maven.repo");
+        if (repoOverride == null || repoOverride.trim().isEmpty()) {
+            repoOverride = System.getenv("CALLGRAPH_M2_REPO");
+        }
+        return (repoOverride == null || repoOverride.trim().isEmpty()) ? null : repoOverride.trim();
     }
 
     private static String mavenCommand() {

@@ -138,6 +138,36 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 }
 .stat-chip b { color: var(--text); margin-left: 4px; }
 
+/* ---------- 高频方法面板 ---------- */
+#topMethodsPanel { margin-bottom: 12px; }
+#topMethodsPanel .panel-head {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 10px;
+}
+#topMethodsPanel .panel-head .hint { font-weight: 400; margin-left: 8px; }
+.mf-item { margin-bottom: 8px; }
+.mf-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 6px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+}
+.mf-row:hover { background: #f1f5f9; }
+.mf-count { margin-left: auto; font-size: 12px; color: var(--text-dim); white-space: nowrap; }
+.mf-count b { color: #059669; margin: 0 2px; }
+.mf-callers { display: none; padding: 4px 10px 8px 22px; }
+.mf-caller {
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 2px 0;
+    font-family: ui-monospace, Consolas, monospace;
+}
+
 .warnings {
     margin-bottom: 12px;
     padding: 10px 14px;

@@ -16,6 +16,7 @@ public class AnalysisResult {
     private List<String> warnings = new ArrayList<>();
     private List<CallNode> roots = new ArrayList<>();
     private Stats stats = new Stats();
+    private List<MethodFrequency> methodFrequency = new ArrayList<>();
 
     public static class Stats {
         private int entryCount;
@@ -60,4 +61,6 @@ public class AnalysisResult {
     public void setRoots(List<CallNode> roots) { this.roots = roots; }
     public Stats getStats() { return stats; }
     public void setStats(Stats stats) { this.stats = stats; }
+    public List<MethodFrequency> getMethodFrequency() { return methodFrequency; }
+    public void setMethodFrequency(List<MethodFrequency> methodFrequency) { this.methodFrequency = methodFrequency; }
 }

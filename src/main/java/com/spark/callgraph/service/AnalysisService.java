@@ -9,9 +9,11 @@ import com.spark.callgraph.engine.model.CallNode;
 import com.spark.callgraph.engine.model.ClassInfo;
 import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.SourceType;
-import com.spark.callgraph.service.dto.AnalyzeRequest;
 import com.spark.callgraph.service.dto.AnalysisResult;
+import com.spark.callgraph.service.dto.AnalyzeRequest;
 import com.spark.callgraph.service.dto.EntryRef;
+import com.spark.callgraph.service.dto.MethodCaller;
+import com.spark.callgraph.service.dto.MethodFrequency;
 import com.spark.callgraph.service.dto.ProjectInfo;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -22,7 +24,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -37,6 +41,10 @@ public class AnalysisService {
     private static final long CACHE_TTL_MS = 5 * 60 * 1000;
     private static final int ACC_SYNTHETIC = 0x1000;
     private static final int ACC_BRIDGE = 0x0040;
+    /** 高频被调方法排行展示上限 */
+    private static final int DEFAULT_METHOD_TOP_N = 20;
+    /** 每个方法调用方捕获/展示上限 */
+    private static final int CALLER_CAPTURE_LIMIT = 20;
 
     /** 单槽缓存：同项目连续分析（树/Excel/类搜索）无需重建注册表 */
     private volatile CacheSlot cache;
@@ -279,20 +287,84 @@ public class AnalysisService {
         AnalysisResult.Stats stats = result.getStats();
         stats.setEntryCount(trees.size());
         stats.setDurationMs(durationMs);
+        Map<MethodKey, MethodAgg> agg = new HashMap<>();
         for (CallNode root : trees) {
-            count(root, stats);
+            collectStats(root, null, stats, agg);
+        }
+        // 去重后的独立方法数（map key 即全量独立方法，按 source 分类）
+        int project = 0, dep = 0, ext = 0;
+        for (MethodAgg a : agg.values()) {
+            switch (a.source) {
+                case PROJECT:     project++; break;
+                case DEPENDENCY:  dep++;     break;
+                default:          ext++;     break;
+            }
+        }
+        stats.setProjectMethods(project);
+        stats.setDependencyMethods(dep);
+        stats.setExternalMethods(ext);
+        result.setMethodFrequency(topFrequency(agg));
+    }
+
+    /** 一次 DFS 同时完成：总节点计数、截断标记、去重收集、入度(被调次数)、调用方与行号采集 */
+    private void collectStats(CallNode node, MethodKey caller, AnalysisResult.Stats stats,
+                              Map<MethodKey, MethodAgg> agg) {
+        stats.setTotalNodes(stats.getTotalNodes() + 1);
+        if (node.isTruncated()) stats.setTruncated(true);
+        MethodAgg a = agg.computeIfAbsent(node.getMethod(), k -> new MethodAgg());
+        if (a.source == null) a.source = node.getSource();
+        if (caller != null) {
+            a.callCount++;
+            if (a.callers.size() < CALLER_CAPTURE_LIMIT) {
+                a.callers.add(new CallerInfo(caller, node.getLine()));
+            }
+        }
+        for (CallNode c : node.getChildren()) {
+            collectStats(c, node.getMethod(), stats, agg);
         }
     }
 
-    private void count(CallNode node, AnalysisResult.Stats stats) {
-        stats.setTotalNodes(stats.getTotalNodes() + 1);
-        switch (node.getSource()) {
-            case PROJECT: stats.setProjectMethods(stats.getProjectMethods() + 1); break;
-            case DEPENDENCY: stats.setDependencyMethods(stats.getDependencyMethods() + 1); break;
-            default: stats.setExternalMethods(stats.getExternalMethods() + 1); break;
+    /** 构建"高频被调方法"排行：被调次数降序，同次数按标识稳定序，截取 Top N */
+    private List<MethodFrequency> topFrequency(Map<MethodKey, MethodAgg> agg) {
+        return agg.entrySet().stream()
+                .filter(e -> e.getValue().callCount > 0)
+                .sorted((a, b) -> {
+                    int r = Integer.compare(b.getValue().callCount, a.getValue().callCount);
+                    return r != 0 ? r : a.getKey().getIdentifier().compareTo(b.getKey().getIdentifier());
+                })
+                .limit(DEFAULT_METHOD_TOP_N)
+                .map(e -> toFrequency(e.getKey(), e.getValue()))
+                .collect(Collectors.toList());
+    }
+
+    private MethodFrequency toFrequency(MethodKey method, MethodAgg a) {
+        MethodFrequency f = new MethodFrequency();
+        f.setMethod(method.getIdentifier());
+        f.setSource(a.source.name());
+        f.setCallCount(a.callCount);
+        f.setCallers(a.callers.stream().map(ci -> {
+            MethodCaller mc = new MethodCaller();
+            mc.setCaller(ci.caller.getIdentifier());
+            mc.setLine(ci.line);
+            return mc;
+        }).collect(Collectors.toList()));
+        return f;
+    }
+
+    /** 统计收集器：去重方法结构（MethodKey 引用 + 入度 + 调用方集合） */
+    private static final class MethodAgg {
+        final List<CallerInfo> callers = new ArrayList<>();
+        int callCount;      // 入度：被调次数（根方法为 0，不进排行）
+        SourceType source;  // 首次出现时的来源（owner 固定，source 稳定）
+    }
+
+    private static final class CallerInfo {
+        final MethodKey caller; // 调用方
+        final int line;         // 调用处行号，未知 -1
+        CallerInfo(MethodKey caller, int line) {
+            this.caller = caller;
+            this.line = line;
         }
-        if (node.isTruncated()) stats.setTruncated(true);
-        for (CallNode c : node.getChildren()) count(c, stats);
     }
 
     private int countClassFiles(ProjectLayout layout) {

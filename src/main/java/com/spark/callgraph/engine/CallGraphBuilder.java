@@ -25,11 +25,15 @@ public final class CallGraphBuilder {
         this.registry = registry;
     }
 
+    /**
+     * 为每个入口方法分配独立的节点预算。
+     * 注意：不能用同一个 budget 数组串给所有入口——否则第一个大调用树会占光全部 MAX_NODES，
+     * 导致后续入口一步入就预算耗尽、只剩孤根节点（Excel 里"只有第一个方法有链、其余为空"）。
+     */
     public List<CallNode> buildRoots(List<MethodKey> roots, int maxDepth, int maxNodes) {
         List<CallNode> out = new ArrayList<>();
-        int[] budget = {maxNodes};
         for (MethodKey root : roots) {
-            out.add(build(root, maxDepth, budget));
+            out.add(build(root, maxDepth, new int[]{maxNodes}));
         }
         return out;
     }

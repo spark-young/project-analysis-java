@@ -31,6 +31,23 @@ class GitPrepareServiceTest {
         }
     }
 
+    /** javac 编译桩：可记录收到的源码目录，可模拟成功/失败 */
+    static class StubJavacService extends JavacCompileService {
+        Path srcDir;
+        boolean fail;
+
+        @Override
+        public CompileResult compile(Path srcRoot, Path buildRoot) {
+            this.srcDir = srcRoot;
+            try {
+                java.nio.file.Files.createDirectories(buildRoot.resolve("classes"));
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+            return fail ? CompileResult.failure("模拟 javac 编译失败") : CompileResult.success();
+        }
+    }
+
     private Path remoteWithProject() throws Exception {
         Path work = Files.createDirectories(temp.resolve("src"));
         Files.write(work.resolve("pom.xml"), "<project/>".getBytes());
@@ -55,14 +72,11 @@ class GitPrepareServiceTest {
     }
 
     private GitPrepareService service(StubCompileService stub) {
-        GitPrepareService svc = new GitPrepareService(new GitCloneService(), stub) {
-            @Override
-            protected Path createWorkDir() throws java.io.IOException {
-                Path dir = Files.createTempDirectory(temp, "git-");
-                return dir;
-            }
-        };
-        return svc;
+        return service(stub, new StubJavacService());
+    }
+
+    private GitPrepareService service(StubCompileService stub, StubJavacService javac) {
+        return new GitPrepareService(new GitCloneService(), stub, javac, temp.toString());
     }
 
     private GitPrepareStatus awaitTerminal(GitPrepareService svc, String jobId) throws InterruptedException {
@@ -143,5 +157,60 @@ class GitPrepareServiceTest {
                 GitPrepareService.repoDisplayName("file:///X:/work/remote.git"));
         assertEquals("git-project",
                 GitPrepareService.repoDisplayName("  "));
+    }
+
+    /** 制造一个"纯源码、无 pom/build.gradle"的远端正则仓库 */
+    private Path remoteWithPlainJava() throws Exception {
+        Path work = Files.createDirectories(temp.resolve("plainsrc"));
+        Path javaDir = work.resolve("src/com/demo");
+        Files.createDirectories(javaDir);
+        Files.write(javaDir.resolve("Hello.java"),
+                "package com.demo; public class Hello { public void hi(){} }".getBytes());
+        try (Git git = Git.init().setDirectory(work.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("init")
+                    .setAuthor("t", "t@t.com").setCommitter("t", "t@t.com").call();
+        }
+        Path bare = temp.resolve("plain-remote.git");
+        try (Git ignored = Git.init().setBare(true).setDirectory(bare.toFile()).call()) { }
+        try (Git git = Git.open(work.toFile())) {
+            git.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call();
+            git.push().setRemote("origin").setPushAll().call();
+        }
+        return bare;
+    }
+
+    @Test
+    void test_prepare_plainJavaSource_compiledByJavac() throws Exception {
+        Path bare = remoteWithPlainJava();
+        StubCompileService stub = new StubCompileService();
+        StubJavacService javac = new StubJavacService();
+        GitPrepareService svc = service(stub, javac);
+
+        GitPrepareStatus s = svc.prepare(request(bare.toUri().toString()));
+
+        GitPrepareStatus done = awaitTerminal(svc, s.getJobId());
+        assertEquals("DONE", done.getStatus(), done.getMessage());
+        // javac 编译收到克隆目录，且未走 mvn 编译
+        assertNotNull(javac.srcDir, "纯源码工程应交给 javac 编译");
+        assertNull(stub.compiledDir, "纯源码工程不应走 mvn compile");
+        // 产物目录即项目根目录（build/classes 已被桩创建）
+        assertTrue(Files.isDirectory(Paths.get(done.getProjectPath()).resolve("classes")),
+                "projectPath 应指向含 classes 的产物目录: " + done.getProjectPath());
+    }
+
+    @Test
+    void test_prepare_plainJava_javacFailure() throws Exception {
+        Path bare = remoteWithPlainJava();
+        StubJavacService javac = new StubJavacService();
+        javac.fail = true;
+        GitPrepareService svc = service(new StubCompileService(), javac);
+
+        GitPrepareStatus s = svc.prepare(request(bare.toUri().toString()));
+
+        GitPrepareStatus failed = awaitTerminal(svc, s.getJobId());
+        assertEquals("FAILED", failed.getStatus());
+        assertTrue(failed.getMessage().contains("模拟 javac 编译失败"),
+                "应透传 javac 编译失败信息: " + failed.getMessage());
     }
 }

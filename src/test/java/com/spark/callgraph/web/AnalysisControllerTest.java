@@ -61,7 +61,11 @@ class AnalysisControllerTest {
                 .andExpect(jsonPath("$.stats.totalNodes").value(
                         org.hamcrest.Matchers.greaterThan(10)))
                 .andExpect(jsonPath("$.stats.projectMethods").value(
-                        org.hamcrest.Matchers.greaterThan(5)));
+                        org.hamcrest.Matchers.greaterThan(5)))
+                // 高频排行存在、非空、被调次数为正
+                .andExpect(jsonPath("$.methodFrequency").isNotEmpty())
+                .andExpect(jsonPath("$.methodFrequency[0].callCount")
+                        .value(org.hamcrest.Matchers.greaterThan(0)));
     }
 
     @Test

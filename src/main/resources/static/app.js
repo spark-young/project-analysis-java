@@ -41,6 +41,9 @@
         tree: $('#tree'),
         btnExpandAll: $('#btnExpandAll'),
         btnCollapseAll: $('#btnCollapseAll'),
+        btnTopMethods: $('#btnTopMethods'),
+        topMethodsPanel: $('#topMethodsPanel'),
+        topMethodsList: $('#topMethodsList'),
         globalSearchInput: $('#globalSearchInput'),
         globalSearchMode: $('#globalSearchMode'),
         btnGlobalSearch: $('#btnGlobalSearch'),
@@ -130,7 +133,6 @@
             showError('请先点击"拉取并编译"完成 Git 项目准备'); return false;
         }
         if (!currentProjectPath()) { showError('请填写项目路径'); return false; }
-        if (!els.className.value.trim()) { showError('请填写类名'); return false; }
         return true;
     }
 
@@ -183,14 +185,43 @@
     els.btnAnalyze.addEventListener('click', async () => {
         clearError();
         if (!validateForm()) return;
-        showLoading('正在索引项目与依赖……');
-        els.resultSection.hidden = true;
+        if (els.className.value.trim()) {
+            // 手动模式：指定类名（方法名可选）分析
+            showLoading('正在索引项目与依赖……');
+            els.resultSection.hidden = true;
+            try {
+                const req = buildRequest();
+                const result = await postJson('/api/analyze', req);
+                currentResult = result;
+                currentRequest = req;
+                renderResult(result);
+            } catch (e) {
+                showError(e.message);
+            } finally {
+                hideLoading();
+            }
+            return;
+        }
+
+        // 免类名模式：自动扫描全部交易入口并分析
+        const path = currentProjectPath();
+        showLoading('正在扫描交易入口（REST / Dubbo / ElasticJob / main）……');
         try {
-            const req = buildRequest();
-            const result = await postJson('/api/analyze', req);
-            currentResult = result;
-            currentRequest = req;
-            renderResult(result);
+            const scan = await postJson('/api/scan/entries', { projectPath: path });
+            const allEntryItems = (scan.groups || []).flatMap((g) => g.entries || []);
+            if (allEntryItems.length === 0) {
+                // 引导用户
+                els.entrySection.hidden = false;
+                els.entryGroups.innerHTML =
+                    '<div class="hint">未发现交易入口（REST / Dubbo / ElasticJob / main）。'
+                    + '你仍然可以：1) 在上方"类名"处手动填一个类再点"开始分析"；'
+                    + '2) 若这是普通无框架工程，建议填具体的类与方法名分析。</div>';
+                showError('未发现可自动分析的交易入口');
+                return;
+            }
+            // 复用勾选收集逻辑：把全部入口当作"已勾选"传过去（免类名自动全量分析）
+            const checked = allEntryItems.map((dto) => ({ dto }));
+            await analyzeCheckedEntries(checked);
         } catch (e) {
             showError(e.message);
         } finally {
@@ -377,6 +408,38 @@
         els.entrySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    function collectCheckedEntries() {
+        return entryItems.filter((i) => i.checkEl.checked);
+    }
+
+    function buildEntryRequest(checked) {
+        return {
+            projectPath: currentProjectPath(),
+            maxDepth: parseInt(els.maxDepth.value, 10),
+            entries: checked.map((i) => ({
+                className: i.dto.className,
+                methodName: i.dto.methodName,
+                methodDescriptor: i.dto.methodDescriptor,
+            })),
+        };
+    }
+
+    async function analyzeCheckedEntries(checked) {
+        const req = buildEntryRequest(checked);
+        showLoading('正在分析 ' + checked.length + ' 个入口的调用链……');
+        els.resultSection.hidden = true;
+        try {
+            const result = await postJson('/api/analyze', req);
+            currentResult = result;
+            currentRequest = req;
+            renderResult(result);
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            hideLoading();
+        }
+    }
+
     function updateEntryCount() {
         const checked = entryItems.filter((i) => i.checkEl.checked).length;
         els.entryCount.textContent = '已勾选 ' + checked + ' / ' + entryItems.length + ' 个入口';
@@ -405,29 +468,9 @@
 
     els.btnAnalyzeEntries.addEventListener('click', async () => {
         clearError();
-        const checked = entryItems.filter((i) => i.checkEl.checked);
+        const checked = collectCheckedEntries();
         if (checked.length === 0) { showError('请至少勾选一个交易入口'); return; }
-        const req = {
-            projectPath: currentProjectPath(),
-            maxDepth: parseInt(els.maxDepth.value, 10),
-            entries: checked.map((i) => ({
-                className: i.dto.className,
-                methodName: i.dto.methodName,
-                methodDescriptor: i.dto.methodDescriptor,
-            })),
-        };
-        showLoading('正在分析 ' + checked.length + ' 个入口的调用链……');
-        els.resultSection.hidden = true;
-        try {
-            const result = await postJson('/api/analyze', req);
-            currentResult = result;
-            currentRequest = req;
-            renderResult(result);
-        } catch (e) {
-            showError(e.message);
-        } finally {
-            hideLoading();
-        }
+        await analyzeCheckedEntries(checked);
     });
 
     // ------------------------------------------------------------------
@@ -487,6 +530,7 @@
             : '交易入口分析 · ' + result.stats.entryCount + ' 个入口';
         renderStats(result.stats);
         renderWarnings(result);
+        renderTopMethods(result);
         expandFns = [];
         nodeRegistry.clear();
         clearSearchHits();
@@ -513,6 +557,51 @@
                 ? '<span class="stat-chip" style="color:#b91c1c;border-color:#fecaca">结果已截断（深度/节点上限）</span>'
                 : '');
     }
+
+    // ------------------------------------------------------------------
+    // 高频被调方法面板：展示被调次数 Top N + 每个方法的调用方列表
+    // ------------------------------------------------------------------
+
+    function renderTopMethods(result) {
+        const list = result.methodFrequency || [];
+        els.btnTopMethods.disabled = list.length === 0;
+        els.topMethodsPanel.hidden = true;
+        if (list.length === 0) {
+            els.topMethodsList.innerHTML = '';
+            return;
+        }
+        els.topMethodsList.innerHTML = list.map((item, idx) => {
+            const callerRows = (item.callers || [])
+                .map((c) => '<div class="mf-caller">↳ ' + escapeHtml(c.caller)
+                    + (c.line && c.line > 0 ? ' <span class="line-no">L' + c.line + '</span>' : '')
+                    + '</div>')
+                .join('');
+            return '<div class="mf-item">'
+                + '<div class="mf-row"><b>' + (idx + 1) + '.</b> '
+                + '<span class="class">' + escapeHtml(item.method) + '</span>'
+                + badge('source-' + (item.source || '').toLowerCase(),
+                    SOURCE_LABEL[item.source] || item.source)
+                + '<span class="mf-count">被调 <b>' + item.callCount + '</b> 次</span>'
+                + '</div>'
+                + '<div class="mf-callers" data-open="0">' + callerRows + '</div>'
+                + '</div>';
+        }).join('');
+    }
+
+    els.btnTopMethods.addEventListener('click', () => {
+        els.topMethodsPanel.hidden = !els.topMethodsPanel.hidden;
+        if (!els.topMethodsPanel.hidden) {
+            // 点击方法行展开/收起其调用方列表
+            els.topMethodsList.querySelectorAll('.mf-row').forEach((row) => {
+                row.addEventListener('click', () => {
+                    const callers = row.parentElement.querySelector('.mf-callers');
+                    const open = callers.dataset.open === '1';
+                    callers.dataset.open = open ? '0' : '1';
+                    callers.style.display = open ? 'none' : 'block';
+                });
+            });
+        }
+    });
 
     function renderWarnings(result) {
         const items = [];
