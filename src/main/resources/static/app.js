@@ -41,10 +41,14 @@
         methodName: $('#methodName'),
         maxDepth: $('#maxDepth'),
         btnScanEntries: $('#btnScanEntries'),
-        btnAnalyze: $('#btnAnalyze'),
+        btnAnalyzeAuto: $('#btnAnalyzeAuto'),
+        btnAnalyzeManual: $('#btnAnalyzeManual'),
         btnExcel: $('#btnExcel'),
         errorBanner: $('#errorBanner'),
         entrySection: $('#entrySection'),
+        entryScanProgress: $('#entryScanProgress'),
+        entryScanProgressText: $('#entryScanProgressText'),
+        entryScanProgressBar: $('#entryScanProgressBar'),
         entryProjectName: $('#entryProjectName'),
         entryFilter: $('#entryFilter'),
         btnEntryAll: $('#btnEntryAll'),
@@ -150,13 +154,33 @@
                    : (p.createdAt ? new Date(p.createdAt).toLocaleString() : '');
         let extraInfo = '';
         if (p.type === 'GIT' && p.gitUrl) extraInfo = '<div class="pc-path">🔗 ' + escapeHtml(p.gitUrl) + '</div>';
-        return '<div class="project-card">'
+
+        // 状态徽章
+        let statusBadge = '';
+        const cs = p.changeStatus || 'UP_TO_DATE';
+        const hint = p.changeHint || '';
+        const statusConfig = {
+            UP_TO_DATE:     { cls: 'status-ok',    icon: '✓', label: '已就绪' },
+            NEEDS_COMPILE:  { cls: 'status-warn',  icon: '⚠', label: '需编译' },
+            NEEDS_ANALYZE:  { cls: 'status-info',  icon: '⚡', label: '待分析' },
+            MISSING:        { cls: 'status-bad',   icon: '✗', label: '已丢失' },
+            ERROR:          { cls: 'status-bad',   icon: '✗', label: '异常' }
+        };
+        const cfg = statusConfig[cs] || statusConfig.UP_TO_DATE;
+        statusBadge = '<span class="pc-status ' + cfg.cls + '" title="' + escapeHtml(hint) + '">'
+            + cfg.icon + ' ' + cfg.label + '</span>';
+
+        const cardClass = cs === 'MISSING' ? 'project-card card-missing' : 'project-card';
+
+        return '<div class="' + cardClass + '">'
             + '<div class="pc-head">'
             + '<span class="pc-type ' + typeLabel + '">' + typeLabel + '</span>'
+            + statusBadge
             + '<span class="pc-name">' + escapeHtml(p.name || '(未命名)') + '</span>'
             + '</div>'
             + '<div class="pc-path">📁 ' + escapeHtml(p.projectPath || '') + '</div>'
             + extraInfo
+            + (hint && cs !== 'UP_TO_DATE' ? '<div class="pc-hint">' + escapeHtml(hint) + '</div>' : '')
             + '<div class="pc-meta"><span>' + escapeHtml(time) + '</span>'
             + '<span class="hint">id: ' + escapeHtml(p.id ? p.id.slice(0, 8) : '') + '</span></div>'
             + '<div class="pc-actions">'
@@ -322,6 +346,15 @@
         return data;
     }
 
+    async function fetchJson(url) {
+        const resp = await fetch(url);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
+        }
+        return data;
+    }
+
     function buildRequest(skipCache) {
         return {
             projectPath: currentProjectPath(),
@@ -386,46 +419,49 @@
     // 分析
     // ------------------------------------------------------------------
 
-    els.btnAnalyze.addEventListener('click', async () => {
+    // 路径 A：一键扫描全部入口 + 全量分析
+    els.btnAnalyzeAuto.addEventListener('click', async () => {
         clearError();
         if (!validateForm()) return;
-        if (els.className.value.trim()) {
-            // 手动模式：指定类名（方法名可选）分析
-            showLoading('正在索引项目与依赖……');
-            els.resultSection.hidden = true;
-            try {
-                const req = buildRequest(false);
-                const result = await postJson('/api/analyze', req);
-                currentResult = result;
-                currentRequest = req;
-                renderResult(result);
-            } catch (e) {
-                showError(e.message);
-            } finally {
-                hideLoading();
-            }
-            return;
-        }
-
-        // 免类名模式：自动扫描全部交易入口并分析
         const path = currentProjectPath();
         showLoading('正在扫描交易入口（REST / Dubbo / ElasticJob / main）……');
         try {
             const scan = await postJson('/api/scan/entries', { projectPath: path });
             const allEntryItems = (scan.groups || []).flatMap((g) => g.entries || []);
             if (allEntryItems.length === 0) {
-                // 引导用户
                 els.entrySection.hidden = false;
                 els.entryGroups.innerHTML =
                     '<div class="hint">未发现交易入口（REST / Dubbo / ElasticJob / main）。'
-                    + '你仍然可以：1) 在上方"类名"处手动填一个类再点"开始分析"；'
-                    + '2) 若这是普通无框架工程，建议填具体的类与方法名分析。</div>';
+                    + '你可以走"路径 B"手动填类名分析；'
+                    + '也可以点击"扫描交易入口"看看有哪些可选。</div>';
                 showError('未发现可自动分析的交易入口');
                 return;
             }
-            // 复用勾选收集逻辑：把全部入口当作"已勾选"传过去（免类名自动全量分析）
             const checked = allEntryItems.map((dto) => ({ dto }));
             await analyzeCheckedEntries(checked);
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            hideLoading();
+        }
+    });
+
+    // 路径 B：只分析指定类（必须填了类名）
+    els.btnAnalyzeManual.addEventListener('click', async () => {
+        clearError();
+        if (!validateForm()) return;
+        if (!els.className.value.trim()) {
+            showError('请先填类名，或改用路径 A 一键扫描全量分析');
+            return;
+        }
+        showLoading('正在索引项目与依赖……');
+        els.resultSection.hidden = true;
+        try {
+            const req = buildRequest(false);
+            const result = await postJson('/api/analyze', req);
+            currentResult = result;
+            currentRequest = req;
+            renderResult(result);
         } catch (e) {
             showError(e.message);
         } finally {
@@ -451,7 +487,15 @@
             + (st.status === 'DONE' ? 'ok' : st.status === 'FAILED' ? 'err' : 'busy');
         let html = '<div class="git-status-line"><b>' + (GIT_STATUS_LABEL[st.status] || st.status) + '</b>'
             + (st.projectName ? ' · ' + escapeHtml(st.projectName) : '');
-        if (st.status !== 'DONE' && st.status !== 'FAILED' && st.message) {
+        // 步骤文字 + 进度条
+        if (st.status !== 'DONE' && st.status !== 'FAILED') {
+            const pct = Math.max(0, Math.min(100, st.progress || 0));
+            const stepText = st.step || st.message || '处理中...';
+            html += '<div class="git-progress-wrap">'
+                + '<div class="git-progress-bar" style="width:' + pct + '%"></div>'
+                + '<span class="git-progress-text">' + escapeHtml(stepText) + ' · ' + pct + '%</span>'
+                + '</div>';
+        } else if (st.message) {
             html += '<span class="git-status-msg">' + escapeHtml(st.message) + '</span>';
         }
         html += '</div>';
@@ -482,8 +526,13 @@
             if (st.status === 'DONE') {
                 stopGitPoll();
                 gitProjectPath = st.projectPath;
-                refreshProjectList();  // Git 项目已自动注册
-                scanEntries();   // 编译完成自动扫描交易入口
+                // Git 项目已自动注册到项目列表，刷新显示让用户自己选择
+                refreshProjectList();
+                // 给个提示，告诉用户导入成功、可以从列表里点进去
+                renderGitStatus({
+                    status: 'DONE',
+                    message: '✓ 项目已导入，请从项目列表中点击"进入分析"'
+                });
             } else if (st.status === 'FAILED') {
                 stopGitPoll();
             }
@@ -520,6 +569,9 @@
     // 交易入口扫描 + 勾选分析
     // ------------------------------------------------------------------
 
+    /** 扫描入口（异步 + 进度轮询） */
+    let scanPollTimer = null;
+
     async function scanEntries() {
         clearError();
         const path = currentProjectPath();
@@ -527,15 +579,42 @@
             showError(sourceMode === 'git' ? '请先完成 Git 拉取编译' : '请填写项目路径');
             return;
         }
-        showLoading('正在扫描交易入口（REST / Dubbo / ElasticJob / main）……');
+        els.entryScanProgress.hidden = false;
+        els.entryScanProgressText.textContent = '启动扫描...';
+        els.entryScanProgressBar.style.width = '0%';
         try {
-            const result = await postJson('/api/scan/entries', { projectPath: path });
-            renderEntries(result);
+            const { jobId } = await postJson('/api/scan/entries/async', { projectPath: path });
+            pollScanProgress(jobId);
         } catch (e) {
+            els.entryScanProgress.hidden = true;
             showError(e.message);
-        } finally {
-            hideLoading();
         }
+    }
+
+    function pollScanProgress(jobId) {
+        if (scanPollTimer) clearInterval(scanPollTimer);
+        scanPollTimer = setInterval(async () => {
+            try {
+                const s = await fetchJson('/api/scan/entries/progress/' + jobId);
+                const pct = s.progress || 0;
+                els.entryScanProgressBar.style.width = pct + '%';
+                els.entryScanProgressText.textContent =
+                    (s.step || '') + '  ·  ' + pct + '%';
+                if (s.state === 'DONE') {
+                    clearInterval(scanPollTimer);
+                    scanPollTimer = null;
+                    els.entryScanProgress.hidden = true;
+                    renderEntries(s.result);
+                } else if (s.state === 'FAILED') {
+                    clearInterval(scanPollTimer);
+                    scanPollTimer = null;
+                    els.entryScanProgress.hidden = true;
+                    showError(s.error || '扫描失败');
+                }
+            } catch (e) {
+                // 继续轮询
+            }
+        }, 1500);
     }
 
     els.btnScanEntries.addEventListener('click', scanEntries);
@@ -1527,4 +1606,30 @@
 
     // 启动：先加载项目列表，默认停在项目列表视图
     refreshProjectList();
+
+    // 页面加载时恢复最近一个未过期的 Git 任务（在途或刚完成）
+    fetch('/api/git/latest').then(r => r.ok ? r.json() : null).then(st => {
+        if (!st || !st.status) return;
+        // 恢复仓库地址到输入框
+        if (st.repoUrl) els.repoUrl.value = st.repoUrl;
+        // 自动切到 Git tab，让用户立刻看到进度条
+        setSourceMode('git');
+        if (st.status === 'DONE') {
+            // 已完成：恢复 gitProjectPath，用户可以直接进入分析
+            gitProjectPath = st.projectPath;
+            sourceMode = 'git';
+            renderGitStatus({
+                status: 'DONE',
+                message: (st.message || '✓ 项目已导入') + ' —— 请从项目列表中点击"进入分析"'
+            });
+            refreshProjectList();
+        } else if (st.status === 'FAILED') {
+            renderGitStatus(st);
+        } else {
+            // 在途中（PENDING/CLONING），继续轮询
+            gitPollTimer = setInterval(() => pollGitStatus(st.jobId), 2000);
+            renderGitStatus(st);
+            els.btnGitPrepare.disabled = true;
+        }
+    });
 })();

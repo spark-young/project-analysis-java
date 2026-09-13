@@ -1,5 +1,6 @@
 package com.spark.callgraph.service;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
@@ -110,6 +111,13 @@ public class ProjectRegistry {
         public long lastOpenedAt;    // 最近打开时间戳
         public long createdAt;       // 注册时间戳
         public String lastError;     // 最后一次准备失败时的错误信息（可空）
+
+        // === 下面是运行时状态字段（也会存到 projects.json，不影响）===
+        public String changeStatus;  // "UP_TO_DATE" / "NEEDS_COMPILE" / "NEEDS_ANALYZE" / "MISSING"
+        public String changeHint;    // 人类可读提示："源码已修改，需重新编译" 等
+        public boolean compiled;     // 是否有编译产物
+        public boolean analyzed;     // 是否有分析缓存
+        public boolean existsOnDisk;  // 磁盘目录是否存在
 
         public RegisteredProject() {}
 

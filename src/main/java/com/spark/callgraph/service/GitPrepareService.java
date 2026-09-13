@@ -37,16 +37,27 @@ public class GitPrepareService {
         return t;
     });
 
-    /** Git 固定工作根目录（持久缓存，跨重启复用）。可配置 callgraph.git.work-root 覆盖。 */
+    /** Git 工作根目录（持久缓存，跨重启复用）。可配置 callgraph.git.work-root 覆盖。 */
     private final String workRootConfig;
+
+    /** URL 去重索引（normalizedUrl → Job） */
+    private final Map<String, Job> jobsByUrl = new ConcurrentHashMap<>();
+
+    /** DONE/FAILED 后 Job 在内存里保留 5 分钟，让前端刷新还能查到 */
+    private static final long JOB_TTL_MS = 5 * 60 * 1000L;
 
     static final class Job {
         final String id = UUID.randomUUID().toString();
         volatile String status = "PENDING";
         volatile String message = "";
+        volatile String step = "准备中...";
+        volatile int progress = 0;
+        volatile String repoUrl;
         volatile String projectPath;
         volatile String projectName;
         volatile Path dir;
+        long createdAt;      // 创建时间
+        long doneAt;         // DONE/FAILED 时间（0 表示未结束）
     }
 
     public GitPrepareService(GitCloneService gitCloneService, MavenCompileService mavenCompileService,
@@ -75,72 +86,65 @@ public class GitPrepareService {
         if (req == null || req.getRepoUrl() == null || req.getRepoUrl().trim().isEmpty()) {
             throw new AnalysisException(HttpStatus.BAD_REQUEST, "仓库地址不能为空");
         }
-        Job job = new Job();
-        job.projectName = repoDisplayName(req.getRepoUrl());
-        jobs.put(job.id, job);
 
+        // URL 去重：如果同一个 URL 已有在途任务（CLONING）或刚完成（DONE/FAILED，5 分钟内），直接返回
         final String repoUrl = req.getRepoUrl().trim();
-        final String branch = req.getBranch();
-        final String token = req.getToken();
-        final String username = req.getUsername();
+        Job ongoingJob = jobsByUrl.get(normalizeUrl(repoUrl));
+        if (ongoingJob != null && !isExpired(ongoingJob)) {
+            return status(ongoingJob.id);
+        }
+        // 清理过期条目
+        cleanupExpired();
+
+        Job job = new Job();
+        job.repoUrl = repoUrl;
+        job.projectName = repoDisplayName(repoUrl);
+        job.createdAt = System.currentTimeMillis();
+        jobs.put(job.id, job);
+        jobsByUrl.put(normalizeUrl(repoUrl), job);
 
         executor.submit(() -> {
             job.status = "CLONING";
-            // 固定目录 + 增量拉取：同一个仓库本地已有就只 pull --ff-only，无需全量 clone
+            job.step = "准备克隆仓库...";
+            // 注入进度回调：git 输出的 Receiving/Resolving/Writing 百分比 → 整体 0-85%
+            gitCloneService.beginProgress((gitPct, desc) -> {
+                job.progress = Math.min(85, (int) (gitPct * 0.85));
+                job.step = desc;
+            });
             Path workRoot;
             try {
                 workRoot = resolveAvailableWorkRoot(job);
                 if ("FAILED".equals(job.status)) {
-                    return; // resolveAvailableWorkRoot 已给出明确中文错误
+                    return;
                 }
-                job.dir = gitCloneService.ensureLocal(repoUrl, branch, token, username, workRoot);
+                job.dir = gitCloneService.ensureLocal(repoUrl, req.getBranch(), req.getToken(), req.getUsername(), workRoot);
             } catch (Exception e) {
                 job.status = "FAILED";
                 job.message = "拉取失败：" + e.getMessage();
-                // 只删本次 clone 的半成品目录；持久缓存目录已有内容（上一次成功拉取）不删除
-                if (job.dir != null) {
-                    if (!Files.exists(job.dir.resolve(".git"))) {
-                        deleteQuietly(job.dir);
-                    }
+                if (job.dir != null && !Files.exists(job.dir.resolve(".git"))) {
+                    deleteQuietly(job.dir);
                 }
                 return;
+            } finally {
+                gitCloneService.endProgress();
             }
 
-            // 目录探测：定位工程根目录（Maven / Gradle / 已有产物 / 普通源码）
+            job.progress = 85;
+            job.step = "正在检测项目结构...";
+
             LocatedProject located = locateProject(job.dir, job);
             if (located == null) {
-                // locateProject 内部已设置 FAILED + 友好提示
-                // 同上去除半成品，保留上一次拉取的完整缓存
-                if (job.dir != null) {
-                    if (!Files.exists(job.dir.resolve(".git"))) {
-                        deleteQuietly(job.dir);
-                    }
+                if (job.dir != null && !Files.exists(job.dir.resolve(".git"))) {
+                    deleteQuietly(job.dir);
                 }
                 return;
             }
+
+            job.progress = 92;
+            job.step = "正在注册项目...";
+
             Path compileDir = located.root;
-
-            if (located.needMaven) {
-                job.status = "COMPILING";
-                job.message = "正在执行 mvn compile（多模块项目可能需要几分钟）...";
-                try {
-                    MavenCompileService.CompileResult r = mavenCompileService.compile(compileDir);
-                    if (!r.isSuccess()) {
-                        job.status = "FAILED";
-                        job.message = "编译失败：\n" + r.getOutputTail();
-                        // 缓存保留，不删除仓库目录（下次分析只拉增量，重新编译）
-                        return;
-                    }
-                } catch (Exception e) {
-                    job.status = "FAILED";
-                    job.message = "编译异常：" + e.getMessage();
-                    return;
-                }
-            }
-
             job.projectPath = compileDir.toString();
-            job.status = "DONE";
-            job.message = "";
 
             // 自动注册到项目注册表
             try {
@@ -152,7 +156,7 @@ public class GitPrepareService {
                     p.type = "GIT";
                     p.projectPath = job.projectPath;
                     p.gitUrl = repoUrl;
-                    p.gitBranch = branch == null ? "" : branch;
+                    p.gitBranch = req.getBranch() == null ? "" : req.getBranch();
                     p.createdAt = System.currentTimeMillis();
                     p.lastOpenedAt = p.createdAt;
                     registry.save(p);
@@ -164,6 +168,11 @@ public class GitPrepareService {
             } catch (Exception ex) {
                 // 注册失败不影响任务状态
             }
+
+            job.progress = 100;
+            job.status = "DONE";
+            job.step = "导入完成";
+            job.message = located.needMaven ? "项目已克隆，进入分析时将自动编译" : "项目已克隆";
         });
         return status(job.id);
     }
@@ -177,9 +186,67 @@ public class GitPrepareService {
         s.setJobId(job.id);
         s.setStatus(job.status);
         s.setMessage(job.message);
+        s.setStep(job.step);
+        s.setProgress(job.progress);
+        s.setRepoUrl(job.repoUrl);
         s.setProjectPath(job.projectPath);
         s.setProjectName(job.projectName);
         return s;
+    }
+
+    /** 查找最近一个未过期的任务：在途（非 DONE/FAILED）优先，其次是刚完成的。前端刷新页面后恢复进度条 */
+    public GitPrepareStatus latest() {
+        cleanupExpired();
+        Job bestOngoing = null;
+        Job bestFinished = null;
+        long ongoingCreatedAt = 0;
+        long finishedCreatedAt = 0;
+        for (Job j : jobs.values()) {
+            if (isExpired(j)) continue;
+            boolean finished = "DONE".equals(j.status) || "FAILED".equals(j.status);
+            if (finished) {
+                if (j.createdAt > finishedCreatedAt) {
+                    bestFinished = j;
+                    finishedCreatedAt = j.createdAt;
+                }
+            } else {
+                if (j.createdAt > ongoingCreatedAt) {
+                    bestOngoing = j;
+                    ongoingCreatedAt = j.createdAt;
+                }
+            }
+        }
+        Job pick = bestOngoing != null ? bestOngoing : bestFinished;
+        if (pick == null) return null;
+        return status(pick.id);
+    }
+
+    /** URL 归一化：trim、转小写、去 .git 后缀，确保同一仓库不同写法能匹配 */
+    static String normalizeUrl(String url) {
+        if (url == null) return "";
+        String u = url.trim().toLowerCase();
+        while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+        if (u.endsWith(".git")) u = u.substring(0, u.length() - 4);
+        // SSH git@host:group/repo → https://host/group/repo
+        u = u.replaceFirst("^git@([^:]+):", "https://$1/");
+        return u;
+    }
+
+    /** 5 分钟 TTL：超过这个时间的 DONE/FAILED job 清理掉；在途永不过期 */
+    private boolean isExpired(Job j) {
+        if ("DONE".equals(j.status) || "FAILED".equals(j.status)) {
+            return (System.currentTimeMillis() - j.createdAt) > JOB_TTL_MS;
+        }
+        return false;
+    }
+
+    private void cleanupExpired() {
+        for (Job j : jobs.values()) {
+            if (isExpired(j)) {
+                jobs.remove(j.id);
+                jobsByUrl.entrySet().removeIf(e -> e.getValue() == j);
+            }
+        }
     }
 
     /** 仓库展示名：取 URL 末段并去掉 .git 后缀 */

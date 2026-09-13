@@ -5,17 +5,22 @@ import com.spark.callgraph.service.AnalysisException;
 import com.spark.callgraph.service.AnalysisService;
 import com.spark.callgraph.service.EntryScanService;
 import com.spark.callgraph.service.GitPrepareService;
+import com.spark.callgraph.service.JavacCompileService;
+import com.spark.callgraph.service.MavenCompileService;
 import com.spark.callgraph.service.dto.AnalyzeRequest;
 import com.spark.callgraph.service.dto.AnalysisResult;
 import com.spark.callgraph.service.dto.EntryScanResult;
+import com.spark.callgraph.service.dto.EntryScanStatus;
 import com.spark.callgraph.service.dto.GitPrepareRequest;
 import com.spark.callgraph.service.dto.GitPrepareStatus;
 import com.spark.callgraph.service.dto.ProjectInfo;
 import com.spark.callgraph.service.dto.ScanRequest;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,7 +29,13 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.net.URLEncoder;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * REST API。默认仅监听 127.0.0.1（见 application.yml），内网本机使用。
@@ -37,13 +48,18 @@ public class AnalysisController {
     private final ExcelReportGenerator excelReportGenerator;
     private final EntryScanService entryScanService;
     private final GitPrepareService gitPrepareService;
+    private final MavenCompileService mavenCompileService;
+    private final JavacCompileService javacCompileService;
 
     public AnalysisController(AnalysisService analysisService, ExcelReportGenerator excelReportGenerator,
-                              EntryScanService entryScanService, GitPrepareService gitPrepareService) {
+                              EntryScanService entryScanService, GitPrepareService gitPrepareService,
+                              MavenCompileService mavenCompileService, JavacCompileService javacCompileService) {
         this.analysisService = analysisService;
         this.excelReportGenerator = excelReportGenerator;
         this.entryScanService = entryScanService;
         this.gitPrepareService = gitPrepareService;
+        this.mavenCompileService = mavenCompileService;
+        this.javacCompileService = javacCompileService;
     }
 
     @GetMapping("/defaults")
@@ -69,7 +85,131 @@ public class AnalysisController {
 
     @PostMapping("/scan/entries")
     public EntryScanResult scanEntries(@RequestBody ScanRequest req) {
-        return entryScanService.scan(req == null ? null : req.getProjectPath());
+        String path = req == null ? null : req.getProjectPath();
+        if (path != null && !path.trim().isEmpty()) {
+            compileIfNeeded(Paths.get(path.trim()), false);
+        }
+        return entryScanService.scan(path);
+    }
+
+    /** 异步启动入口扫描，返回 jobId */
+    @PostMapping("/scan/entries/async")
+    public Map<String, String> scanEntriesAsync(@RequestBody ScanRequest req) {
+        String path = req == null ? null : req.getProjectPath();
+        if (path != null && !path.trim().isEmpty()) {
+            compileIfNeeded(Paths.get(path.trim()), false);
+        }
+        String jobId = entryScanService.startAsync(path);
+        Map<String, String> result = new HashMap<>();
+        result.put("jobId", jobId);
+        return result;
+    }
+
+    /** 查询扫描进度 */
+    @GetMapping("/scan/entries/progress/{jobId}")
+    public EntryScanStatus scanEntriesProgress(@PathVariable String jobId) {
+        EntryScanStatus status = entryScanService.status(jobId);
+        if (status == null) {
+            throw new AnalysisException(HttpStatus.NOT_FOUND, "任务不存在或已过期: " + jobId);
+        }
+        return status;
+    }
+
+    /** 单独的编译接口：前端"重新分析"可先手动触发编译；force=true 时做 clean compile */
+    @PostMapping("/ensure-compile")
+    public String ensureCompile(@RequestBody ScanRequest req,
+                                @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
+        String path = req == null ? null : req.getProjectPath();
+        if (path == null || path.trim().isEmpty()) {
+            return "路径不能为空";
+        }
+        compileIfNeeded(Paths.get(path.trim()), force);
+        return "ok";
+    }
+
+    /**
+     * 自动探测项目类型并按需编译（Maven / javac / 已有产物）。
+     * force=true 时强制 clean compile（用于"重新分析"场景）。
+     */
+    private void compileIfNeeded(Path root, boolean force) {
+        try {
+            if (!force) {
+                // 非强制：已有产物就跳过
+                if (findExistingArtifacts(root) != null) {
+                    return;
+                }
+            }
+            // Maven 项目
+            if (Files.exists(root.resolve("pom.xml"))) {
+                MavenCompileService.CompileResult r = force
+                        ? mavenCompileService.compileClean(root)
+                        : mavenCompileService.compile(root);
+                if (!r.isSuccess()) {
+                    throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                            (force ? "clean compile" : "Maven 编译") + "失败：\n" + r.getOutputTail());
+                }
+                return;
+            }
+            // 普通 Java 源码 → javac（没有 clean 概念，强制时直接覆盖 build/）
+            boolean hasJava;
+            try (Stream<Path> walk = Files.walk(root, 100)) {
+                hasJava = walk.anyMatch(p ->
+                        Files.isRegularFile(p) && p.getFileName().toString().endsWith(".java"));
+            }
+            if (hasJava) {
+                Path buildRoot = root.resolve("build");
+                Files.createDirectories(buildRoot);
+                JavacCompileService.CompileResult r = javacCompileService.compile(root, buildRoot);
+                if (!r.isSuccess()) {
+                    throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                            "javac 编译失败：\n" + r.getOutputTail());
+                }
+            }
+            // Gradle 等其他构建工具 → 静默跳过（用户应手动编译）
+        } catch (AnalysisException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                    "编译探测失败：" + e.getMessage());
+        }
+    }
+
+    /** 查找已有的编译产物目录：存在且有 .class 文件才认为有效 */
+    private Path findExistingArtifacts(Path root) {
+        Path[] candidates = new Path[] {
+                root.resolve("target").resolve("classes"),
+                root.resolve("build").resolve("classes"),
+                root.resolve("bin"),
+                root.resolve("build")
+        };
+        for (Path c : candidates) {
+            if (Files.isDirectory(c) && hasClassFiles(c)) return c;
+        }
+        try (Stream<Path> walk = Files.walk(root, 3)) {
+            return walk.filter(Files::isDirectory)
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        return s.endsWith("/target/classes")
+                                || s.endsWith("/build/classes")
+                                || s.endsWith("/out/production");
+                    })
+                    .filter(this::hasClassFiles)
+                    .findFirst().orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 目录或子目录下是否有 .class 文件 */
+    private boolean hasClassFiles(Path dir) {
+        try (Stream<Path> walk = Files.walk(dir, 50)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName() != null
+                            && p.getFileName().toString().endsWith(".class"))
+                    .findFirst().isPresent();
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     @PostMapping("/git/prepare")
@@ -80,6 +220,12 @@ public class AnalysisController {
     @GetMapping("/git/prepare/{jobId}")
     public GitPrepareStatus gitPrepareStatus(@org.springframework.web.bind.annotation.PathVariable String jobId) {
         return gitPrepareService.status(jobId);
+    }
+
+    /** 查找最近一个未过期的 Git 任务（前端刷新后恢复进度条） */
+    @GetMapping("/git/latest")
+    public GitPrepareStatus gitLatest() {
+        return gitPrepareService.latest();
     }
 
     @PostMapping("/report/excel")

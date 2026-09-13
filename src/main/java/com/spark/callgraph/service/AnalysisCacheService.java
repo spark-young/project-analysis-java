@@ -62,8 +62,9 @@ public class AnalysisCacheService {
             Files.createDirectories(file.getParent());
             mapper.writeValue(file.toFile(), result);
             log.info("[缓存] 已写入 {}", file.getFileName());
-        } catch (IOException e) {
-            log.warn("[缓存] 写入失败: {}", e.getMessage());
+        } catch (Exception e) {
+            // 把 IOException 和 RuntimeException（比如 Jackson 序列化失败）都捕获并打印完整堆栈
+            log.error("[缓存] 写入失败: {}", e.getMessage(), e);
         }
     }
 
@@ -72,30 +73,43 @@ public class AnalysisCacheService {
     // ------------------------------------------------------------------
 
     /**
-     * 缓存目录：优先放项目根目录下的 ".callgraph/cache/"，不可写时兜底到 CallgraphPaths（D 盘）。
-     * 这样缓存跟着项目走，项目搬去哪缓存就去哪。
+     * 缓存目录：强制放项目根目录下的 ".callgraph/cache/"。
+     * 不可写时 warn 日志但仍然返回该路径，由调用方 catch IOException。
+     * 缓存跟着项目走，项目搬去哪缓存就去哪，不再兜底全局。
      */
     private Path cacheDir(String projectPath) {
         if (projectPath != null && !projectPath.isEmpty()) {
             Path projectCache = Paths.get(projectPath, ".callgraph", "cache");
-            if (ensureWritable(projectCache)) {
-                return projectCache;
+            try {
+                Files.createDirectories(projectCache);
+            } catch (IOException e) {
+                log.warn("[缓存] 无法创建项目缓存目录 {}: {}", projectCache, e.getMessage());
             }
+            return projectCache;
         }
-        // 兜底：D 盘全局缓存
+        // projectPath 为空时（不应发生），兜底全局
         Path global = CallgraphPaths.getHome().resolve("cache");
-        ensureWritable(global);
+        try { Files.createDirectories(global); } catch (IOException ignored) {}
         return global;
     }
 
-    /** 目录可写探测：确保存在且能写 */
-    private static boolean ensureWritable(Path dir) {
+    /** 某项目是否有任意分析缓存文件（只查项目内目录） */
+    public boolean hasAnyCache(String projectPath) {
+        if (projectPath == null || projectPath.isEmpty()) return false;
+        Path local = Paths.get(projectPath, ".callgraph", "cache");
+        return hasJsonFile(local);
+    }
+
+    private static boolean hasJsonFile(Path dir) {
         try {
-            Files.createDirectories(dir);
-            Path probe = Files.createTempFile(dir, ".probe", null);
-            Files.delete(probe);
-            return true;
-        } catch (IOException e) {
+            if (!Files.isDirectory(dir)) return false;
+            try (java.util.stream.Stream<Path> walk = Files.walk(dir, 2)) {
+                return walk.filter(Files::isRegularFile)
+                        .filter(p -> p.getFileName() != null
+                                && p.getFileName().toString().endsWith(".json"))
+                        .findFirst().isPresent();
+            }
+        } catch (Exception e) {
             return false;
         }
     }
@@ -106,9 +120,12 @@ public class AnalysisCacheService {
                 safe(className), safe(methodName),
                 String.valueOf(maxDepth), String.valueOf(maxNodes),
                 safe(freqSourceFilter), safe(projFp));
-        return cacheDir(projectPath).resolve(sha1(key) + ".json");
+        String hash = sha1(key);
+        String name = humanReadableName(className, methodName, hash);
+        return cacheDir(projectPath).resolve(name);
     }
 
+    /** 旧文件名兼容（hash-only），仅在 load 时 fallback 查找 */
     private Path legacyCacheFile(String projectPath, String className, String methodName,
                                  int maxDepth, int maxNodes, String freqSourceFilter) {
         String key = String.join("|",
@@ -116,6 +133,24 @@ public class AnalysisCacheService {
                 String.valueOf(maxDepth), String.valueOf(maxNodes),
                 safe(freqSourceFilter));
         return cacheDir(projectPath).resolve(sha1(key) + ".json");
+    }
+
+    /** 生成直观文件名：SimpleClass#methodName_abcd1234.json
+     *  - 类名取最后一段（SimpleClassName）
+     *  - 方法名原样保留
+     *  - 加 hash 前 8 位防同名冲突
+     *  - 去掉所有非法文件名字符 */
+    private static String humanReadableName(String className, String methodName, String hash) {
+        String simpleName = safe(className);
+        int dot = simpleName.lastIndexOf('.');
+        if (dot >= 0) simpleName = simpleName.substring(dot + 1);
+        // Windows 文件名非法字符: \ / : * ? " < > |
+        String method = safe(methodName).replaceAll("[\\\\/:*?\"<>|]", "_");
+        String cleanClass = simpleName.replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (method.isEmpty()) {
+            return cleanClass + "_" + hash.substring(0, Math.min(8, hash.length())) + ".json";
+        }
+        return cleanClass + "#" + method + "_" + hash.substring(0, Math.min(8, hash.length())) + ".json";
     }
 
     private static String safe(String s) { return s == null ? "" : s; }

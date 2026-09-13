@@ -73,8 +73,13 @@ public final class CallgraphPaths {
         return Paths.get(System.getProperty("user.home"), DIR_NAME);
     }
 
-    /** 探测目录是否可写（不存在则尝试创建） */
+    /** 探测目录是否可写：已存在就认为可写（避免不必要的探测文件），不存在才尝试创建 */
     private static boolean isWritable(Path dir) {
+        // 目录已存在且是目录 → 直接信任，不再探测（沙箱环境下探测会被误判）
+        if (Files.isDirectory(dir)) {
+            return true;
+        }
+        // 不存在才尝试创建 + 探测
         try {
             Files.createDirectories(dir);
             Path probe = Files.createTempFile(dir, ".probe", null);

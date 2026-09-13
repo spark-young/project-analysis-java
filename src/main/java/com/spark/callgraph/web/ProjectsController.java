@@ -1,16 +1,23 @@
 package com.spark.callgraph.web;
 
 import com.spark.callgraph.service.AnalysisException;
+import com.spark.callgraph.service.AnalysisCacheService;
 import com.spark.callgraph.service.AnalysisService;
 import com.spark.callgraph.service.ProjectRegistry;
 import com.spark.callgraph.service.ProjectRegistry.RegisteredProject;
 import com.spark.callgraph.service.dto.ProjectInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 /**
  * 项目注册表 REST 接口。
@@ -19,18 +26,203 @@ import java.util.UUID;
 @RequestMapping("/api/projects")
 public class ProjectsController {
 
+    private static final Logger log = LoggerFactory.getLogger(ProjectsController.class);
+
     private final ProjectRegistry registry;
     private final AnalysisService analysisService;
+    private final AnalysisCacheService cacheService;
 
-    public ProjectsController(ProjectRegistry registry, AnalysisService analysisService) {
+    public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
+                              AnalysisCacheService cacheService) {
         this.registry = registry;
         this.analysisService = analysisService;
+        this.cacheService = cacheService;
     }
 
-    /** 列出所有项目 */
+    /** 列出所有项目，并附加实时检测的状态 */
     @GetMapping
     public List<RegisteredProject> list() {
-        return registry.list();
+        List<RegisteredProject> items = registry.list();
+        for (RegisteredProject p : items) {
+            fillRuntimeStatus(p);
+        }
+        return items;
+    }
+
+    /**
+     * 为每个项目填充运行时状态（@JsonIgnore 字段不持久化）。
+     * 检测规则（按优先级）：
+     *   1. 磁盘目录不存在    → MISSING        （用户删了项目目录）
+     *   2. 无编译产物         → NEEDS_COMPILE   （首次进入 / 源码变了）
+     *   3. 有编译但无分析缓存 → NEEDS_ANALYZE   （编译过但没分析过）
+     *   4. 源码比 .class 新  → NEEDS_COMPILE   （源码改了没重新编译）
+     *   5. 都 OK             → UP_TO_DATE      （一切就绪）
+     */
+    private void fillRuntimeStatus(RegisteredProject p) {
+        try {
+            Path root = Paths.get(p.projectPath);
+            p.existsOnDisk = Files.isDirectory(root);
+            p.analyzed = cacheService.hasAnyCache(p.projectPath);
+
+            if (!p.existsOnDisk) {
+                p.changeStatus = "MISSING";
+                p.changeHint = "磁盘目录已被移除，请重新导入";
+                p.compiled = false;
+                return;
+            }
+
+            // 检查是否有编译产物
+            Path artifact = findArtifactDir(root);
+            p.compiled = (artifact != null);
+
+            log.info("[状态] {}: artifactDir={}, compiled={}, analyzed={}",
+                    p.name, artifact, p.compiled, p.analyzed);
+
+            if (!p.compiled) {
+                p.changeStatus = "NEEDS_COMPILE";
+                p.changeHint = "未编译，进入项目后将自动编译";
+                return;
+            }
+
+            // 编译产物 vs 源码：对比 mtime，看源码是否比 .class 新
+            long newestClassMtime = newestMtime(artifact, ".class");
+            long oldestClassMtime = oldestMtime(artifact, ".class");
+            long newestSourceMtime = newestSourceMtime(root);
+
+            log.info("[状态] {}: newestClass={}, oldestClass={}, newestSource={}, diff={}ms",
+                    p.name, newestClassMtime, oldestClassMtime, newestSourceMtime,
+                    (newestSourceMtime - newestClassMtime));
+
+            // 容忍阈值：5 分钟内的 mtime 差异视为同时（Windows/Git 文件系统精度问题）
+            // 只有源码比 .class 晚超过 5 分钟，才认为"真的修改过没重新编译"
+            if (newestSourceMtime > newestClassMtime + 5 * 60 * 1000L) {
+                // 源码修改时间晚于编译产物 → 需要重新编译
+                p.changeStatus = "NEEDS_COMPILE";
+                p.changeHint = "源码已修改，需重新编译（点击\"重新分析\"）";
+                return;
+            }
+
+            if (oldestClassMtime == 0) {
+                // 编译目录存在但里面没 .class 文件
+                p.changeStatus = "NEEDS_COMPILE";
+                p.changeHint = "编译产物为空，需重新编译";
+                return;
+            }
+
+            if (!p.analyzed) {
+                p.changeStatus = "NEEDS_ANALYZE";
+                p.changeHint = "未执行过分析，进入项目后点击\"开始分析\"";
+                return;
+            }
+
+            p.changeStatus = "UP_TO_DATE";
+            p.changeHint = "✓ 已就绪";
+
+        } catch (Exception e) {
+            p.changeStatus = "ERROR";
+            p.changeHint = "状态检测失败: " + e.getMessage();
+        }
+    }
+
+    /** 查找编译产物目录：目录存在且内部有 .class 文件才认为有效 */
+    private Path findArtifactDir(Path root) {
+        // 优先顺序：标准 Maven/Gradle 目录 → Eclipse bin/ → 嵌套查找
+        Path[] candidates = new Path[] {
+                root.resolve("target").resolve("classes"),
+                root.resolve("build").resolve("classes"),
+                root.resolve("bin"),                           // Eclipse 默认输出
+                root.resolve("build")                          // javac 输出根目录
+        };
+        for (Path c : candidates) {
+            if (Files.isDirectory(c) && hasClassFiles(c)) {
+                return c;
+            }
+        }
+        // 嵌套一层兜底
+        try (Stream<Path> walk = Files.walk(root, 3)) {
+            return walk.filter(Files::isDirectory)
+                    .filter(p -> {
+                        String s = p.toString().replace('\\', '/');
+                        return s.endsWith("/target/classes") || s.endsWith("/build/classes")
+                                || s.endsWith("/out/production");
+                    })
+                    .filter(this::hasClassFiles)
+                    .findFirst().orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 目录或子目录下是否有 .class 文件 */
+    private boolean hasClassFiles(Path dir) {
+        try (Stream<Path> walk = Files.walk(dir, 50)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName() != null
+                            && p.getFileName().toString().endsWith(".class"))
+                    .findFirst().isPresent();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 目录下最新 .class 文件的 mtime */
+    private long newestMtime(Path dir, String suffix) {
+        try (Stream<Path> walk = Files.walk(dir, 50)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName() != null && p.getFileName().toString().endsWith(suffix))
+                    .mapToLong(p -> {
+                        try { return Files.getLastModifiedTime(p).toMillis(); }
+                        catch (Exception e) { return 0L; }
+                    })
+                    .max().orElse(0L);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** 目录下最旧 .class 文件的 mtime（判断是否为空） */
+    private long oldestMtime(Path dir, String suffix) {
+        try (Stream<Path> walk = Files.walk(dir, 50)) {
+            return walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName() != null && p.getFileName().toString().endsWith(suffix))
+                    .mapToLong(p -> {
+                        try { return Files.getLastModifiedTime(p).toMillis(); }
+                        catch (Exception e) { return Long.MAX_VALUE; }
+                    })
+                    .min().orElse(0L);
+        } catch (Exception e) {
+            return 0L;
+        }
+    }
+
+    /** 项目下最新源码文件的 mtime（.java + pom.xml + build.gradle） */
+    private long newestSourceMtime(Path root) {
+        long max = 0;
+        try {
+            // pom.xml / build.gradle
+            for (String name : new String[]{"pom.xml", "build.gradle", "build.gradle.kts"}) {
+                Path p = root.resolve(name);
+                if (Files.isRegularFile(p)) {
+                    max = Math.max(max, Files.getLastModifiedTime(p).toMillis());
+                }
+            }
+            // .java 文件（深度 100）
+            try (Stream<Path> walk = Files.walk(root, 100)) {
+                max = Math.max(max, walk.filter(Files::isRegularFile)
+                        .filter(p -> {
+                            String n = p.getFileName() == null ? "" : p.getFileName().toString();
+                            return n.endsWith(".java") || n.endsWith(".kt");
+                        })
+                        .mapToLong(p -> {
+                            try { return Files.getLastModifiedTime(p).toMillis(); }
+                            catch (Exception e) { return 0L; }
+                        })
+                        .max().orElse(0L));
+            }
+        } catch (Exception e) {
+            // ignore
+        }
+        return max;
     }
 
     /** 注册本地项目（直接加进列表，不做编译） */

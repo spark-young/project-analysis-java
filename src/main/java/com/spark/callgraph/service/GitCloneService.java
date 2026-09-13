@@ -35,6 +35,19 @@ import java.util.regex.Pattern;
 @Service
 public class GitCloneService {
 
+    /** 每次 clone/pull 时通过 ThreadLocal 注入的进度回调 */
+    private final ThreadLocal<java.util.function.BiConsumer<Integer, String>> progressCb = new ThreadLocal<>();
+
+    /** 开始 clone/pull 前设置进度回调（git 输出里的 Receiving/Resolving/Writing 百分比会实时回调） */
+    public void beginProgress(java.util.function.BiConsumer<Integer, String> cb) {
+        progressCb.set(cb);
+    }
+
+    /** clone/pull 完成后清理回调，避免 ThreadLocal 泄漏 */
+    public void endProgress() {
+        progressCb.remove();
+    }
+
     /** git@host:group/repo.git → https://host/group/repo.git */
     private static final Pattern SSH_SCP_PATTERN = Pattern.compile(
             "^git@([^:]+):(.+?)(?:\\.git)?$", Pattern.CASE_INSENSITIVE);
@@ -294,12 +307,18 @@ public class GitCloneService {
     }
 
     /** 执行本机 git 命令，返回合并后的 stdout+stderr；非零退出码抛异常。 */
+    /** 执行本机 git 命令；自动取 ThreadLocal 里的进度回调（如果有） */
     private String git(String[] args) throws IOException, InterruptedException {
         return git(args, null);
     }
 
-    /** 执行本机 git 命令；url 非空时，若命中系统代理白名单则注入 per-invocation 代理参数。 */
     private String git(String[] args, String url) throws IOException, InterruptedException {
+        return git(args, url, progressCb.get());
+    }
+
+    /** 执行本机 git 命令；url 非空时注入代理；progressCallback 非空时实时回调 git 输出中的进度。 */
+    private String git(String[] args, String url, java.util.function.BiConsumer<Integer, String> progressCallback)
+            throws IOException, InterruptedException {
         List<String> cmd = new ArrayList<>();
         cmd.add("git");
         String proxy = proxyFor(url);
@@ -313,14 +332,32 @@ public class GitCloneService {
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GIT_TERMINAL_PROMPT", "0");
         pb.environment().put("GIT_ASKPASS", "echo");
+        pb.environment().put("GIT_SSH_COMMAND",
+                "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15");
+        pb.environment().put("GIT_SSL_NO_VERIFY", "1");
         pb.redirectErrorStream(true);
         Process p = pb.start();
+
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         byte[] chunk = new byte[8192];
+        StringBuilder lineBuf = new StringBuilder();  // 用于实时解析进度
         int n;
         try (java.io.InputStream in = p.getInputStream()) {
             while ((n = in.read(chunk)) != -1) {
                 buf.write(chunk, 0, n);
+                if (progressCallback != null) {
+                    // 实时解析：git 进度用 \r 分隔，stderr 里可能是逐字节来的
+                    String piece = new String(chunk, 0, n, StandardCharsets.UTF_8);
+                    for (char c : piece.toCharArray()) {
+                        if (c == '\r' || c == '\n') {
+                            String line = lineBuf.toString().trim();
+                            lineBuf.setLength(0);
+                            if (!line.isEmpty()) parseAndReportProgress(line, progressCallback);
+                        } else {
+                            lineBuf.append(c);
+                        }
+                    }
+                }
             }
         }
         int code = p.waitFor();
@@ -330,6 +367,25 @@ public class GitCloneService {
         }
         return output;
     }
+
+    /** 从 git 输出行里解析进度百分比（Receiving objects 45% / Resolving deltas 34% / Writing objects 12%） */
+    private static void parseAndReportProgress(String line, java.util.function.BiConsumer<Integer, String> cb) {
+        try {
+            // 匹配 "Receiving objects:  45% (1234/2742), ..."
+            // 匹配 "Resolving deltas:   34% (456/1345)"
+            // 匹配 "Writing objects:   12% (100/800)"
+            java.util.regex.Matcher m = PROGRESS_PATTERN.matcher(line);
+            if (m.find()) {
+                String phase = m.group(1);   // Receiving / Resolving / Writing
+                int pct = Integer.parseInt(m.group(2));  // 百分比数字
+                cb.accept(pct, phase + " " + pct + "%");
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /** git clone/fetch 进度解析正则 */
+    private static final java.util.regex.Pattern PROGRESS_PATTERN =
+            java.util.regex.Pattern.compile("(Receiving|Resolving|Writing)\\s+\\w+:\\s*(\\d{1,3})%");
 
     /**
      * 为给定的仓库 URL 决定是否注入代理、注入哪个代理。

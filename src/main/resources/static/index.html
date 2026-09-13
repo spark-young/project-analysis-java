@@ -55,7 +55,7 @@
                     <label for="repoUrl">仓库地址 <span class="req">*</span></label>
                     <div class="input-group">
                         <input id="repoUrl" type="text" placeholder="例如 https://gitlab.example.com/group/repo.git">
-                        <button id="btnGitPrepare" type="button" class="btn primary">拉取并编译</button>
+                        <button id="btnGitPrepare" type="button" class="btn primary">导入项目</button>
                     </div>
                     <div class="hint">GitLab / GitHub / 内网 Git 均可；工具自动克隆 → mvn compile → 扫描交易入口</div>
                 </div>
@@ -102,8 +102,9 @@
     <!-- ============================================================= -->
     <section id="viewAnalyze" hidden>
 
-        <!-- 分析条件 -->
+        <!-- 当前项目 + 两条显式分析路径 -->
         <div class="card">
+            <!-- 当前项目 -->
             <div class="form-grid form-grid-common">
                 <div class="form-item span-2">
                     <label>当前项目</label>
@@ -114,35 +115,78 @@
                         <button id="btnBackToProjects" type="button" class="btn small ghost">← 返回列表</button>
                     </div>
                 </div>
-                <div class="form-item">
-                    <label for="className">类名 <span class="opt">（手动分析时填）</span></label>
-                    <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
-                    <datalist id="classList"></datalist>
-                    <div class="hint">支持自动补全；同名类需用全限定名</div>
+            </div>
+
+            <!-- 分隔线 -->
+            <div class="path-divider"></div>
+
+            <!-- 路径 A：智能扫描（推荐新用户） -->
+            <div class="path-block path-primary">
+                <div class="path-header">
+                    <span class="path-title">🔍 路径 A · 智能扫描</span>
+                    <span class="path-desc">自动发现项目的 REST/Dubbo/定时任务/main 入口，你可以挑着分析</span>
                 </div>
-                <div class="form-item">
-                    <label for="methodName">方法名 <span class="opt">（可选）</span></label>
-                    <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
-                    <div class="hint">重载方法会全部作为入口</div>
-                </div>
-                <div class="form-item">
-                    <label for="maxDepth">分析深度</label>
-                    <select id="maxDepth">
-                        <option value="5">5 层</option>
-                        <option value="10">10 层</option>
-                        <option value="15">15 层</option>
-                        <option value="20" selected>20 层（默认）</option>
-                        <option value="30">30 层</option>
-                    </select>
-                    <div class="hint">接口/抽象分派的实现层占一层</div>
-                </div>
-                <div class="form-item actions">
+                <div class="path-actions">
                     <button id="btnScanEntries" type="button" class="btn">扫描交易入口</button>
-                    <button id="btnAnalyze" type="button" class="btn primary">开始分析</button>
-                    <button id="btnReAnalyze" type="button" class="btn" title="忽略缓存，强制重新完整分析整个项目">重新分析</button>
-                    <button id="btnExcel" type="button" class="btn" disabled>下载 Excel 报告</button>
+                    <span class="path-sep">或者</span>
+                    <button id="btnAnalyzeAuto" type="button" class="btn primary">一键扫描并全量分析</button>
+                </div>
+                <!-- 扫描进度条 -->
+                <div id="entryScanProgress" class="scan-progress" hidden>
+                    <div class="scan-progress-bar-wrap">
+                        <div id="entryScanProgressBar" class="scan-progress-bar" style="width:0%"></div>
+                    </div>
+                    <div id="entryScanProgressText" class="scan-progress-text">准备中...</div>
                 </div>
             </div>
+
+            <!-- 分隔线 -->
+            <div class="path-divider"></div>
+
+            <!-- 路径 B：精确指定（老手可选） -->
+            <div class="path-block path-secondary">
+                <div class="path-header">
+                    <span class="path-title">🎯 路径 B · 精确指定（可选）</span>
+                    <span class="path-desc">知道自己要分析哪个类/方法？直接填下面跳过扫描</span>
+                </div>
+                <div class="form-grid path-form">
+                    <div class="form-item">
+                        <label for="className">类名 <span class="opt">（填了就只分析这个类）</span></label>
+                        <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
+                        <datalist id="classList"></datalist>
+                        <div class="hint">支持自动补全；同名类需用全限定名</div>
+                    </div>
+                    <div class="form-item">
+                        <label for="methodName">方法名 <span class="opt">（可选）</span></label>
+                        <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
+                        <div class="hint">重载方法会全部作为入口</div>
+                    </div>
+                    <div class="form-item">
+                        <label for="maxDepth">分析深度</label>
+                        <select id="maxDepth">
+                            <option value="5">5 层</option>
+                            <option value="10">10 层</option>
+                            <option value="15">15 层</option>
+                            <option value="20" selected>20 层（默认）</option>
+                            <option value="30">30 层</option>
+                        </select>
+                        <div class="hint">接口/抽象分派的实现层占一层</div>
+                    </div>
+                    <div class="form-item path-submit">
+                        <button id="btnAnalyzeManual" type="button" class="btn">只分析指定类</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分隔线 -->
+            <div class="path-divider"></div>
+
+            <!-- 工具栏 -->
+            <div class="toolbar-row">
+                <button id="btnReAnalyze" type="button" class="btn" title="忽略缓存，强制重新完整分析整个项目">♻ 重新分析</button>
+                <button id="btnExcel" type="button" class="btn" disabled>📊 下载 Excel 报告</button>
+            </div>
+
             <div id="errorBanner" class="error-banner" hidden></div>
         </div>
 

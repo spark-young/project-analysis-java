@@ -1,4 +1,4 @@
-:root {
+﻿:root {
     --primary: #2563eb;
     --primary-dark: #1d4ed8;
     --border: #e2e8f0;
@@ -839,36 +839,59 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 }
 
 .project-card {
-    background: #1f2937; border: 1px solid #374151;
+    background: var(--card);
+    border: 1px solid var(--border);
     border-radius: 10px; padding: 16px;
     display: flex; flex-direction: column; gap: 10px;
-    transition: border-color .15s, transform .1s;
+    transition: border-color .18s, box-shadow .18s, transform .12s;
+    box-shadow: 0 1px 2px rgba(15,23,42,.04);
 }
-.project-card:hover { border-color: #3b82f6; }
+.project-card:hover {
+    border-color: var(--primary);
+    box-shadow: 0 6px 20px rgba(37,99,235,.12);
+    transform: translateY(-1px);
+}
 
 .project-card .pc-head {
     display: flex; align-items: center; gap: 8px;
 }
 .project-card .pc-name {
-    font-weight: 600; font-size: 15px; color: #f1f5f9;
+    font-weight: 600; font-size: 15px; color: #0f172a;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
 }
 .project-card .pc-type {
     font-size: 11px; padding: 2px 8px; border-radius: 10px;
     font-weight: 600; letter-spacing: .3px;
 }
-.pc-type.LOCAL { background: rgba(16,185,129,.15); color: #34d399; }
-.pc-type.GIT   { background: rgba(99,102,241,.15); color: #a5b4fc; }
+.pc-type.LOCAL { background: #dcfce7; color: #15803d; }
+.pc-type.GIT   { background: #e0e7ff; color: #4338ca; }
 
 .project-card .pc-path {
-    font-size: 12px; color: #94a3b8;
+    font-size: 12px; color: #64748b;
     overflow: hidden; text-overflow: ellipsis;
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
     word-break: break-all;
 }
 .project-card .pc-meta {
     display: flex; justify-content: space-between;
-    font-size: 11px; color: #6b7280;
+    font-size: 11px; color: #94a3b8;
+}
+/* 项目状态徽章 */
+.pc-status {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600;
+    letter-spacing: .3px; white-space: nowrap;
+}
+.pc-status.status-ok   { background: #dcfce7; color: #15803d; }
+.pc-status.status-warn { background: #fef3c7; color: #a16207; }
+.pc-status.status-info { background: #dbeafe; color: #1d4ed8; }
+.pc-status.status-bad  { background: #fee2e2; color: #b91c1c; }
+
+.project-card.card-missing { opacity: .6; border-style: dashed; }
+
+.pc-hint {
+    font-size: 12px; color: #b45309;
+    padding: 6px 10px; border-radius: 6px;
+    background: #fffbeb; border: 1px solid #fde68a;
 }
 .project-card .pc-actions {
     display: flex; gap: 6px; margin-top: auto; padding-top: 4px;
@@ -880,13 +903,103 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
    ============================================================ */
 .current-project-bar {
     display: flex; align-items: center; gap: 10px;
-    background: #1f2937; border: 1px solid #374151;
+    background: #f8fafc; border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 14px;
 }
 .current-project-name {
-    font-weight: 600; color: #f1f5f9; font-size: 14px;
+    font-weight: 600; color: #0f172a; font-size: 14px;
 }
 .current-project-path {
     font-size: 12px; flex: 1;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* === Git 导入进度条 === */
+.git-progress-wrap {
+    flex: 0 0 100%;
+    position: relative; height: 18px; background: #dbeafe; border-radius: 10px;
+    overflow: hidden; margin-top: 6px;
+}
+.git-progress-bar {
+    height: 100%; background: linear-gradient(90deg, #3b82f6, #60a5fa);
+    border-radius: 10px; transition: width .3s ease;
+}
+.git-progress-text {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center; font-size: 12px; font-weight: 600;
+    color: #1e40af; text-shadow: 0 1px 0 rgba(255,255,255,.5);
+}
+
+/* === 扫描入口进度条（路径 A 内嵌） === */
+.scan-progress {
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: #e0edff;
+    border-radius: 8px;
+    border: 1px solid #bfd3f6;
+}
+.scan-progress-bar-wrap {
+    height: 14px; background: #cbd5e1; border-radius: 7px; overflow: hidden;
+}
+.scan-progress-bar {
+    height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+    border-radius: 7px; transition: width .35s ease;
+    width: 0%;
+}
+.scan-progress-text {
+    margin-top: 6px; font-size: 12px; color: #3730a3;
+    display: flex; justify-content: space-between;
+}
+
+/* ============================================================
+   分析路径分组（路径 A 智能扫描 / 路径 B 精确指定）
+   ============================================================ */
+.path-divider {
+    height: 1px; background: var(--border);
+    margin: 16px 0;
+}
+.path-block {
+    padding: 12px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #fafbfc;
+}
+.path-block.path-primary {
+    background: #f0f7ff;
+    border-color: #bfd3f6;
+}
+.path-block.path-secondary {
+    background: #fffbeb;
+    border-color: #fde68a;
+}
+.path-header {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 10px; flex-wrap: wrap;
+}
+.path-title {
+    font-weight: 600; font-size: 14px; color: #0f172a;
+}
+.path-desc {
+    font-size: 12px; color: #64748b;
+}
+.path-actions {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.path-sep {
+    font-size: 12px; color: #94a3b8; font-style: italic;
+}
+.path-form {
+    margin-top: 6px;
+}
+.path-submit {
+    display: flex; align-items: flex-end;
+}
+.path-submit .btn {
+    background: #fef3c7; color: #92400e; border-color: #fde68a;
+}
+.path-submit .btn:hover {
+    background: #fde68a;
+}
+.toolbar-row {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }

@@ -26,11 +26,16 @@ public class MavenCompileService {
     private static final long LOCK_RETRY_WAIT_MS = 4000;
 
     public CompileResult compile(Path projectDir) {
-        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES);
+        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, false);
     }
 
     public CompileResult compile(Path projectDir, long timeout, TimeUnit unit) {
-        return compileWithLockRetry(projectDir, timeout, unit);
+        return compileWithLockRetry(projectDir, timeout, unit, false);
+    }
+
+    /** clean compile（强制全新编译，用于"重新分析"场景） */
+    public CompileResult compileClean(Path projectDir) {
+        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, true);
     }
 
     /**
@@ -41,8 +46,8 @@ public class MavenCompileService {
      * 解决：失败结果若命中锁冲突特征，等待片刻（等对方下载完成）后清理残留的 .part 临时文件
      * 再重试一次——重试时往往已能直接命中本地缓存，不再需要网络。
      */
-    private CompileResult compileWithLockRetry(Path projectDir, long timeout, TimeUnit unit) {
-        CompileResult first = runCompile(projectDir, timeout, unit);
+    private CompileResult compileWithLockRetry(Path projectDir, long timeout, TimeUnit unit, boolean clean) {
+        CompileResult first = runCompile(projectDir, timeout, unit, clean);
         if (first.isSuccess() || !looksLikeRepoLock(first.getOutputTail())) {
             return first;
         }
@@ -53,7 +58,7 @@ public class MavenCompileService {
             return first;
         }
         clearPartialArtifacts();
-        return runCompile(projectDir, timeout, unit);
+        return runCompile(projectDir, timeout, unit, clean);
     }
 
     /** 命中 Maven 本地仓库并发锁特征：出现 .part 文件 + 访问被拒 */
@@ -104,8 +109,11 @@ public class MavenCompileService {
     }
 
     /** 单次实际执行 mvn 编译 */
-    private CompileResult runCompile(Path projectDir, long timeout, TimeUnit unit) {
-        List<String> cmd = new ArrayList<>(Arrays.asList(mavenCommand(), "-B", "-DskipTests", "compile"));
+    private CompileResult runCompile(Path projectDir, long timeout, TimeUnit unit, boolean clean) {
+        // clean=true → mvn clean compile；否则 mvn compile
+        String goal = clean ? "clean" : "compile";
+        List<String> cmd = new ArrayList<>(Arrays.asList(mavenCommand(), "-B", "-DskipTests", goal));
+        if (clean) cmd.add("compile");  // clean compile → 两个 goal
         // 与本工具的仓库定位保持一致：显式覆盖时传给 mvn
         String repoOverride = mavenRepoPath();
         if (repoOverride != null && !repoOverride.trim().isEmpty()) {

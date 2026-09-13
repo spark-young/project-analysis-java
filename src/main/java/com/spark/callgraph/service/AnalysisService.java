@@ -102,9 +102,21 @@ public class AnalysisService {
 
     /** 注册表句柄：供入口扫描等服务复用缓存注册表 */
     public RegistryHandle registryFor(String projectPath) {
-        CacheSlot slot = obtainRegistry(projectPath);
+        return registryFor(projectPath, null);
+    }
+
+    /** 进度回调：progressCb.accept(phase, done, total, desc)
+     *  phase 0=解析classpath, 1=开始索引, 2=索引中（会被 Builder 多次触发，done/total 为 entry 级）, 3=完成 */
+    public RegistryHandle registryFor(String projectPath, ProgressCallback progressCb) {
+        CacheSlot slot = obtainRegistry(projectPath, progressCb);
         return new RegistryHandle(slot.registry, slot.layout.getProjectName(),
                 new ArrayList<>(slot.layout.getWarnings()));
+    }
+
+    /** 自定义进度回调接口 */
+    @FunctionalInterface
+    public interface ProgressCallback {
+        void accept(int phase, int done, int total, String desc);
     }
 
     /** 注册表 + 项目信息（只读快照） */
@@ -217,10 +229,20 @@ public class AnalysisService {
         lastResult = result;
         lastResultProjectPath = req.getProjectPath();
 
-        // --- 6. 持久化到 JSON（多入口模式暂不持久化，键不稳定） ---
-        if (!multiEntry) {
+        // --- 6. 持久化到 JSON（所有分析都落盘，跟着项目走） ---
+        // 单入口：ClassName#methodName_hash.json
+        // 多入口：BatchAnalysis_N_hash.json （N = 入口数）
+        {
             String freqFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
-            cacheService.save(req.getProjectPath(), req.getClassName(), req.getMethodName(),
+            String saveClass, saveMethod;
+            if (multiEntry) {
+                saveClass = "__BatchAnalysis(" + req.getEntries().size() + "个入口)";
+                saveMethod = "";
+            } else {
+                saveClass = req.getClassName();
+                saveMethod = req.getMethodName();
+            }
+            cacheService.save(req.getProjectPath(), saveClass, saveMethod,
                     maxDepth, MAX_NODES, freqFilter, result);
         }
 
@@ -255,17 +277,27 @@ public class AnalysisService {
     }
 
     private synchronized CacheSlot obtainRegistry(String projectPath) {
+        return obtainRegistry(projectPath, null);
+    }
+
+    private synchronized CacheSlot obtainRegistry(String projectPath, ProgressCallback progressCb) {
         String path = projectPath.trim();
         CacheSlot current = cache;
         if (current != null && current.path.equals(path)
                 && System.currentTimeMillis() - current.ts < CACHE_TTL_MS) {
+            if (progressCb != null) progressCb.accept(3, 1, 1, "注册表命中缓存");
             return current;
         }
         if (current != null) {
             closeQuietly(current.layout);
         }
         try {
+            if (progressCb != null) progressCb.accept(0, 0, 3, "解析项目 classpath...");
             ProjectLayout layout = ClasspathResolver.resolve(Paths.get(path), defaultMavenRepo());
+
+            int total = layout.getProjectClassDirs().size() + layout.getDependencyJars().size();
+            if (progressCb != null) progressCb.accept(1, 0, total, "开始索引 " + total + " 个条目...");
+
             ClassMetadataRegistry.Builder builder = ClassMetadataRegistry.builder();
             for (Path dir : layout.getProjectClassDirs()) {
                 builder.addClassesDir(dir, SourceType.PROJECT);
@@ -273,7 +305,13 @@ public class AnalysisService {
             for (Path jar : layout.getDependencyJars()) {
                 builder.addJar(jar, SourceType.DEPENDENCY);
             }
+            builder.withProgress((done, desc) -> {
+                if (progressCb != null) progressCb.accept(2, done, total, desc);
+            });
             ClassMetadataRegistry registry = builder.build();
+
+            if (progressCb != null) progressCb.accept(3, total, total, "注册表构建完成");
+
             CacheSlot slot = new CacheSlot(path, layout, registry);
             cache = slot;
             return slot;

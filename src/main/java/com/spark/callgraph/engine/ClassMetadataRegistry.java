@@ -199,6 +199,13 @@ public final class ClassMetadataRegistry {
 
     public static final class Builder {
         private final List<Entry> entries = new ArrayList<>();
+        private java.util.function.BiConsumer<Integer, String> progressCb;
+
+        /** 设置进度回调：(已处理数, 描述文字) */
+        public Builder withProgress(java.util.function.BiConsumer<Integer, String> cb) {
+            this.progressCb = cb;
+            return this;
+        }
 
         public Builder addClassesDir(Path dir, SourceType source) {
             entries.add(new Entry(dir, source));
@@ -212,11 +219,20 @@ public final class ClassMetadataRegistry {
 
         public ClassMetadataRegistry build() throws IOException {
             ClassMetadataRegistry registry = new ClassMetadataRegistry();
+            int total = entries.size();
+            int done = 0;
             for (Entry entry : entries) {
                 if (Files.isDirectory(entry.path)) {
                     indexDirectory(registry, entry.path, entry.source);
                 } else if (Files.exists(entry.path)) {
                     indexJar(registry, entry.path, entry.source);
+                }
+                done++;
+                if (progressCb != null) {
+                    String name = entry.path.getFileName() == null
+                            ? entry.path.toString()
+                            : entry.path.getFileName().toString();
+                    progressCb.accept(done, "正在索引 " + name + "（" + done + "/" + total + "）");
                 }
             }
             return registry;
