@@ -5,6 +5,24 @@
     const $ = (sel) => document.querySelector(sel);
 
     const els = {
+        // ---- 视图切换 + 项目列表 ----
+        navToProjects: $('#navToProjects'),
+        navToAnalyze: $('#navToAnalyze'),
+        viewProjects: $('#viewProjects'),
+        viewAnalyze: $('#viewAnalyze'),
+        btnRefreshProjects: $('#btnRefreshProjects'),
+        btnImportLocal: $('#btnImportLocal'),
+        projectsList: $('#projectsList'),
+        projectsEmpty: $('#projectsEmpty'),
+        projectsCount: $('#projectsCount'),
+        projectsImportError: $('#projectsImportError'),
+        currentProjectBadge: $('#currentProjectBadge'),
+        currentProjectName: $('#currentProjectName'),
+        currentProjectPath: $('#currentProjectPath'),
+        btnBackToProjects: $('#btnBackToProjects'),
+        btnReAnalyze: $('#btnReAnalyze'),
+
+        // ---- 原有 ----
         projectPath: $('#projectPath'),
         btnInfo: $('#btnInfo'),
         projectInfo: $('#projectInfo'),
@@ -81,6 +99,171 @@
     let activeSearch = null;         // 当前打开的行内搜索栏 { bar, node }
     let freqFilter = 'ALL';          // 方法调用次数分析的来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL
     let noiseRules = [];             // 样板方法过滤规则（从后端加载）
+    let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
+
+    // ==============================================================
+    // 项目列表 / 视图切换 / 持久化项目管理
+    // ==============================================================
+
+    function switchView(to) {
+        const isProjects = to === 'projects';
+        els.viewProjects.hidden = !isProjects;
+        els.viewAnalyze.hidden = isProjects;
+        els.navToProjects.classList.toggle('active', isProjects);
+        els.navToAnalyze.classList.toggle('active', !isProjects);
+    }
+
+    async function refreshProjectList() {
+        try {
+            const resp = await fetch('/api/projects');
+            if (!resp.ok) return;
+            const list = await resp.json();
+            renderProjectList(list);
+        } catch (e) { /* ignore */ }
+    }
+
+    function renderProjectList(list) {
+        list = list || [];
+        els.projectsCount.textContent = list.length + ' 个';
+        if (list.length === 0) {
+            els.projectsEmpty.hidden = false;
+            els.projectsList.innerHTML = '';
+            return;
+        }
+        els.projectsEmpty.hidden = true;
+        els.projectsList.innerHTML = list.map((p) => projectCardHtml(p)).join('');
+        els.projectsList.querySelectorAll('.pc-enter').forEach((btn) => {
+            btn.addEventListener('click', () => enterProject(btn.dataset.id));
+        });
+        els.projectsList.querySelectorAll('.pc-delete').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const name = btn.dataset.name;
+                if (!confirm('确定从列表删除项目"' + name + '"？\n（只移除记录，不删除磁盘文件）')) return;
+                deleteProject(btn.dataset.id);
+            });
+        });
+    }
+
+    function projectCardHtml(p) {
+        const typeLabel = p.type === 'GIT' ? 'GIT' : 'LOCAL';
+        const time = p.lastOpenedAt ? new Date(p.lastOpenedAt).toLocaleString()
+                   : (p.createdAt ? new Date(p.createdAt).toLocaleString() : '');
+        let extraInfo = '';
+        if (p.type === 'GIT' && p.gitUrl) extraInfo = '<div class="pc-path">🔗 ' + escapeHtml(p.gitUrl) + '</div>';
+        return '<div class="project-card">'
+            + '<div class="pc-head">'
+            + '<span class="pc-type ' + typeLabel + '">' + typeLabel + '</span>'
+            + '<span class="pc-name">' + escapeHtml(p.name || '(未命名)') + '</span>'
+            + '</div>'
+            + '<div class="pc-path">📁 ' + escapeHtml(p.projectPath || '') + '</div>'
+            + extraInfo
+            + '<div class="pc-meta"><span>' + escapeHtml(time) + '</span>'
+            + '<span class="hint">id: ' + escapeHtml(p.id ? p.id.slice(0, 8) : '') + '</span></div>'
+            + '<div class="pc-actions">'
+            + '<button type="button" class="btn small primary pc-enter" data-id="' + escapeHtml(p.id) + '">进入分析</button>'
+            + '<button type="button" class="btn small pc-delete" data-id="' + escapeHtml(p.id) + '" data-name="' + escapeHtml(p.name || '') + '">移除</button>'
+            + '</div>'
+            + '</div>';
+    }
+
+    async function enterProject(id) {
+        const listResp = await fetch('/api/projects');
+        const list = await listResp.json();
+        const p = list.find((x) => x.id === id);
+        if (!p) { alert('项目不存在或已被删除'); refreshProjectList(); return; }
+        await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
+        currentProjectId = id;
+        currentResult = null;
+        currentRequest = null;
+        if (p.type === 'GIT') {
+            gitProjectPath = p.projectPath;
+            sourceMode = 'git';
+        } else {
+            gitProjectPath = null;
+            sourceMode = 'local';
+            els.projectPath.value = p.projectPath || '';
+        }
+        setSourceMode(sourceMode);
+        els.currentProjectBadge.textContent = p.type || 'LOCAL';
+        els.currentProjectBadge.className = 'badge source-' + (p.type === 'GIT' ? 'dependency' : 'project').toLowerCase();
+        els.currentProjectName.textContent = p.name || '(未命名)';
+        els.currentProjectPath.textContent = p.projectPath || '';
+        els.entrySection.hidden = true;
+        els.resultSection.hidden = true;
+        els.freqSection.hidden = true;
+        clearError();
+        switchView('analyze');
+    }
+
+    async function deleteProject(id) {
+        try {
+            const resp = await fetch('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' });
+            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || '删除失败'); }
+            if (currentProjectId === id) {
+                currentProjectId = null;
+                switchView('projects');
+            }
+            refreshProjectList();
+        } catch (e) { alert(e.message); }
+    }
+
+    els.btnImportLocal.addEventListener('click', async () => {
+        const path = els.projectPath.value.trim();
+        if (!path) { els.projectsImportError.textContent = '请填写项目路径'; els.projectsImportError.hidden = false; return; }
+        els.projectsImportError.hidden = true;
+        showLoading('正在识别项目……');
+        try {
+            const p = await postJson('/api/projects/local', { path: path });
+            await enterProject(p.id);
+        } catch (e) {
+            els.projectsImportError.textContent = e.message;
+            els.projectsImportError.hidden = false;
+        } finally { hideLoading(); }
+    });
+
+    els.btnRefreshProjects.addEventListener('click', refreshProjectList);
+    els.btnBackToProjects.addEventListener('click', () => {
+        currentProjectId = null;
+        els.entrySection.hidden = true;
+        els.resultSection.hidden = true;
+        els.freqSection.hidden = true;
+        switchView('projects');
+    });
+    els.navToProjects.addEventListener('click', () => { switchView('projects'); refreshProjectList(); });
+    els.navToAnalyze.addEventListener('click', () => {
+        if (!currentProjectId) { alert('请先在项目列表中选择一个项目'); switchView('projects'); return; }
+        switchView('analyze');
+    });
+
+    els.btnReAnalyze.addEventListener('click', async () => {
+        clearError();
+        if (!currentProjectPath()) { showError('当前没有选中项目'); return; }
+        const ok = confirm('将忽略缓存，重新完整分析整个项目。\n对于大型项目可能需要几十秒到几分钟，确认继续？');
+        if (!ok) return;
+        if (els.className.value.trim()) {
+            showLoading('正在强制重新分析（忽略缓存）……');
+            els.resultSection.hidden = true;
+            try {
+                const req = buildRequest(true);
+                const result = await postJson('/api/analyze', req);
+                currentResult = result;
+                currentRequest = req;
+                renderResult(result);
+            } catch (e) { showError(e.message); }
+            finally { hideLoading(); }
+            return;
+        }
+        const path = currentProjectPath();
+        showLoading('正在扫描交易入口（强制重新分析）……');
+        try {
+            const scan = await postJson('/api/scan/entries', { projectPath: path });
+            const allEntryItems = (scan.groups || []).flatMap((g) => g.entries || []);
+            if (allEntryItems.length === 0) { showError('未发现可自动分析的交易入口'); return; }
+            const checked = allEntryItems.map((dto) => ({ dto }));
+            await analyzeCheckedEntries(checked, true);
+        } catch (e) { showError(e.message); }
+        finally { hideLoading(); }
+    });
 
     // ------------------------------------------------------------------
     // 项目来源切换：本地路径 / Git 仓库
@@ -139,12 +322,13 @@
         return data;
     }
 
-    function buildRequest() {
+    function buildRequest(skipCache) {
         return {
             projectPath: currentProjectPath(),
             className: els.className.value.trim(),
             methodName: els.methodName.value.trim() || null,
             maxDepth: parseInt(els.maxDepth.value, 10),
+            skipCache: !!skipCache,
         };
     }
 
@@ -210,7 +394,7 @@
             showLoading('正在索引项目与依赖……');
             els.resultSection.hidden = true;
             try {
-                const req = buildRequest();
+                const req = buildRequest(false);
                 const result = await postJson('/api/analyze', req);
                 currentResult = result;
                 currentRequest = req;
@@ -298,6 +482,7 @@
             if (st.status === 'DONE') {
                 stopGitPoll();
                 gitProjectPath = st.projectPath;
+                refreshProjectList();  // Git 项目已自动注册
                 scanEntries();   // 编译完成自动扫描交易入口
             } else if (st.status === 'FAILED') {
                 stopGitPoll();
@@ -432,10 +617,11 @@
         return entryItems.filter((i) => i.checkEl.checked);
     }
 
-    function buildEntryRequest(checked) {
+    function buildEntryRequest(checked, skipCache) {
         return {
             projectPath: currentProjectPath(),
             maxDepth: parseInt(els.maxDepth.value, 10),
+            skipCache: !!skipCache,
             entries: checked.map((i) => ({
                 className: i.dto.className,
                 methodName: i.dto.methodName,
@@ -444,8 +630,8 @@
         };
     }
 
-    async function analyzeCheckedEntries(checked) {
-        const req = buildEntryRequest(checked);
+    async function analyzeCheckedEntries(checked, skipCache) {
+        const req = buildEntryRequest(checked, skipCache);
         showLoading('正在分析 ' + checked.length + ' 个入口的调用链……');
         els.resultSection.hidden = true;
         try {
@@ -1338,4 +1524,7 @@
 
     // 页面加载时拉取样板方法过滤规则
     loadNoiseRules();
+
+    // 启动：先加载项目列表，默认停在项目列表视图
+    refreshProjectList();
 })();

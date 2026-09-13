@@ -76,7 +76,7 @@ class GitPrepareServiceTest {
     }
 
     private GitPrepareService service(StubCompileService stub, StubJavacService javac) {
-        return new GitPrepareService(new GitCloneService(), stub, javac, temp.toString());
+        return new GitPrepareService(new GitCloneService(), stub, javac, new ProjectRegistry(), temp.toString());
     }
 
     private GitPrepareStatus awaitTerminal(GitPrepareService svc, String jobId) throws InterruptedException {

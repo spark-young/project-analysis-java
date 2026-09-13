@@ -1,5 +1,8 @@
 package com.spark.callgraph.engine.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,7 +18,11 @@ public final class CallNode {
     private boolean cycle;               // 环：已出现在当前路径上
     private boolean truncated;           // 因深度/节点上限截断
 
-    public CallNode(MethodKey method, SourceType source, InvokeType invokeType, int line) {
+    @JsonCreator
+    public CallNode(@JsonProperty("method") MethodKey method,
+                    @JsonProperty("source") SourceType source,
+                    @JsonProperty("invokeType") InvokeType invokeType,
+                    @JsonProperty("line") int line) {
         this.method = method;
         this.source = source;
         this.invokeType = invokeType;

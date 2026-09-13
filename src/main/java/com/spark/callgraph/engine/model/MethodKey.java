@@ -1,5 +1,8 @@
 package com.spark.callgraph.engine.model;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -12,7 +15,10 @@ public final class MethodKey {
     private final String name;
     private final String descriptor; // (I)Ljava/lang/String;
 
-    public MethodKey(String owner, String name, String descriptor) {
+    @JsonCreator
+    public MethodKey(@JsonProperty("owner") String owner,
+                     @JsonProperty("name") String name,
+                     @JsonProperty("descriptor") String descriptor) {
         this.owner = Objects.requireNonNull(owner, "owner");
         this.name = Objects.requireNonNull(name, "name");
         this.descriptor = Objects.requireNonNull(descriptor, "descriptor");

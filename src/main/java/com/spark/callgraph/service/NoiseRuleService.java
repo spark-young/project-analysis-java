@@ -1,5 +1,6 @@
 package com.spark.callgraph.service;
 
+import com.spark.callgraph.config.CallgraphPaths;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spark.callgraph.service.dto.NoiseRule;
@@ -8,7 +9,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -28,8 +28,7 @@ public class NoiseRuleService {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /** 规则文件路径 */
-    private static final Path RULES_FILE = Paths.get(
-            System.getProperty("user.home"), ".callgraph", "noise-rules.json");
+    private static final Path RULES_FILE = CallgraphPaths.noiseRulesFile();
 
     /** 默认规则集 */
     private static final List<NoiseRule> DEFAULT_RULES = Arrays.asList(
@@ -128,6 +127,35 @@ public class NoiseRuleService {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 返回方法命中的规则名称（多条用逗号分隔），未命中返回 null。
+     */
+    public String getMatchedRule(String methodIdentifier, String source) {
+        if (methodIdentifier == null) return null;
+        List<String> names = new ArrayList<>();
+        int hash = methodIdentifier.indexOf('#');
+        String className = hash >= 0 ? methodIdentifier.substring(0, hash) : "";
+        String methodWithArgs = hash >= 0 ? methodIdentifier.substring(hash + 1) : methodIdentifier;
+        int paren = methodWithArgs.indexOf('(');
+        String methodName = paren >= 0 ? methodWithArgs.substring(0, paren) : methodWithArgs;
+        int paramCount = parseParamCount(methodWithArgs);
+
+        for (NoiseRule r : rules) {
+            if (!r.isEnabled()) continue;
+            if (r.getSource() != null && !r.getSource().isEmpty()
+                    && !"ALL".equalsIgnoreCase(r.getSource())) {
+                if (!r.getSource().equalsIgnoreCase(source)) continue;
+            }
+            if (!matches(r.getMethodPattern(), methodName)) continue;
+            if (r.getClassPattern() != null && !r.getClassPattern().isEmpty()) {
+                if (className == null || !matches(r.getClassPattern(), className)) continue;
+            }
+            if (r.getParamCount() != null && r.getParamCount() != paramCount) continue;
+            names.add(r.getName());
+        }
+        return names.isEmpty() ? null : String.join(", ", names);
     }
 
     /**

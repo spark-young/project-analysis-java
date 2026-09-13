@@ -1,5 +1,6 @@
 package com.spark.callgraph.service;
 
+import com.spark.callgraph.config.CallgraphPaths;
 import com.spark.callgraph.service.dto.GitPrepareRequest;
 import com.spark.callgraph.service.dto.GitPrepareStatus;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,6 +29,7 @@ public class GitPrepareService {
     private final GitCloneService gitCloneService;
     private final MavenCompileService mavenCompileService;
     private final JavacCompileService javacCompileService;
+    private final ProjectRegistry registry;
     private final Map<String, Job> jobs = new ConcurrentHashMap<>();
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "git-prepare");
@@ -49,10 +51,12 @@ public class GitPrepareService {
 
     public GitPrepareService(GitCloneService gitCloneService, MavenCompileService mavenCompileService,
                              JavacCompileService javacCompileService,
+                             ProjectRegistry registry,
                              @Value("${callgraph.git.work-root:}") String workRootConfig) {
         this.gitCloneService = gitCloneService;
         this.mavenCompileService = mavenCompileService;
         this.javacCompileService = javacCompileService;
+        this.registry = registry;
         this.workRootConfig = workRootConfig == null ? "" : workRootConfig.trim();
     }
 
@@ -137,6 +141,29 @@ public class GitPrepareService {
             job.projectPath = compileDir.toString();
             job.status = "DONE";
             job.message = "";
+
+            // 自动注册到项目注册表
+            try {
+                ProjectRegistry.RegisteredProject existing = registry.getByPath(job.projectPath);
+                if (existing == null) {
+                    ProjectRegistry.RegisteredProject p = new ProjectRegistry.RegisteredProject();
+                    p.id = UUID.randomUUID().toString();
+                    p.name = job.projectName;
+                    p.type = "GIT";
+                    p.projectPath = job.projectPath;
+                    p.gitUrl = repoUrl;
+                    p.gitBranch = branch == null ? "" : branch;
+                    p.createdAt = System.currentTimeMillis();
+                    p.lastOpenedAt = p.createdAt;
+                    registry.save(p);
+                } else {
+                    existing.lastOpenedAt = System.currentTimeMillis();
+                    existing.lastError = null;
+                    registry.save(existing);
+                }
+            } catch (Exception ex) {
+                // 注册失败不影响任务状态
+            }
         });
         return status(job.id);
     }
@@ -281,14 +308,15 @@ public class GitPrepareService {
     }
 
     /**
- * 选择一个"确实可写"的 Git 固定工作根目录（持久缓存，跨重启复用）。
- * 候选顺序：
- *   1) callgraph.git.work-root 配置（显式指定，不可写则直接报错，不静默降级）；
- *   2) Windows 真实用户目录 %USERPROFILE% 下的 .callgraph\workspaces（服务账户 sparks 的主目录通常在此，可靠可写）；
- *   3) JVM user.home 下的 .callgraph\workspaces（兜底）；
- *   4) 系统临时目录下的 callgraph-workspaces（最后兜底；重启系统会清空，缓存失效）。
- * 每个候选都做真实写探测（建目录 + 写删探针文件），避免"目录已存在但无写权限"的假成功。
- */
+     * 选择一个"确实可写"的 Git 固定工作根目录（持久缓存，跨重启复用）。
+     * 候选顺序：
+     *   1) callgraph.git.work-root 配置（显式指定，不可写则直接报错，不静默降级）；
+     *   2) callgraph 数据目录下的 workspaces（默认 D:\.callgraph\workspaces）；
+     *   3) Windows 真实用户目录 %USERPROFILE% 下的 .callgraph\workspaces（兜底）；
+     *   4) JVM user.home 下的 .callgraph\workspaces（兜底）；
+     *   5) 系统临时目录下的 callgraph-workspaces（最后兜底；重启系统会清空，缓存失效）。
+     * 每个候选都做真实写探测（建目录 + 写删探针文件），避免"目录已存在但无写权限"的假成功。
+     */
     private Path resolveAvailableWorkRoot(Job job) {
         // 1) 显式配置：不可写就直接报错让用户修正
         if (!workRootConfig.isEmpty()) {
@@ -302,7 +330,13 @@ public class GitPrepareService {
             return null;
         }
 
-        // 2) %USERPROFILE%（Windows 真实用户目录，最匹配服务账户）
+        // 2) callgraph 数据目录（默认 D:\.callgraph\workspaces）
+        Path defaultWs = CallgraphPaths.workspacesDir();
+        if (probeWritable(defaultWs)) {
+            return defaultWs;
+        }
+
+        // 3) %USERPROFILE%（Windows 真实用户目录，最匹配服务账户）
         String profile = System.getenv("USERPROFILE");
         if (profile != null && !profile.trim().isEmpty()) {
             Path cand = Paths.get(profile, ".callgraph", "workspaces");
@@ -311,7 +345,7 @@ public class GitPrepareService {
             }
         }
 
-        // 3) JVM user.home
+        // 4) JVM user.home
         String home = System.getProperty("user.home");
         if (home != null && !home.trim().isEmpty() && !".".equals(home.trim())) {
             Path cand = Paths.get(home, ".callgraph", "workspaces");
@@ -320,7 +354,7 @@ public class GitPrepareService {
             }
         }
 
-        // 4) 系统临时目录（保证可用；重启失效）
+        // 5) 系统临时目录（保证可用；重启失效）
         String tmp = System.getProperty("java.io.tmpdir");
         if (tmp != null && !tmp.trim().isEmpty()) {
             Path cand = Paths.get(tmp, "callgraph-workspaces");

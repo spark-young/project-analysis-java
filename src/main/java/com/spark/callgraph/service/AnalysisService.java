@@ -15,6 +15,8 @@ import com.spark.callgraph.service.dto.EntryRef;
 import com.spark.callgraph.service.dto.MethodCaller;
 import com.spark.callgraph.service.dto.MethodFrequency;
 import com.spark.callgraph.service.dto.ProjectInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +29,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -36,6 +39,8 @@ import java.util.stream.Stream;
 @Service
 public class AnalysisService {
 
+    private static final Logger log = LoggerFactory.getLogger(AnalysisService.class);
+
     private static final int DEFAULT_MAX_DEPTH = 20;
     private static final int MAX_NODES = 50000;
     private static final long CACHE_TTL_MS = 5 * 60 * 1000;
@@ -43,11 +48,21 @@ public class AnalysisService {
     private static final int ACC_BRIDGE = 0x0040;
     /** 方法调用次数分析：展示全部去重方法（不截断，按被调次数降序） */
     private static final int DEFAULT_METHOD_TOP_N = Integer.MAX_VALUE;
-    /** 每个方法调用方捕获/展示上限 */
-    private static final int CALLER_CAPTURE_LIMIT = 20;
+    /** 每个方法调用方采集上限（不再截断，完整采集供单方法导出使用） */
+    private static final int CALLER_CAPTURE_LIMIT = Integer.MAX_VALUE;
 
     /** 单槽缓存：同项目连续分析（树/Excel/类搜索）无需重建注册表 */
     private volatile CacheSlot cache;
+
+    /** 最近一次分析结果缓存，供 Excel 导出复用，避免重复分析 */
+    private volatile AnalysisResult lastResult;
+    private volatile String lastResultProjectPath;
+
+    private final AnalysisCacheService cacheService;
+
+    public AnalysisService(AnalysisCacheService cacheService) {
+        this.cacheService = cacheService;
+    }
 
     private static final class CacheSlot {
         final String path;
@@ -140,15 +155,35 @@ public class AnalysisService {
                 ? DEFAULT_MAX_DEPTH
                 : Math.max(1, Math.min(req.getMaxDepth(), 50));
 
+        // --- 1. 持久化缓存命中检查（多入口模式不走缓存） ---
+        boolean useCache = req.getSkipCache() == null || !req.getSkipCache();
+        boolean multiEntry = req.getEntries() != null && !req.getEntries().isEmpty();
+        if (useCache && !multiEntry) {
+            String freqFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
+            Optional<AnalysisResult> cached = cacheService.load(
+                    req.getProjectPath(), req.getClassName(), req.getMethodName(),
+                    maxDepth, MAX_NODES, freqFilter);
+            if (cached.isPresent()) {
+                AnalysisResult hit = cached.get();
+                hit.setStats(hit.getStats() == null ? new AnalysisResult.Stats() : hit.getStats());
+                hit.getStats().setDurationMs(System.currentTimeMillis() - start);
+                lastResult = hit;
+                lastResultProjectPath = req.getProjectPath();
+                log.info("[缓存] 命中持久化缓存，跳过完整分析 ({}ms)", hit.getStats().getDurationMs());
+                return hit;
+            }
+        }
+
+        // --- 2. 注册表加载 ---
         CacheSlot slot = obtainRegistry(req.getProjectPath());
         ClassMetadataRegistry registry = slot.registry;
         ProjectLayout layout = slot.layout;
 
+        // --- 3. 确定入口 ---
         List<MethodKey> roots;
         String className = null;
         String methodName = null;
-        if (req.getEntries() != null && !req.getEntries().isEmpty()) {
-            // 多入口模式（来自入口扫描勾选）
+        if (multiEntry) {
             roots = new ArrayList<>();
             for (EntryRef ref : req.getEntries()) {
                 String owner = resolveEntryClass(registry, ref.getClassName());
@@ -164,6 +199,7 @@ public class AnalysisService {
                     ? null : req.getMethodName().trim();
         }
 
+        // --- 4. 执行调用链分析 ---
         CallGraphBuilder builder = new CallGraphBuilder(registry);
         List<CallNode> trees = builder.buildRoots(roots, maxDepth, MAX_NODES);
 
@@ -176,7 +212,28 @@ public class AnalysisService {
         result.setRoots(trees);
         result.setWarnings(new ArrayList<>(layout.getWarnings()));
         fillStats(result, trees, System.currentTimeMillis() - start);
+
+        // --- 5. 内存缓存（供 Excel 导出复用） ---
+        lastResult = result;
+        lastResultProjectPath = req.getProjectPath();
+
+        // --- 6. 持久化到 JSON（多入口模式暂不持久化，键不稳定） ---
+        if (!multiEntry) {
+            String freqFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
+            cacheService.save(req.getProjectPath(), req.getClassName(), req.getMethodName(),
+                    maxDepth, MAX_NODES, freqFilter, result);
+        }
+
         return result;
+    }
+
+    /** 获取最近一次分析结果（仅当项目路径匹配时），用于 Excel 导出避免重复分析 */
+    public AnalysisResult getLastResult(String projectPath) {
+        if (lastResult != null && projectPath != null
+                && projectPath.equals(lastResultProjectPath)) {
+            return lastResult;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------

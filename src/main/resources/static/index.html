@@ -8,172 +8,228 @@
 </head>
 <body>
 <header class="header">
-    <div class="container">
-        <h1>Java 方法调用链分析工具</h1>
-        <p class="subtitle">静态分析 · 项目方法 + 依赖方法全链路 · JDK 方法已排除 · 本地路径 / Git 拉取 · 交易入口分析</p>
+    <div class="container header-row">
+        <div class="header-left">
+            <h1>Java 方法调用链分析工具</h1>
+            <p class="subtitle">静态分析 · 全链路 · 项目持久化</p>
+        </div>
+        <div class="header-right">
+            <button id="navToProjects" type="button" class="nav-btn active" title="项目列表">
+                <span class="nav-ico">📁</span><span class="nav-label">项目列表</span>
+            </button>
+            <button id="navToAnalyze" type="button" class="nav-btn" title="当前项目分析">
+                <span class="nav-ico">🔍</span><span class="nav-label">分析视图</span>
+            </button>
+        </div>
     </div>
 </header>
 
 <main class="container">
-    <!-- 分析条件 -->
-    <section class="card">
-        <div class="source-tabs">
-            <button id="tabLocal" type="button" class="source-tab active">本地项目</button>
-            <button id="tabGit" type="button" class="source-tab">Git 仓库</button>
-        </div>
 
-        <div id="paneLocal" class="form-grid">
-            <div class="form-item span-2">
-                <label for="projectPath">项目路径 <span class="req">*</span></label>
-                <div class="input-group">
-                    <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（需已编译，或指向 .jar 文件）">
-                    <button id="btnInfo" type="button" class="btn ghost">检查</button>
+    <!-- ============================================================= -->
+    <!-- 视图 1：项目列表                                               -->
+    <!-- ============================================================= -->
+    <section id="viewProjects">
+
+        <!-- 导入新项目 -->
+        <div class="card">
+            <div class="source-tabs">
+                <button id="tabLocal" type="button" class="source-tab active">导入本地项目</button>
+                <button id="tabGit" type="button" class="source-tab">导入 Git 仓库</button>
+            </div>
+
+            <div id="paneLocal" class="form-grid">
+                <div class="form-item span-2">
+                    <label for="projectPath">项目路径 <span class="req">*</span></label>
+                    <div class="input-group">
+                        <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（需已编译，或指向 .jar 文件）">
+                        <button id="btnInfo" type="button" class="btn ghost">检查</button>
+                        <button id="btnImportLocal" type="button" class="btn primary">导入项目</button>
+                    </div>
+                    <div id="projectInfo" class="hint"></div>
                 </div>
-                <div id="projectInfo" class="hint"></div>
             </div>
-        </div>
 
-        <div id="paneGit" class="form-grid" hidden>
-            <div class="form-item span-2">
-                <label for="repoUrl">仓库地址 <span class="req">*</span></label>
-                <div class="input-group">
-                    <input id="repoUrl" type="text" placeholder="例如 https://gitlab.example.com/group/repo.git">
-                    <button id="btnGitPrepare" type="button" class="btn primary">拉取并编译</button>
+            <div id="paneGit" class="form-grid" hidden>
+                <div class="form-item span-2">
+                    <label for="repoUrl">仓库地址 <span class="req">*</span></label>
+                    <div class="input-group">
+                        <input id="repoUrl" type="text" placeholder="例如 https://gitlab.example.com/group/repo.git">
+                        <button id="btnGitPrepare" type="button" class="btn primary">拉取并编译</button>
+                    </div>
+                    <div class="hint">GitLab / GitHub / 内网 Git 均可；工具自动克隆 → mvn compile → 扫描交易入口</div>
                 </div>
-                <div class="hint">GitLab / GitHub / 内网 Git 均可；工具自动克隆 → mvn compile → 扫描交易入口</div>
+                <div class="form-item">
+                    <label for="gitBranch">分支 <span class="opt">（可选）</span></label>
+                    <input id="gitBranch" type="text" placeholder="默认主分支">
+                </div>
+                <div class="form-item">
+                    <label for="gitToken">访问 Token <span class="opt">（私有仓库填）</span></label>
+                    <input id="gitToken" type="password" placeholder="PAT，公开仓库可不填">
+                </div>
+                <div class="form-item">
+                    <label for="gitUsername">认证用户名 <span class="opt">（可选）</span></label>
+                    <input id="gitUsername" type="text" placeholder="默认 github→token，其余→oauth2">
+                </div>
+                <div class="form-item span-2">
+                    <div id="gitStatus" class="git-status" hidden></div>
+                </div>
             </div>
-            <div class="form-item">
-                <label for="gitBranch">分支 <span class="opt">（可选）</span></label>
-                <input id="gitBranch" type="text" placeholder="默认主分支">
-            </div>
-            <div class="form-item">
-                <label for="gitToken">访问 Token <span class="opt">（私有仓库填）</span></label>
-                <input id="gitToken" type="password" placeholder="PAT，公开仓库可不填">
-            </div>
-            <div class="form-item">
-                <label for="gitUsername">认证用户名 <span class="opt">（可选）</span></label>
-                <input id="gitUsername" type="text" placeholder="默认 github→token，其余→oauth2">
-            </div>
-            <div class="form-item span-2">
-                <div id="gitStatus" class="git-status" hidden></div>
-            </div>
+            <div id="projectsImportError" class="error-banner" hidden></div>
         </div>
 
-        <div class="form-grid form-grid-common">
-            <div class="form-item">
-                <label for="className">类名 <span class="opt">（手动分析时填）</span></label>
-                <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
-                <datalist id="classList"></datalist>
-                <div class="hint">支持自动补全；同名类需用全限定名</div>
+        <!-- 项目列表 -->
+        <div class="card">
+            <div class="result-head">
+                <div class="result-title">
+                    已导入项目 <span id="projectsCount" class="hint"></span>
+                </div>
+                <div class="tree-controls">
+                    <button id="btnRefreshProjects" type="button" class="btn small">↻ 刷新</button>
+                </div>
             </div>
-            <div class="form-item">
-                <label for="methodName">方法名 <span class="opt">（可选）</span></label>
-                <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
-                <div class="hint">重载方法会全部作为入口</div>
+            <div id="projectsEmpty" class="empty-state">
+                <div class="empty-ico">📂</div>
+                <div>还没有导入任何项目</div>
+                <div class="hint">从上方选择本地路径或 Git 仓库开始</div>
             </div>
-            <div class="form-item">
-                <label for="maxDepth">分析深度</label>
-                <select id="maxDepth">
-                    <option value="5">5 层</option>
-                    <option value="10">10 层</option>
-                    <option value="15">15 层</option>
-                    <option value="20" selected>20 层（默认）</option>
-                    <option value="30">30 层</option>
+            <div id="projectsList" class="projects-grid"></div>
+        </div>
+    </section>
+
+    <!-- ============================================================= -->
+    <!-- 视图 2：项目分析详情                                           -->
+    <!-- ============================================================= -->
+    <section id="viewAnalyze" hidden>
+
+        <!-- 分析条件 -->
+        <div class="card">
+            <div class="form-grid form-grid-common">
+                <div class="form-item span-2">
+                    <label>当前项目</label>
+                    <div class="current-project-bar">
+                        <span id="currentProjectBadge" class="badge source-project">LOCAL</span>
+                        <span id="currentProjectName" class="current-project-name">—</span>
+                        <span id="currentProjectPath" class="current-project-path hint"></span>
+                        <button id="btnBackToProjects" type="button" class="btn small ghost">← 返回列表</button>
+                    </div>
+                </div>
+                <div class="form-item">
+                    <label for="className">类名 <span class="opt">（手动分析时填）</span></label>
+                    <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
+                    <datalist id="classList"></datalist>
+                    <div class="hint">支持自动补全；同名类需用全限定名</div>
+                </div>
+                <div class="form-item">
+                    <label for="methodName">方法名 <span class="opt">（可选）</span></label>
+                    <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
+                    <div class="hint">重载方法会全部作为入口</div>
+                </div>
+                <div class="form-item">
+                    <label for="maxDepth">分析深度</label>
+                    <select id="maxDepth">
+                        <option value="5">5 层</option>
+                        <option value="10">10 层</option>
+                        <option value="15">15 层</option>
+                        <option value="20" selected>20 层（默认）</option>
+                        <option value="30">30 层</option>
+                    </select>
+                    <div class="hint">接口/抽象分派的实现层占一层</div>
+                </div>
+                <div class="form-item actions">
+                    <button id="btnScanEntries" type="button" class="btn">扫描交易入口</button>
+                    <button id="btnAnalyze" type="button" class="btn primary">开始分析</button>
+                    <button id="btnReAnalyze" type="button" class="btn" title="忽略缓存，强制重新完整分析整个项目">重新分析</button>
+                    <button id="btnExcel" type="button" class="btn" disabled>下载 Excel 报告</button>
+                </div>
+            </div>
+            <div id="errorBanner" class="error-banner" hidden></div>
+        </div>
+
+        <!-- 交易入口扫描 -->
+        <section id="entrySection" class="card" hidden>
+            <div class="result-head">
+                <div class="result-title">
+                    交易入口 <span id="entryProjectName" class="entry-project-name"></span>
+                </div>
+                <div class="tree-controls">
+                    <input id="entryFilter" type="text" class="entry-filter"
+                           placeholder="按 URL / 类名 / 方法名过滤">
+                    <button id="btnEntryAll" type="button" class="btn small">全选</button>
+                    <button id="btnEntryNone" type="button" class="btn small">全不选</button>
+                </div>
+            </div>
+            <div id="entryGroups" class="entry-groups"></div>
+            <div class="entry-actions">
+                <span id="entryCount" class="hint"></span>
+                <button id="btnAnalyzeEntries" type="button" class="btn primary">分析勾选入口</button>
+            </div>
+        </section>
+
+        <!-- 结果 -->
+        <section id="resultSection" class="card" hidden>
+            <div class="result-head">
+                <div class="result-title">
+                    <span id="resultTitle"></span>
+                </div>
+                <div class="tree-controls">
+                    <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
+                    <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
+                </div>
+            </div>
+
+            <div id="statsBar" class="stats-bar"></div>
+            <div id="warnings" class="warnings" hidden></div>
+
+            <div class="legend">
+                <span class="badge source-project">项目</span>
+                <span class="badge source-dependency">依赖</span>
+                <span class="badge source-external">外部</span>
+                <span class="legend-sep">|</span>
+                <span class="badge cycle">♻ 环</span>
+                <span class="badge truncated">✂ 截断</span>
+                <span class="legend-hint">点击节点行展开 / 收起 · 悬停行点 🔎 搜索其调用链是否调用了某方法</span>
+            </div>
+
+            <div class="global-search">
+                <input id="globalSearchInput" type="text"
+                       placeholder="全局搜索：所有入口方法的调用链是否调用了某方法（如 buildRoots / ClassReader）">
+                <select id="globalSearchMode">
+                    <option value="fuzzy">模糊</option>
+                    <option value="exact">精确</option>
                 </select>
-                <div class="hint">接口/抽象分派的实现层占一层</div>
+                <button id="btnGlobalSearch" type="button" class="btn small">搜索</button>
+                <button id="btnGlobalSearchClear" type="button" class="btn small" title="清除高亮">清除</button>
+                <span id="globalSearchResult" class="search-result"></span>
+                <div id="globalSearchChips" class="search-chips"></div>
             </div>
-            <div class="form-item actions">
-                <button id="btnScanEntries" type="button" class="btn">扫描交易入口</button>
-                <button id="btnAnalyze" type="button" class="btn primary">开始分析</button>
-                <button id="btnExcel" type="button" class="btn" disabled>下载 Excel 报告</button>
-            </div>
-        </div>
-        <div id="errorBanner" class="error-banner" hidden></div>
-    </section>
 
-    <!-- 交易入口扫描 -->
-    <section id="entrySection" class="card" hidden>
-        <div class="result-head">
-            <div class="result-title">
-                交易入口 <span id="entryProjectName" class="entry-project-name"></span>
-            </div>
-            <div class="tree-controls">
-                <input id="entryFilter" type="text" class="entry-filter"
-                       placeholder="按 URL / 类名 / 方法名过滤">
-                <button id="btnEntryAll" type="button" class="btn small">全选</button>
-                <button id="btnEntryNone" type="button" class="btn small">全不选</button>
-            </div>
-        </div>
-        <div id="entryGroups" class="entry-groups"></div>
-        <div class="entry-actions">
-            <span id="entryCount" class="hint"></span>
-            <button id="btnAnalyzeEntries" type="button" class="btn primary">分析勾选入口</button>
-        </div>
-    </section>
+            <div id="tree" class="tree"></div>
+        </section>
 
-    <!-- 结果 -->
-    <section id="resultSection" class="card" hidden>
-        <div class="result-head">
-            <div class="result-title">
-                <span id="resultTitle"></span>
+        <!-- 方法调用次数分析 -->
+        <section id="freqSection" class="card" hidden>
+            <div class="result-head">
+                <div class="result-title">
+                    <span>方法调用次数分析</span>
+                    <span class="hint">所有出现的方法按被调次数降序排列 · 点击行展开查看调用位置</span>
+                </div>
+                <div class="tree-controls">
+                    <button id="btnFreqExpandAll" type="button" class="btn small">全部展开</button>
+                    <button id="btnFreqCollapseAll" type="button" class="btn small">全部收起</button>
+                    <button id="btnFreqRefresh" type="button" class="btn small">↻ 刷新过滤</button>
+                    <button id="btnNoiseRules" type="button" class="btn small">⚙ 过滤规则</button>
+                </div>
             </div>
-            <div class="tree-controls">
-                <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
-                <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
+            <div id="freqStatsBar" class="stats-bar"></div>
+            <div id="freqFilterBar" class="filter-bar">
+                <button type="button" class="filter-chip active" data-filter="ALL">全部</button>
+                <button type="button" class="filter-chip" data-filter="PROJECT">项目</button>
+                <button type="button" class="filter-chip" data-filter="DEPENDENCY">依赖</button>
+                <button type="button" class="filter-chip" data-filter="EXTERNAL">外部</button>
             </div>
-        </div>
-
-        <div id="statsBar" class="stats-bar"></div>
-        <div id="warnings" class="warnings" hidden></div>
-
-        <div class="legend">
-            <span class="badge source-project">项目</span>
-            <span class="badge source-dependency">依赖</span>
-            <span class="badge source-external">外部</span>
-            <span class="legend-sep">|</span>
-            <span class="badge cycle">♻ 环</span>
-            <span class="badge truncated">✂ 截断</span>
-            <span class="legend-hint">点击节点行展开 / 收起 · 悬停行点 🔎 搜索其调用链是否调用了某方法</span>
-        </div>
-
-        <div class="global-search">
-            <input id="globalSearchInput" type="text"
-                   placeholder="全局搜索：所有入口方法的调用链是否调用了某方法（如 buildRoots / ClassReader）">
-            <select id="globalSearchMode">
-                <option value="fuzzy">模糊</option>
-                <option value="exact">精确</option>
-            </select>
-            <button id="btnGlobalSearch" type="button" class="btn small">搜索</button>
-            <button id="btnGlobalSearchClear" type="button" class="btn small" title="清除高亮">清除</button>
-            <span id="globalSearchResult" class="search-result"></span>
-            <div id="globalSearchChips" class="search-chips"></div>
-        </div>
-
-        <div id="tree" class="tree"></div>
-    </section>
-
-    <!-- 方法调用次数分析 -->
-    <section id="freqSection" class="card" hidden>
-        <div class="result-head">
-            <div class="result-title">
-                <span>方法调用次数分析</span>
-                <span class="hint">所有出现的方法按被调次数降序排列 · 点击行展开查看调用位置</span>
-            </div>
-            <div class="tree-controls">
-                <button id="btnFreqExpandAll" type="button" class="btn small">全部展开</button>
-                <button id="btnFreqCollapseAll" type="button" class="btn small">全部收起</button>
-                <button id="btnFreqRefresh" type="button" class="btn small">↻ 刷新过滤</button>
-                <button id="btnNoiseRules" type="button" class="btn small">⚙ 过滤规则</button>
-            </div>
-        </div>
-        <div id="freqStatsBar" class="stats-bar"></div>
-        <div id="freqFilterBar" class="filter-bar">
-            <button type="button" class="filter-chip active" data-filter="ALL">全部</button>
-            <button type="button" class="filter-chip" data-filter="PROJECT">项目</button>
-            <button type="button" class="filter-chip" data-filter="DEPENDENCY">依赖</button>
-            <button type="button" class="filter-chip" data-filter="EXTERNAL">外部</button>
-        </div>
-        <div id="freqList" class="freq-list"></div>
+            <div id="freqList" class="freq-list"></div>
+        </section>
     </section>
 
     <!-- 样板方法过滤规则管理弹窗 -->
