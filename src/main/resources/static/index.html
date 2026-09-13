@@ -120,15 +120,10 @@
             <div class="tree-controls">
                 <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
                 <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
-                <button id="btnTopMethods" type="button" class="btn small" disabled>高频方法 (Top 20)</button>
             </div>
         </div>
 
         <div id="statsBar" class="stats-bar"></div>
-        <div id="topMethodsPanel" class="card" hidden>
-            <div class="panel-head">高频被调方法 <span class="hint">点击方法行查看调用方与行号</span></div>
-            <div id="topMethodsList"></div>
-        </div>
         <div id="warnings" class="warnings" hidden></div>
 
         <div class="legend">
@@ -156,6 +151,57 @@
 
         <div id="tree" class="tree"></div>
     </section>
+
+    <!-- 方法调用次数分析 -->
+    <section id="freqSection" class="card" hidden>
+        <div class="result-head">
+            <div class="result-title">
+                <span>方法调用次数分析</span>
+                <span class="hint">所有出现的方法按被调次数降序排列 · 点击行展开查看调用位置</span>
+            </div>
+            <div class="tree-controls">
+                <button id="btnFreqExpandAll" type="button" class="btn small">全部展开</button>
+                <button id="btnFreqCollapseAll" type="button" class="btn small">全部收起</button>
+                <button id="btnFreqRefresh" type="button" class="btn small">↻ 刷新过滤</button>
+                <button id="btnNoiseRules" type="button" class="btn small">⚙ 过滤规则</button>
+            </div>
+        </div>
+        <div id="freqStatsBar" class="stats-bar"></div>
+        <div id="freqFilterBar" class="filter-bar">
+            <button type="button" class="filter-chip active" data-filter="ALL">全部</button>
+            <button type="button" class="filter-chip" data-filter="PROJECT">项目</button>
+            <button type="button" class="filter-chip" data-filter="DEPENDENCY">依赖</button>
+            <button type="button" class="filter-chip" data-filter="EXTERNAL">外部</button>
+        </div>
+        <div id="freqList" class="freq-list"></div>
+    </section>
+
+    <!-- 样板方法过滤规则管理弹窗 -->
+    <div id="noiseRulesOverlay" class="overlay" hidden></div>
+    <div id="noiseRulesPanel" class="card noise-rules-panel" hidden>
+        <div class="nr-header">
+            <div class="nr-header-text">
+                <span class="panel-title">样板方法过滤规则</span>
+                <span class="hint">命中规则的方法将从列表和 Excel 导出中过滤掉</span>
+            </div>
+            <div class="nr-header-actions">
+                <button id="btnNoiseRuleAdd" type="button" class="btn small">+ 新增规则</button>
+                <button id="btnNoiseRuleReset" type="button" class="btn small warn">恢复默认</button>
+                <button id="btnNoiseRuleSave" type="button" class="btn small primary">保存生效</button>
+                <button id="btnNoiseRulesClose" type="button" class="btn-close-corner" aria-label="关闭">✕</button>
+            </div>
+        </div>
+        <div class="nr-toolbar">
+            <button id="btnNoiseRuleSelectAll" type="button" class="btn small">全选启用</button>
+            <button id="btnNoiseRuleSelectNone" type="button" class="btn small">全不选</button>
+            <button id="btnNoiseRuleInvert" type="button" class="btn small">反选</button>
+            <span class="nr-toolbar-sep"></span>
+            <button id="btnNoiseRuleExport" type="button" class="btn small">导出</button>
+            <button id="btnNoiseRuleImport" type="button" class="btn small">导入</button>
+            <input id="noiseRuleImportFile" type="file" accept=".json,application/json" hidden>
+        </div>
+        <div id="noiseRulesList" class="nr-list"></div>
+    </div>
 </main>
 
 <div id="loading" class="loading-overlay" hidden>

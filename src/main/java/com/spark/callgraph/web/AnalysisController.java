@@ -84,7 +84,8 @@ public class AnalysisController {
     @PostMapping("/report/excel")
     public ResponseEntity<byte[]> excel(@RequestBody AnalyzeRequest req) throws IOException {
         AnalysisResult result = analysisService.analyze(req);
-        byte[] bytes = excelReportGenerator.generate(result);
+        String srcFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
+        byte[] bytes = excelReportGenerator.generate(result, srcFilter);
         StringBuilder name = new StringBuilder("callgraph_")
                 .append(result.getClassName() == null
                         ? "entries_" + result.getRoots().size()

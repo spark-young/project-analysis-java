@@ -41,9 +41,27 @@
         tree: $('#tree'),
         btnExpandAll: $('#btnExpandAll'),
         btnCollapseAll: $('#btnCollapseAll'),
-        btnTopMethods: $('#btnTopMethods'),
-        topMethodsPanel: $('#topMethodsPanel'),
-        topMethodsList: $('#topMethodsList'),
+        freqSection: $('#freqSection'),
+        freqStatsBar: $('#freqStatsBar'),
+        freqFilterBar: $('#freqFilterBar'),
+        freqList: $('#freqList'),
+        btnFreqExpandAll: $('#btnFreqExpandAll'),
+        btnFreqCollapseAll: $('#btnFreqCollapseAll'),
+        btnFreqRefresh: $('#btnFreqRefresh'),
+        btnNoiseRules: $('#btnNoiseRules'),
+        noiseRulesOverlay: $('#noiseRulesOverlay'),
+        noiseRulesPanel: $('#noiseRulesPanel'),
+        noiseRulesList: $('#noiseRulesList'),
+        btnNoiseRulesClose: $('#btnNoiseRulesClose'),
+        btnNoiseRuleAdd: $('#btnNoiseRuleAdd'),
+        btnNoiseRuleReset: $('#btnNoiseRuleReset'),
+        btnNoiseRuleSave: $('#btnNoiseRuleSave'),
+        btnNoiseRuleSelectAll: $('#btnNoiseRuleSelectAll'),
+        btnNoiseRuleSelectNone: $('#btnNoiseRuleSelectNone'),
+        btnNoiseRuleInvert: $('#btnNoiseRuleInvert'),
+        btnNoiseRuleExport: $('#btnNoiseRuleExport'),
+        btnNoiseRuleImport: $('#btnNoiseRuleImport'),
+        noiseRuleImportFile: $('#noiseRuleImportFile'),
         globalSearchInput: $('#globalSearchInput'),
         globalSearchMode: $('#globalSearchMode'),
         btnGlobalSearch: $('#btnGlobalSearch'),
@@ -61,6 +79,8 @@
     const nodeRegistry = new Map();  // 数据节点 → { rowEl, setExpanded }
     let hitRows = [];                // 当前搜索高亮的行
     let activeSearch = null;         // 当前打开的行内搜索栏 { bar, node }
+    let freqFilter = 'ALL';          // 方法调用次数分析的来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL
+    let noiseRules = [];             // 样板方法过滤规则（从后端加载）
 
     // ------------------------------------------------------------------
     // 项目来源切换：本地路径 / Git 仓库
@@ -482,10 +502,12 @@
         clearError();
         showLoading('正在生成 Excel 报告……');
         try {
+            // 导出时带上当前来源筛选，Excel 与页面展示保持一致
+            const exportReq = Object.assign({}, currentRequest, { freqSourceFilter: freqFilter });
             const resp = await fetch('/api/report/excel', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(currentRequest),
+                body: JSON.stringify(exportReq),
             });
             if (!resp.ok) {
                 const data = await resp.json().catch(() => ({}));
@@ -530,7 +552,7 @@
             : '交易入口分析 · ' + result.stats.entryCount + ' 个入口';
         renderStats(result.stats);
         renderWarnings(result);
-        renderTopMethods(result);
+        renderFreqAnalysis(result);
         expandFns = [];
         nodeRegistry.clear();
         clearSearchHits();
@@ -539,6 +561,7 @@
         els.tree.innerHTML = '';
         result.roots.forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
         els.resultSection.hidden = false;
+        els.freqSection.hidden = false;
         els.btnExcel.disabled = false;
     }
 
@@ -559,48 +582,392 @@
     }
 
     // ------------------------------------------------------------------
-    // 高频被调方法面板：展示被调次数 Top N + 每个方法的调用方列表
+    // 方法调用次数分析：所有方法按被调次数降序，点击行展开查看调用位置
     // ------------------------------------------------------------------
 
-    function renderTopMethods(result) {
-        const list = result.methodFrequency || [];
-        els.btnTopMethods.disabled = list.length === 0;
-        els.topMethodsPanel.hidden = true;
-        if (list.length === 0) {
-            els.topMethodsList.innerHTML = '';
-            return;
-        }
-        els.topMethodsList.innerHTML = list.map((item, idx) => {
-            const callerRows = (item.callers || [])
-                .map((c) => '<div class="mf-caller">↳ ' + escapeHtml(c.caller)
-                    + (c.line && c.line > 0 ? ' <span class="line-no">L' + c.line + '</span>' : '')
-                    + '</div>')
-                .join('');
-            return '<div class="mf-item">'
-                + '<div class="mf-row"><b>' + (idx + 1) + '.</b> '
-                + '<span class="class">' + escapeHtml(item.method) + '</span>'
-                + badge('source-' + (item.source || '').toLowerCase(),
-                    SOURCE_LABEL[item.source] || item.source)
-                + '<span class="mf-count">被调 <b>' + item.callCount + '</b> 次</span>'
-                + '</div>'
-                + '<div class="mf-callers" data-open="0">' + callerRows + '</div>'
-                + '</div>';
-        }).join('');
+    function renderFreqAnalysis(result) {
+        const all = result.methodFrequency || [];
+        // 每次新分析重置筛选为"全部"
+        freqFilter = 'ALL';
+        updateFreqFilterChips(all);
+        renderFreqList(all);
     }
 
-    els.btnTopMethods.addEventListener('click', () => {
-        els.topMethodsPanel.hidden = !els.topMethodsPanel.hidden;
-        if (!els.topMethodsPanel.hidden) {
-            // 点击方法行展开/收起其调用方列表
-            els.topMethodsList.querySelectorAll('.mf-row').forEach((row) => {
-                row.addEventListener('click', () => {
-                    const callers = row.parentElement.querySelector('.mf-callers');
-                    const open = callers.dataset.open === '1';
-                    callers.dataset.open = open ? '0' : '1';
-                    callers.style.display = open ? 'none' : 'block';
-                });
-            });
+    /** 渲染筛选标签，显示各来源的方法数 */
+    function updateFreqFilterChips(all) {
+        const counts = { ALL: all.length, PROJECT: 0, DEPENDENCY: 0, EXTERNAL: 0 };
+        all.forEach((m) => {
+            const s = m.source || 'EXTERNAL';
+            if (counts[s] !== undefined) counts[s]++;
+        });
+        els.freqFilterBar.querySelectorAll('.filter-chip').forEach((chip) => {
+            const f = chip.dataset.filter;
+            const label = chip.textContent.replace(/\s*\d+$/, '');
+            chip.textContent = label + ' ' + counts[f];
+            chip.classList.toggle('active', f === freqFilter);
+        });
+    }
+
+    /** 按当前 freqFilter + 启用的样板规则过滤并渲染方法列表 */
+    function renderFreqList(all) {
+        // 第一步：按样板规则过滤（跨所有来源），用于更新统计和来源标签
+        const noiseFiltered = (all || []).filter((m) => !isNoiseMethod(m));
+        // 来源标签计数 = 样板规则过滤后的各来源数量
+        updateFreqFilterChips(noiseFiltered);
+        // 第二步：在样板过滤基础上再按当前来源筛选
+        const list = noiseFiltered.filter((m) => {
+            if (freqFilter !== 'ALL' && (m.source || 'EXTERNAL') !== freqFilter) return false;
+            return true;
+        });
+        // 统计栏：方法总数 + 最高/最低被调次数 + 已过滤数量
+        const noiseRemoved = (all || []).length - noiseFiltered.length;
+        if (list.length > 0) {
+            const max = list[0].callCount;
+            const min = list[list.length - 1].callCount;
+            els.freqStatsBar.innerHTML = [
+                ['方法总数', list.length],
+                ['已过滤', noiseRemoved + ' 个'],
+                ['最高被调', max + ' 次'],
+                ['最低被调', min + ' 次'],
+            ].map(([k, v]) =>
+                '<span class="stat-chip">' + k + '<b>' + v + '</b></span>').join('');
+        } else {
+            els.freqStatsBar.innerHTML =
+                '<span class="stat-chip">方法总数 <b>0</b></span>'
+                + '<span class="stat-chip">已过滤 <b>' + noiseRemoved + ' 个</b></span>';
         }
+        if (list.length === 0) {
+            els.freqList.innerHTML =
+                '<div class="mf-empty">该来源下暂无可统计的方法调用数据</div>';
+            bindFreqRowEvents();
+            return;
+        }
+        els.freqList.innerHTML = list.map((item, idx) => {
+            const callerRows = (item.callers || [])
+                .map((c) => '<div class="mf-caller">'
+                    + '<span class="mf-caller-mark">↳</span>'
+                    + '<span class="mf-caller-name">' + escapeHtml(c.caller) + '</span>'
+                    + (c.line && c.line > 0 ? '<span class="line-no">L' + c.line + '</span>' : '')
+                    + '</div>')
+                .join('');
+            return '<div class="mf-item" data-idx="' + idx + '">'
+                + '<div class="mf-row">'
+                + '<span class="mf-toggle">▸</span>'
+                + '<span class="mf-rank">' + (idx + 1) + '</span>'
+                + '<span class="mf-body">'
+                + '<span class="mf-method">' + escapeHtml(item.method) + '</span>'
+                + badgeHtml('source-' + (item.source || '').toLowerCase(),
+                    SOURCE_LABEL[item.source] || item.source)
+                + '</span>'
+                + '<span class="mf-hot">'
+                + '<span class="mf-count">' + item.callCount + '</span>'
+                + '<span class="mf-count-unit">次</span>'
+                + '</span>'
+                + '</div>'
+                + '<div class="mf-callers" style="display:none">'
+                + (callerRows || '<div class="mf-empty-sub">暂无调用方信息</div>')
+                + '</div>'
+                + '</div>';
+        }).join('');
+        bindFreqRowEvents();
+    }
+
+    /** 判断方法是否命中任一启用的样板规则 */
+    function isNoiseMethod(m) {
+        if (!m || !m.method) return false;
+        const src = m.source || 'EXTERNAL';
+        const hashIdx = m.method.indexOf('#');
+        const className = hashIdx >= 0 ? m.method.slice(0, hashIdx) : '';
+        let methodWithArgs = hashIdx >= 0 ? m.method.slice(hashIdx + 1) : m.method;
+        const parenIdx = methodWithArgs.indexOf('(');
+        const methodName = parenIdx >= 0 ? methodWithArgs.slice(0, parenIdx) : methodWithArgs;
+        const paramCount = parseParamCount(methodWithArgs);
+
+        for (const r of noiseRules) {
+            if (!r.enabled) continue;
+            // 来源匹配
+            if (r.source && r.source !== 'ALL' && r.source !== src) continue;
+            // 方法名匹配
+            if (!regexMatch(r.methodPattern, methodName)) continue;
+            // 类名匹配（规则未配置则跳过）
+            if (r.classPattern && r.classPattern.trim() !== '') {
+                if (!regexMatch(r.classPattern, className)) continue;
+            }
+            // 参数个数匹配（规则未配置则跳过）
+            if (r.paramCount != null && r.paramCount !== paramCount) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /** 从方法签名解析参数个数，正确处理泛型中的逗号，如 Map<String, Integer> */
+    function parseParamCount(methodWithArgs) {
+        if (!methodWithArgs) return 0;
+        const paren = methodWithArgs.indexOf('(');
+        if (paren < 0) return 0;
+        let closeParen = methodWithArgs.indexOf(')', paren);
+        if (closeParen < 0) closeParen = methodWithArgs.length;
+        const params = methodWithArgs.slice(paren + 1, closeParen).trim();
+        if (!params) return 0;
+        let depth = 0;
+        let count = 1;
+        for (let i = 0; i < params.length; i++) {
+            const c = params.charAt(i);
+            if (c === '<' || c === '(') depth++;
+            else if (c === '>' || c === ')') depth--;
+            else if (c === ',' && depth === 0) count++;
+        }
+        return count;
+    }
+
+    /** 正则匹配（find 语义，匹配到即可） */
+    function regexMatch(pattern, input) {
+        // 空正则 = 匹配所有（与后端一致）
+        if (!pattern || pattern.trim() === '') return true;
+        if (!input) return false;
+        try {
+            return new RegExp(pattern).test(input);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /** 绑定方法行的展开/收起事件 */
+    function bindFreqRowEvents() {
+        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
+            const row = item.querySelector('.mf-row');
+            const callers = item.querySelector('.mf-callers');
+            const toggle = item.querySelector('.mf-toggle');
+            if (!row || !callers) return;
+            row.onclick = () => {
+                const isOpen = callers.style.display === 'block';
+                if (isOpen) {
+                    callers.style.display = 'none';
+                    toggle.textContent = '▸';
+                } else {
+                    callers.style.display = 'block';
+                    toggle.textContent = '▾';
+                }
+            };
+        });
+    }
+
+    els.btnFreqExpandAll.addEventListener('click', () => {
+        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
+            const c = item.querySelector('.mf-callers');
+            const t = item.querySelector('.mf-toggle');
+            if (c) c.style.display = 'block';
+            if (t) t.textContent = '▾';
+        });
+    });
+    els.btnFreqCollapseAll.addEventListener('click', () => {
+        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
+            const c = item.querySelector('.mf-callers');
+            const t = item.querySelector('.mf-toggle');
+            if (c) c.style.display = 'none';
+            if (t) t.textContent = '▸';
+        });
+    });
+
+    // 来源筛选：全部/项目/依赖/外部
+    els.freqFilterBar.querySelectorAll('.filter-chip').forEach((chip) => {
+        chip.addEventListener('click', () => {
+            freqFilter = chip.dataset.filter;
+            els.freqFilterBar.querySelectorAll('.filter-chip')
+                .forEach((c) => c.classList.toggle('active', c === chip));
+            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+        });
+    });
+
+    // ------------------------------------------------------------------
+    // 样板方法过滤规则管理
+    // ------------------------------------------------------------------
+    function loadNoiseRules() {
+        fetch('api/noise-rules').then((r) => r.json()).then((data) => {
+            noiseRules = data || [];
+            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+        }).catch(() => { noiseRules = []; });
+    }
+
+    function openNoiseRulesPanel() {
+        renderNoiseRulesList();
+        els.noiseRulesPanel.hidden = false;
+        els.noiseRulesOverlay.hidden = false;
+    }
+    function closeNoiseRulesPanel() {
+        els.noiseRulesPanel.hidden = true;
+        els.noiseRulesOverlay.hidden = true;
+    }
+
+    function renderNoiseRulesList() {
+        if (noiseRules.length === 0) {
+            els.noiseRulesList.innerHTML = '<div class="mf-empty">暂无规则，点击"新增规则"添加</div>';
+            return;
+        }
+        els.noiseRulesList.innerHTML = noiseRules.map((r, idx) =>
+            '<div class="nr-item" data-idx="' + idx + '">'
+            + '<div class="nr-row1">'
+            + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称">'
+            + '<label class="nr-enable"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '> 启用</label>'
+            + '<button type="button" class="btn small warn nr-del">删除</button>'
+            + '</div>'
+            + '<div class="nr-row2">'
+            + '<span class="nr-label">方法名正则</span>'
+            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="如 getInstance">'
+            + '<span class="nr-label">类名正则</span>'
+            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="可选，如 .*Factory">'
+            + '</div>'
+            + '<div class="nr-row3">'
+            + '<span class="nr-label">来源</span>'
+            + '<select class="nr-source">'
+            + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
+                '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
+                + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
+                + '</option>').join('')
+            + '</select>'
+            + '<span class="nr-label">参数个数</span>'
+            + '<input class="nr-paramcount" type="number" min="0" value="'
+                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="不限">'
+            + '</div>'
+            + '</div>'
+        ).join('');
+    }
+
+    /** 从弹窗输入收集规则 */
+    function collectNoiseRulesFromPanel() {
+        const items = els.noiseRulesList.querySelectorAll('.nr-item');
+        const out = [];
+        items.forEach((item) => {
+            const pcInput = item.querySelector('.nr-paramcount').value.trim();
+            out.push({
+                id: 'rule-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+                name: item.querySelector('.nr-name').value.trim(),
+                methodPattern: item.querySelector('.nr-method').value.trim(),
+                classPattern: item.querySelector('.nr-class').value.trim(),
+                source: item.querySelector('.nr-source').value,
+                paramCount: pcInput === '' ? null : parseInt(pcInput, 10),
+                enabled: item.querySelector('.nr-enable input').checked,
+            });
+        });
+        return out;
+    }
+
+    /** 将弹窗当前输入同步到内存 noiseRules 并实时刷新频次列表（无需保存即可预览过滤效果） */
+    function applyNoiseRulesFromPanel() {
+        noiseRules = collectNoiseRulesFromPanel();
+        if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+    }
+
+    els.btnNoiseRules.addEventListener('click', openNoiseRulesPanel);
+    els.btnNoiseRulesClose.addEventListener('click', closeNoiseRulesPanel);
+    els.noiseRulesOverlay.addEventListener('click', closeNoiseRulesPanel);
+    // 刷新过滤：若弹窗已打开则先同步弹窗内的最新编辑（含未保存），再重新渲染频次列表
+    els.btnFreqRefresh.addEventListener('click', () => {
+        if (!els.noiseRulesPanel.hidden) {
+            applyNoiseRulesFromPanel();
+        } else if (currentResult) {
+            renderFreqList(currentResult.methodFrequency || []);
+        }
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !els.noiseRulesPanel.hidden) closeNoiseRulesPanel();
+    });
+
+    // 弹窗内任意输入变化都实时同步到内存并刷新频次列表（无需保存即可预览）
+    els.noiseRulesList.addEventListener('change', (e) => {
+        applyNoiseRulesFromPanel();
+    });
+
+    // 全选启用 / 全不选 / 反选
+    els.btnNoiseRuleSelectAll.addEventListener('click', () => {
+        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = true; });
+        applyNoiseRulesFromPanel();
+    });
+    els.btnNoiseRuleSelectNone.addEventListener('click', () => {
+        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = false; });
+        applyNoiseRulesFromPanel();
+    });
+    els.btnNoiseRuleInvert.addEventListener('click', () => {
+        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = !cb.checked; });
+        applyNoiseRulesFromPanel();
+    });
+
+    // 导出规则：下载 JSON 文件
+    els.btnNoiseRuleExport.addEventListener('click', () => {
+        window.location.href = 'api/noise-rules/export';
+    });
+
+    // 导入规则：触发文件选择
+    els.btnNoiseRuleImport.addEventListener('click', () => {
+        els.noiseRuleImportFile.value = '';
+        els.noiseRuleImportFile.click();
+    });
+    els.noiseRuleImportFile.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        if (!confirm('导入将覆盖当前所有规则，确定继续？')) {
+            els.noiseRuleImportFile.value = '';
+            return;
+        }
+        const fd = new FormData();
+        fd.append('file', file);
+        fetch('api/noise-rules/import', { method: 'POST', body: fd })
+            .then((r) => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then((data) => {
+                noiseRules = data || [];
+                renderNoiseRulesList();
+                if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+            })
+            .catch((err) => alert('导入失败：' + err.message + '（请确认是合法的 noise-rules.json 文件）'));
+    });
+
+    els.btnNoiseRuleAdd.addEventListener('click', () => {
+        noiseRules.push({
+            id: 'rule-' + Date.now(),
+            name: '新规则',
+            methodPattern: '',
+            classPattern: '',
+            source: 'ALL',
+            paramCount: null,
+            enabled: true,
+        });
+        renderNoiseRulesList();
+        applyNoiseRulesFromPanel();
+    });
+
+    els.noiseRulesList.addEventListener('click', (e) => {
+        if (e.target.classList.contains('nr-del')) {
+            const idx = parseInt(e.target.closest('.nr-item').dataset.idx, 10);
+            noiseRules.splice(idx, 1);
+            renderNoiseRulesList();
+            applyNoiseRulesFromPanel();
+        }
+    });
+
+    els.btnNoiseRuleReset.addEventListener('click', () => {
+        if (!confirm('确定恢复默认规则？当前未保存的修改将丢失。')) return;
+        fetch('api/noise-rules/reset', { method: 'POST' })
+            .then((r) => r.json()).then((data) => {
+                noiseRules = data || [];
+                renderNoiseRulesList();
+                if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+            });
+    });
+
+    els.btnNoiseRuleSave.addEventListener('click', () => {
+        const rules = collectNoiseRulesFromPanel();
+        fetch('api/noise-rules', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rules),
+        }).then((r) => r.json()).then((data) => {
+            noiseRules = data || [];
+            closeNoiseRulesPanel();
+            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+        }).catch(() => alert('保存失败，请检查规则格式'));
     });
 
     function renderWarnings(result) {
@@ -701,6 +1068,11 @@
         b.className = 'badge ' + cls;
         b.textContent = text;
         return b;
+    }
+
+    /** 返回 HTML 字符串形式的徽标（用于 innerHTML 拼接，避免 DOM 对象被拼成 "[object...]"） */
+    function badgeHtml(cls, text) {
+        return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>';
     }
 
     function escapeHtml(s) {
@@ -963,4 +1335,7 @@
             }
         } catch (e) { /* 静默失败，用户手填 */ }
     })();
+
+    // 页面加载时拉取样板方法过滤规则
+    loadNoiseRules();
 })();

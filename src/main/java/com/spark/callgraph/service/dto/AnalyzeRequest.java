@@ -9,6 +9,7 @@ public class AnalyzeRequest {
     private String methodName; // 可空：为空时分析整个类
     private Integer maxDepth;  // 可空：默认 20
     private List<EntryRef> entries; // 可空：多入口分析（来自入口扫描勾选）
+    private String freqSourceFilter; // 方法调用次数分析的来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL（导出 Excel 时使用）
 
     public String getProjectPath() { return projectPath; }
     public void setProjectPath(String projectPath) { this.projectPath = projectPath; }
@@ -20,4 +21,6 @@ public class AnalyzeRequest {
     public void setMaxDepth(Integer maxDepth) { this.maxDepth = maxDepth; }
     public List<EntryRef> getEntries() { return entries; }
     public void setEntries(List<EntryRef> entries) { this.entries = entries; }
+    public String getFreqSourceFilter() { return freqSourceFilter; }
+    public void setFreqSourceFilter(String freqSourceFilter) { this.freqSourceFilter = freqSourceFilter; }
 }

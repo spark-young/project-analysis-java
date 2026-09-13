@@ -41,8 +41,8 @@ public class AnalysisService {
     private static final long CACHE_TTL_MS = 5 * 60 * 1000;
     private static final int ACC_SYNTHETIC = 0x1000;
     private static final int ACC_BRIDGE = 0x0040;
-    /** 高频被调方法排行展示上限 */
-    private static final int DEFAULT_METHOD_TOP_N = 20;
+    /** 方法调用次数分析：展示全部去重方法（不截断，按被调次数降序） */
+    private static final int DEFAULT_METHOD_TOP_N = Integer.MAX_VALUE;
     /** 每个方法调用方捕获/展示上限 */
     private static final int CALLER_CAPTURE_LIMIT = 20;
 

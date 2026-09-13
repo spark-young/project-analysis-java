@@ -146,6 +146,40 @@ class GitPrepareServiceTest {
     }
 
     @Test
+    void test_prepare_backendInSubdir_located() throws Exception {
+        // 模拟前端+后端混合仓库：pom.xml 埋在 backend/ 子目录（不在一层）
+        Path work = Files.createDirectories(temp.resolve("src"));
+        Files.createDirectories(work.resolve("backend"));
+        Files.write(work.resolve("backend/pom.xml"), "<project/>".getBytes());
+        try (Git git = Git.init().setDirectory(work.toFile()).call()) {
+            git.add().addFilepattern(".").call();
+            git.commit().setMessage("init")
+                    .setAuthor("t", "t@t.com").setCommitter("t", "t@t.com").call();
+        }
+        Path bare = temp.resolve("remote-backend.git");
+        try (Git ignored = Git.init().setBare(true).setDirectory(bare.toFile()).call()) { }
+        try (Git git = Git.open(work.toFile())) {
+            git.remoteAdd().setName("origin").setUri(new URIish(bare.toUri().toString())).call();
+            git.push().setRemote("origin").setPushAll().call();
+        }
+
+        StubCompileService stub = new StubCompileService();
+        GitPrepareService svc = service(stub);
+
+        GitPrepareStatus s = svc.prepare(request(bare.toUri().toString()));
+
+        GitPrepareStatus done = awaitTerminal(svc, s.getJobId());
+        assertEquals("DONE", done.getStatus(), "应成功定位到 backend 子目录的 Maven 工程: " + done.getMessage());
+        assertNotNull(done.getProjectPath());
+        assertTrue(Files.exists(Paths.get(done.getProjectPath()).resolve("pom.xml")),
+                "projectPath 应指向含 pom.xml 的 backend 目录: " + done.getProjectPath());
+        assertTrue(Paths.get(done.getProjectPath()).getFileName().toString().equals("backend"),
+                "应定位到 backend 子目录，而非仓库根: " + done.getProjectPath());
+        assertEquals(done.getProjectPath(), stub.compiledDir.toString(),
+                "编译应作用于 backend 目录");
+    }
+
+    @Test
     void test_repoDisplayName_variousUrls() {
         assertEquals("order-service",
                 GitPrepareService.repoDisplayName("https://gitlab.com/group/order-service.git"));

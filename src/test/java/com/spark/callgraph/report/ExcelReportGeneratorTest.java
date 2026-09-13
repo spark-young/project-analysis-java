@@ -5,6 +5,7 @@ import com.spark.callgraph.engine.ClassMetadataRegistry;
 import com.spark.callgraph.engine.model.CallNode;
 import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.SourceType;
+import com.spark.callgraph.service.NoiseRuleService;
 import com.spark.callgraph.service.dto.AnalysisResult;
 import com.spark.callgraph.testsupport.Fixtures;
 import org.apache.poi.ss.usermodel.Row;
@@ -25,7 +26,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class ExcelReportGeneratorTest {
 
     static ClassMetadataRegistry registry;
-    static ExcelReportGenerator generator = new ExcelReportGenerator();
+    static ExcelReportGenerator generator = new ExcelReportGenerator(new NoiseRuleService());
 
     @BeforeAll
     static void setUp() throws Exception {
