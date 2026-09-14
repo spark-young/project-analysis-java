@@ -3,6 +3,7 @@ package com.spark.callgraph.report;
 import com.spark.callgraph.engine.model.CallGraph;
 import com.spark.callgraph.engine.model.GraphEdge;
 import com.spark.callgraph.engine.model.GraphMethod;
+import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.SourceType;
 import com.spark.callgraph.service.NoiseRuleService;
 import com.spark.callgraph.service.dto.AnalysisResult;
@@ -25,8 +26,10 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -86,6 +89,176 @@ public class ExcelReportGenerator {
             wb.write(out);
             return out.toByteArray();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // 项目级导出：跨多入口聚合，生成 总览 / 方法调用分析 / 被过滤 / 各入口调用链 Sheet
+    // ------------------------------------------------------------------
+
+    public byte[] generateProject(List<AnalysisResult> results, String sourceFilter, String projectPath)
+            throws IOException {
+        try (SXSSFWorkbook wb = new SXSSFWorkbook(200)) {
+            CellStyle headerStyle = headerStyle(wb);
+            CellStyle rootStyle = rootStyle(wb);
+
+            // 跨入口聚合频率（口径同单入口 collectGraphStats：入边数 = 被调次数）
+            List<MethodFrequency> allFreq = aggregateFrequency(results);
+
+            List<MethodFrequency> kept = new ArrayList<>();
+            List<MethodFrequency> noiseRemoved = new ArrayList<>();
+            for (MethodFrequency mf : allFreq) {
+                if (sourceFilter != null && !sourceFilter.isEmpty()
+                        && !"ALL".equalsIgnoreCase(sourceFilter)) {
+                    if (!sourceFilter.equalsIgnoreCase(mf.getSource())) continue;
+                }
+                if (noiseRuleService.isNoise(mf.getMethod(), mf.getSource(), projectPath)) {
+                    noiseRemoved.add(mf);
+                } else {
+                    kept.add(mf);
+                }
+            }
+
+            writeProjectOverview(wb, results, headerStyle, sourceFilter, kept, noiseRemoved);
+            writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
+            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
+            writeProjectRootSheets(wb, results, headerStyle, rootStyle);
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            wb.write(out);
+            return out.toByteArray();
+        }
+    }
+
+    /** 跨入口聚合方法被调次数：key=MethodKey，被调次数=跨全部图的入边数之和 */
+    private List<MethodFrequency> aggregateFrequency(List<AnalysisResult> results) {
+        Map<MethodKey, FreqAgg> agg = new HashMap<>();
+        for (AnalysisResult r : results) {
+            CallGraph g = r.getGraph();
+            if (g == null) continue;
+            for (GraphEdge edge : g.getEdges()) {
+                GraphMethod target = g.getMethods().get(edge.getTo());
+                GraphMethod caller = g.getMethods().get(edge.getFrom());
+                if (target == null) continue;
+                MethodKey key = target.toKey();
+                FreqAgg a = agg.computeIfAbsent(key, k -> new FreqAgg());
+                if (a.source == null) a.source = target.getSource();
+                a.callCount++;
+                if (caller != null) {
+                    MethodCaller mc = new MethodCaller();
+                    mc.setCaller(caller.getDisplay());
+                    mc.setLine(edge.getLine());
+                    a.callers.add(mc);
+                }
+            }
+        }
+        List<MethodFrequency> out = new ArrayList<>(agg.size());
+        for (Map.Entry<MethodKey, FreqAgg> e : agg.entrySet()) {
+            MethodFrequency f = new MethodFrequency();
+            f.setMethod(e.getKey().getIdentifier());
+            f.setSource(e.getValue().source.name());
+            f.setCallCount(e.getValue().callCount);
+            f.setCallers(e.getValue().callers);
+            out.add(f);
+        }
+        out.sort((a, b) -> {
+            int c = Integer.compare(b.getCallCount(), a.getCallCount());
+            return c != 0 ? c : a.getMethod().compareTo(b.getMethod());
+        });
+        return out;
+    }
+
+    /** 项目级总览：项目信息 + 跨入口汇总 + 每入口一行明细 */
+    private void writeProjectOverview(SXSSFWorkbook wb, List<AnalysisResult> results, CellStyle headerStyle,
+                                      String sourceFilter, List<MethodFrequency> kept,
+                                      List<MethodFrequency> noiseRemoved) {
+        Sheet sheet = wb.createSheet("总览");
+        int r = 0;
+        r = titleRow(sheet, r, "Java 调用链分析报告（项目级 · " + results.size() + " 个交易入口）", headerStyle);
+        r = kv(sheet, r, "生成时间", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        r = kv(sheet, r, "项目路径", results.get(0).getProjectPath());
+        r = kv(sheet, r, "项目名称", results.get(0).getProjectName() == null
+                ? "" : results.get(0).getProjectName());
+        r = kv(sheet, r, "入口方法数", String.valueOf(results.size()));
+
+        long totalNodes = 0;
+        long projectMethods = 0, depMethods = 0, extMethods = 0;
+        int truncated = 0;
+        for (AnalysisResult res : results) {
+            AnalysisResult.Stats s = res.getStats();
+            if (s == null) continue;
+            totalNodes += s.getTotalNodes();
+            projectMethods += s.getProjectMethods();
+            depMethods += s.getDependencyMethods();
+            extMethods += s.getExternalMethods();
+            if (s.isTruncated()) truncated++;
+        }
+        r = kv(sheet, r, "调用链总节点数（跨入口）", String.valueOf(totalNodes));
+        r = kv(sheet, r, "项目方法数（跨入口）", String.valueOf(projectMethods));
+        r = kv(sheet, r, "依赖方法数（跨入口）", String.valueOf(depMethods));
+        r = kv(sheet, r, "外部方法数（跨入口）", String.valueOf(extMethods));
+        r = kv(sheet, r, "存在截断的入口数", String.valueOf(truncated));
+        r = kv(sheet, r, "方法调用分析", "项目级聚合（同一方法被多次入口调用时次数累加），见「方法调用分析」/「被过滤方法」Sheet");
+        r = kv(sheet, r, "来源筛选", "ALL".equalsIgnoreCase(sourceFilter) ? "全部来源" : sourceFilter);
+        r = kv(sheet, r, "保留方法数", String.valueOf(kept.size()));
+        r = kv(sheet, r, "被样板规则过滤", String.valueOf(noiseRemoved.size()));
+
+        r = titleRow(sheet, r, "入口明细", headerStyle);
+        Row head = sheet.createRow(r++);
+        String[] cols = {"序号", "入口方法", "项目方法", "依赖方法", "外部方法", "节点数", "耗时(ms)", "截断"};
+        for (int i = 0; i < cols.length; i++) {
+            head.createCell(i).setCellValue(cols[i]);
+            head.getCell(i).setCellStyle(headerStyle);
+        }
+        int seq = 1;
+        for (AnalysisResult res : results) {
+            AnalysisResult.Stats s = res.getStats();
+            String method = (res.getClassName() == null ? "" : res.getClassName())
+                    + (res.getMethodName() == null ? "" : "#" + res.getMethodName());
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(seq++);
+            row.createCell(1).setCellValue(method);
+            row.createCell(2).setCellValue(s == null ? 0 : s.getProjectMethods());
+            row.createCell(3).setCellValue(s == null ? 0 : s.getDependencyMethods());
+            row.createCell(4).setCellValue(s == null ? 0 : s.getExternalMethods());
+            row.createCell(5).setCellValue(s == null ? 0 : s.getTotalNodes());
+            row.createCell(6).setCellValue(s == null ? 0 : s.getDurationMs());
+            row.createCell(7).setCellValue((s != null && s.isTruncated()) ? "是" : "");
+        }
+        sheet.setColumnWidth(0, 6 * 256);
+        sheet.setColumnWidth(1, 90 * 256);
+        for (int i = 2; i < cols.length; i++) sheet.setColumnWidth(i, 12 * 256);
+        sheet.createFreezePane(0, 2);
+    }
+
+    /** 项目级调用链 Sheet：跨入口给每个根方法写一个 Sheet（共用去重命名，避免跨入口同名冲突） */
+    private void writeProjectRootSheets(SXSSFWorkbook wb, List<AnalysisResult> results,
+                                        CellStyle headerStyle, CellStyle rootStyle) {
+        Set<String> used = new HashSet<>();
+        int sheetCount = 0;
+        for (AnalysisResult res : results) {
+            CallGraph g = res.getGraph();
+            if (g == null) continue;
+            for (int rootId : g.getRoots()) {
+                if (sheetCount >= MAX_SHEETS) break;
+                String name = sheetName(g.getMethods().get(rootId), used);
+                writeMethodSheet(wb.createSheet(name), g, rootId, headerStyle, rootStyle);
+                sheetCount++;
+            }
+            if (sheetCount >= MAX_SHEETS) break;
+        }
+        if (sheetCount >= MAX_SHEETS) {
+            Sheet overview = wb.getSheet("总览");
+            int row = overview.getLastRowNum() + 1;
+            overview.createRow(row).createCell(0)
+                    .setCellValue("入口方法超过 " + MAX_SHEETS + " 个，仅导出前 " + MAX_SHEETS + " 个（建议按具体方法分析）");
+        }
+    }
+
+    /** 跨入口频率聚合收集器 */
+    private static final class FreqAgg {
+        final List<MethodCaller> callers = new ArrayList<>();
+        int callCount;
+        SourceType source;
     }
 
     // ------------------------------------------------------------------

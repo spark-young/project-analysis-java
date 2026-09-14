@@ -117,6 +117,14 @@
         globalSearch: document.querySelector('.global-search'),
         legend: document.querySelector('.legend'),
         btnBackToList: $('#btnBackToList'),
+        projectSearch: $('#projectSearch'),
+        projectLoadState: $('#projectLoadState'),
+        projectSearchInput: $('#projectSearchInput'),
+        projectSearchMode: $('#projectSearchMode'),
+        btnProjectSearch: $('#btnProjectSearch'),
+        btnProjectSearchClear: $('#btnProjectSearchClear'),
+        projectSearchResult: $('#projectSearchResult'),
+        projectSearchChips: $('#projectSearchChips'),
         loading: $('#loading'),
         loadingText: $('#loadingText'),
     };
@@ -125,6 +133,8 @@
     let currentRequest = null;  // 最近一次成功分析的请求（Excel 复用）
     let currentBatchSummary = null; // 批量分析轻量索引（清单视图）
     let currentCacheFileName = null; // 批量中当前展开入口的缓存文件名（Excel 用）
+    let currentExcelMode = 'entry';  // 'entry' 单入口导出 | 'project' 项目级导出
+    let batchRowStates = [];         // 批量清单每行的行内展开状态 { open,rendered,result,roots,body,rowEl,entry }
     // Step 2 入口清单状态
     let currentEntryList = null;   // EntryList DTO（confirmed + excluded）
     let currentCandidates = [];    // 本次扫描新增的候选（临时）
@@ -134,6 +144,8 @@
     let hitRows = [];                // 当前搜索高亮的行
     let activeSearch = null;         // 当前打开的行内搜索栏 { bar, node }
     let freqFilter = 'ALL';          // 方法调用次数分析的来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL
+    let projectFreqMode = false;     // 频率区当前是否显示"项目级聚合频率"（批量全量加载后）
+    let batchModel = null;           // 批量全量加载模型：{batch, projectId, entries, done,total,failed, loaded, index, projectFreq}
     let noiseRules = [];             // 样板方法过滤规则（当前层级的，从后端加载）
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
     let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
@@ -711,6 +723,11 @@
     // ------------------------------------------------------------------
 
     els.btnExcel.addEventListener('click', async () => {
+        // 批量清单视图 → 项目级导出（全部入口）
+        if (currentExcelMode === 'project') {
+            await downloadProjectExcel();
+            return;
+        }
         if (!currentResult || !currentRequest) return;
         clearError();
         showLoading('正在生成 Excel 报告……');
@@ -749,6 +766,53 @@
             hideLoading();
         }
     });
+
+    /** 项目级 Excel：把所有已加载入口的缓存文件名 + 当前来源筛选发给后端，聚合导出 */
+    async function downloadProjectExcel() {
+        const files = (batchModel && batchModel.entries || [])
+            .filter((s) => s.result)
+            .map((s) => s.entry && s.entry.fileName)
+            .filter(Boolean);
+        if (!files.length) {
+            showError('没有已加载的入口，请等待全量加载完成后再导出');
+            return;
+        }
+        clearError();
+        showLoading('正在生成项目级 Excel 报告……');
+        try {
+            const resp = await fetch('/api/report/excel-project', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    projectPath: currentProjectPath(),
+                    cacheFiles: files,
+                    freqSourceFilter: freqFilter,
+                }),
+            });
+            if (!resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                throw new Error(data.error || ('下载失败: HTTP ' + resp.status));
+            }
+            const blob = await resp.blob();
+            const disposition = resp.headers.get('Content-Disposition') || '';
+            let filename = 'callgraph_project.xlsx';
+            const starIdx = disposition.indexOf("filename*=UTF-8''");
+            if (starIdx >= 0) {
+                filename = decodeURIComponent(disposition.substring(starIdx + 17));
+            }
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(a.href);
+        } catch (e) {
+            showError(e.message);
+        } finally {
+            hideLoading();
+        }
+    }
 
     // ------------------------------------------------------------------
     // 结果渲染
@@ -795,40 +859,133 @@
                 st.durationMs != null ? st.durationMs + 'ms' : null,
                 st.truncated ? '截断' : null,
             ].filter(Boolean).join(' · ');
-            const body = '<div class="bt-row" data-idx="' + idx + '" data-file="' + escapeHtml(entry.fileName || '') + '">'
+            return '<div class="bt-row" data-idx="' + idx + '" data-file="' + escapeHtml(entry.fileName || '') + '">'
                 + '<span class="bt-index">' + (idx + 1) + '</span>'
                 + '<span class="bt-method">' + escapeHtml(entry.className || '')
                 + (entry.methodName ? '#' + escapeHtml(entry.methodName) : '') + '</span>'
                 + (entry.failed
                     ? '<span class="bt-failed">✗ 失败</span>'
                     : '<span class="bt-stats">' + escapeHtml(chips) + '</span>')
-                + '<span class="bt-action">查看调用链 ▸</span>'
+                + '<span class="bt-action"><span class="bt-caret">▸</span>展开</span>'
                 + '</div>';
-            return body;
         }).join('');
 
-        // 点击某行 → 加载该入口的完整结果
-        els.tree.querySelectorAll('.bt-row').forEach((row) => {
-            row.addEventListener('click', async () => {
-                const file = row.dataset.file;
-                if (!file) return;
-                await loadBatchEntry(file);
-            });
+        // 每个 .bt-row 后挂一个行内调用链容器（手风琴展开，不再跳转到独立视图）
+        batchRowStates.length = 0;
+        nodeRegistry.clear();
+        expandFns.length = 0;
+        els.tree.querySelectorAll('.bt-row').forEach((row, idx) => {
+            const body = document.createElement('div');
+            body.className = 'bt-body';
+            body.style.display = 'none';
+            row.after(body);
+            const st = {
+                idx,
+                entry: entries[idx] || {},
+                open: false,
+                rendered: false,
+                result: null,
+                roots: null,
+                body,
+                rowEl: row,
+            };
+            batchRowStates[idx] = st;
+            row.setAttribute('data-idx', idx);
+            row.addEventListener('click', () => toggleEntryBody(idx));
         });
 
         els.freqSection.hidden = true;
         els.resultSection.hidden = false;
-        els.btnExcel.disabled = true;
-        els.btnExcel.title = '请先点击某个入口查看其调用链，再导出该入口的 Excel 报告';
+        // 批量清单：可直接导出整个项目的 Excel 报告
+        currentExcelMode = 'project';
+        els.btnExcel.disabled = false;
+        els.btnExcel.title = '导出整个项目的 Excel 报告（全部入口调用链 + 项目级方法频率）';
         // 清单视图无树可展开/收起
         els.btnExpandAll.style.display = 'none';
         els.btnCollapseAll.style.display = 'none';
         els.legend.style.display = 'none';
         els.globalSearch.style.display = 'none';
+
+        // ---- 项目级：自动全量加载全部入口调用链（浏览器端并行），完成后支持项目搜索 + 项目频率 ----
+        if (!batchModel || batchModel.batch !== batch) {
+            resetBatchModel(batch);
+            // 关联全量加载生成的条目状态到 batchRowStates（供行内展开/搜索高亮按 index 取）
+            els.projectSearch.hidden = true;
+            loadAllBatchEntries(batch);          // async、不 await；统一进度由 batchProgressBar 呈现
+        } else if (batchModel.loaded) {
+            // 返回清单视图：恢复项目级面板（数据已载入内存，不重复下拉）
+            showProjectPanels();
+        }
     }
 
-    /** 加载批量中某个入口的完整分析结果并渲染 */
+    /** 行内展开：首次展开时用全量加载缓存在行内渲染该入口调用链；再点收起 */
+    async function toggleEntryBody(idx) {
+        const st = batchRowStates[idx];
+        if (!st) return;
+        if (st.open) { closeEntryBody(st); return; }
+        if (!st.rendered) {
+            const result = await buildEntryBody(st);
+            if (!result) { showError('该入口加载失败，无法展开'); return; }
+        }
+        st.open = true;
+        st.rowEl.classList.add('open');
+        updateCaret(st, true);
+        st.body.style.display = '';
+    }
+
+    /** 从内存/按需拉取渲染某入口的行内树；返回 result 或 null */
+    async function buildEntryBody(st) {
+        const slot = batchModel && batchModel.entries[st.idx];
+        let result = slot && slot.result;
+        if (!result) {
+            const e = st.entry;
+            if (!e || e.failed || !e.fileName) {
+                st.body.innerHTML = '<div class="bt-err">该入口分析失败或无可加载缓存</div>';
+                st.body.style.display = '';
+                return null;
+            }
+            st.body.innerHTML = '<div class="bt-loading">正在加载调用链…</div>';
+            st.body.style.display = '';
+            let resp;
+            try {
+                resp = await fetchEntryFile(e.fileName);
+                if (!resp || !resp.ok) throw new Error((resp && resp.error) || '加载失败');
+            } catch (err) {
+                st.body.innerHTML = '<div class="bt-err">加载失败：' + escapeHtml((err && err.message) || String(err)) + '</div>';
+                return null;
+            }
+            result = resp.result;
+            if (slot) { slot.result = result; slot.status = 'ok'; }
+        }
+        st.result = result;
+        st.body.innerHTML = '';
+        st.roots = rootsOf(result);
+        st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
+        st.rendered = true;
+        return result;
+    }
+
+    function closeEntryBody(st) {
+        st.open = false;
+        st.rowEl.classList.remove('open');
+        st.body.style.display = 'none';
+        updateCaret(st, false);
+    }
+
+    function updateCaret(st, openState) {
+        const caret = st.rowEl.querySelector('.bt-caret');
+        if (caret) caret.textContent = openState ? '▾' : '▸';
+    }
+
+    /** 加载批量中某个入口的完整分析结果并渲染（优先用已在内存的全量加载缓存，避免重复请求） */
     async function loadBatchEntry(fileName) {
+        if (batchModel) {
+            const slot = batchModel.entries.find((s) => s.entry && s.entry.fileName === fileName);
+            if (slot && slot.result) {
+                renderSingleEntryResult(slot.result, fileName);
+                return;
+            }
+        }
         try {
             showLoading('正在加载该入口的完整调用链...');
             const data = await fetchJson('/api/projects/' + encodeURIComponent(currentProjectId)
@@ -843,6 +1000,362 @@
             hideLoading();
         }
     }
+
+    // ------------------------------------------------------------------
+    // 批量全量加载：浏览器端并发拉取全部入口缓存 → 建项目级方法索引 + 项目级频率，
+    // 树的 DOM 仍按入口按需渲染。统一进度：分析 0~80%，链加载 80~100%。
+    // ------------------------------------------------------------------
+
+    function resetBatchModel(batch) {
+        batchModel = {
+            batch,
+            projectId: currentProjectId,
+            // 预播种为与原清单 entries 顺序一致的槽位（下标即行号），失败的标记 err 但保留占位
+            entries: (batch.entries || []).map((entry) => ({
+                entry, result: null, status: entry && entry.failed ? 'err' : 'pending', err: null,
+            })),
+            done: 0, total: 0, failed: 0,
+            loaded: false,    // 全部可加载项是否已就绪
+            index: null,      // methodKey → { method, source, entries:Set<entryIdx> }
+            projectFreq: [],  // 项目级聚合频率
+        };
+        projectFreqMode = true;
+    }
+
+    async function fetchEntryFile(fileName) {
+        return fetchJson('/api/projects/' + encodeURIComponent(currentProjectId)
+            + '/cache/load-file?file=' + encodeURIComponent(fileName));
+    }
+
+    /** 并发（limit 个 worker）加载全部入口，统一进度条继续从 80% 走到 100% */
+    async function loadAllBatchEntries(batch) {
+        const all = batch.entries || [];
+        batchModel.entries = all.map((entry) => ({
+            entry, result: null, status: entry && entry.failed ? 'err' : 'pending', err: null,
+        }));
+        // 可取加载的原始行号（失败/无缓存文件的不拉取）
+        const positions = [];
+        all.forEach((e, i) => { if (e && !e.failed && e.fileName) positions.push(i); });
+        const total = positions.length;
+        batchModel.total = total;
+        if (total === 0) { finalizeBatchLoad(); return; }
+
+        els.batchProgress.hidden = false;
+        els.batchProgressBar.style.width = '80%';
+        els.batchProgressText.textContent = '加载全部调用链 0/' + total + ' ...';
+        setBatchLoadState('⏳ 正在加载全部调用链 0/' + total);
+
+        const LIMIT = 8;
+        let next = 0, done = 0, failed = 0;
+        async function worker() {
+            for (;;) {
+                const pos = positions[next++];
+                if (pos === undefined) return;
+                const slot = batchModel.entries[pos];
+                try {
+                    const resp = await fetchEntryFile(slot.entry.fileName);
+                    if (!resp || !resp.ok) throw new Error((resp && resp.error) || '加载失败');
+                    slot.result = resp.result;
+                    slot.status = 'ok';
+                } catch (err) {
+                    failed++;
+                    slot.status = 'err';
+                    slot.err = (err && err.message) || String(err);
+                } finally {
+                    done++;
+                    els.batchProgressBar.style.width = Math.min(100, 80 + Math.round(20 * done / total)) + '%';
+                    els.batchProgressText.textContent = '加载调用链 ' + done + '/' + total
+                        + (failed ? '（失败 ' + failed + '）' : '');
+                }
+            }
+        }
+        await Promise.all(Array.from({ length: Math.min(LIMIT, total) }, () => worker()));
+
+        batchModel.done = done;
+        batchModel.failed = failed;
+        finalizeBatchLoad();
+    }
+
+    /** 全量加载收尾：建索引/频率，置加载完成态并展示项目级面板 */
+    function finalizeBatchLoad() {
+        const loaded = batchModel.entries.filter((s) => s.result).length;
+        batchModel.loaded = true;
+        batchModel.index = buildProjectIndex(batchModel.entries);
+        batchModel.projectFreq = buildProjectFreq(batchModel.entries);
+        const truncated = (batchModel.batch.entries || []).some((e) => e.stats && e.stats.truncated);
+
+        els.batchProgressBar.style.width = '100%';
+        els.batchProgressText.textContent = '✓ 加载完成 · 已加载 ' + loaded + '/' + batchModel.total + ' 个入口';
+        setBatchLoadState(
+            (truncated ? '存在截断入口，索引可能不完整 · ' : '')
+            + '已加载 ' + loaded + '/' + batchModel.total + ' 个入口'
+            + (batchModel.failed ? ' · 失败 ' + batchModel.failed + ' 个（点「重新分析」或下方行重试）' : '')
+            + '，可在下方搜索某个方法被哪些交易入口调用');
+        showProjectPanels();
+    }
+
+    /** 展示项目级面板：项目搜索 + 项目级频率（不再触载加载） */
+    function showProjectPanels() {
+        els.projectSearch.hidden = false;
+        freqFilter = 'ALL';
+        renderProjectFreq();
+    }
+
+    function setBatchLoadState(text) {
+        if (els.projectLoadState) els.projectLoadState.textContent = text;
+    }
+
+    // ---------- 项目级方法索引与频率（基于已加载的 graph.methods / graph.edges） ----------
+
+    /** 图方法唯一键：owner#name+descriptor（含返回类型，全局唯一；与后端 MethodKey 同口径） */
+    function batchMethodKey(m) {
+        return (m.owner || '') + '#' + (m.name || '') + (m.descriptor || '');
+    }
+
+    /** 每个入口 graph.methods 本身即源自根的可达方法闭集 → 直接遍历建 Map[key]→(method, entries) */
+    function buildProjectIndex(entries) {
+        const index = new Map();
+        entries.forEach((slot, idx) => {
+            const g = slot.result && slot.result.graph;
+            if (!g || !g.methods) return;
+            g.methods.forEach((m) => {
+                const key = batchMethodKey(m);
+                let rec = index.get(key);
+                if (!rec) { rec = { method: m, source: m.source, entries: new Set() }; index.set(key, rec); }
+                rec.entries.add(idx);
+            });
+        });
+        return index;
+    }
+
+    /** 项目级频率：跨入口按边表入度求和（口径同后端 collectGraphStats，排除根方法） */
+    function buildProjectFreq(entries) {
+        const agg = new Map();
+        entries.forEach((slot) => {
+            const g = slot.result && slot.result.graph;
+            if (!g || !g.methods || !g.edges) return;
+            const methods = g.methods, edges = g.edges;
+            for (const e of edges) {
+                const to = methods[e.to];
+                if (!to) continue;
+                const key = batchMethodKey(to);
+                let rec = agg.get(key);
+                if (!rec) {
+                    rec = { callCount: 0, source: to.source, display: to.display, callers: new Map() };
+                    agg.set(key, rec);
+                }
+                rec.callCount++;
+                const from = methods[e.from];
+                if (from && rec.callers.size < 20) {
+                    const d = from.display || '?';
+                    if (!rec.callers.has(d)) rec.callers.set(d, e.line || 0);
+                }
+            }
+        });
+        return Array.from(agg.values())
+            .sort((a, b) => b.callCount - a.callCount || (a.display < b.display ? -1 : 1))
+            .map((r) => ({
+                method: r.display,
+                source: r.source,
+                callCount: r.callCount,
+                callers: Array.from(r.callers.entries()).map(([caller, line]) => ({ caller, line })),
+            }));
+    }
+
+    /** 频率区数据源：项目级聚合 或 当前单入口的 methodFrequency */
+    function currentFreqData() {
+        if (projectFreqMode && batchModel && batchModel.projectFreq) return batchModel.projectFreq;
+        return (currentResult && currentResult.methodFrequency) || [];
+    }
+
+    /** 渲染项目级频率（复用 renderFreqList，来源过滤/样板规则自动生效） */
+    function renderProjectFreq() {
+        if (!batchModel || !batchModel.projectFreq) return;
+        projectFreqMode = true;
+        els.freqSection.hidden = false;
+        renderFreqList(batchModel.projectFreq);
+    }
+
+    // ---------- 项目级方法搜索：搜方法 → 列出调用它的所有交易入口 ----------
+
+    function clearProjectSearch() {
+        els.projectSearchResult.textContent = '';
+        els.projectSearchResult.className = 'search-result';
+        els.projectSearchChips.innerHTML = '';
+        clearSearchHighlights();
+    }
+
+    /** 清除上次搜索的高亮 */
+    function clearSearchHighlights() {
+        document.querySelectorAll('.node-row.hit').forEach((el) => el.classList.remove('hit'));
+    }
+
+    function runProjectSearch() {
+        const term = els.projectSearchInput.value.trim();
+        clearProjectSearch();
+        if (!term) return;
+        if (!batchModel || !batchModel.index || !batchModel.loaded) {
+            els.projectSearchResult.className = 'search-result err';
+            els.projectSearchResult.textContent = '全量加载尚未完成，请稍后再搜';
+            return;
+        }
+        const exact = els.projectSearchMode.value === 'exact';
+        const needle = term.toLowerCase();
+        const hits = [];
+        batchModel.index.forEach((rec) => {
+            const m = rec.method || {};
+            let match;
+            if (exact) {
+                match = m.name === term || m.display === term
+                    || ((m.owner || '').replace(/\//g, '.') + '.' + m.name) === term;
+            } else {
+                match = [m.name, m.display, m.owner].some((v) => v && v.toLowerCase().indexOf(needle) >= 0);
+            }
+            if (match) hits.push(rec);
+        });
+        hits.sort((a, b) => a.method.display.localeCompare(b.method.display));
+
+        if (hits.length === 0) {
+            els.projectSearchResult.className = 'search-result err';
+            els.projectSearchResult.textContent = '未命中 —— 项目内没有方法匹配 "' + term + '"';
+            return;
+        }
+
+        // 需要展开+高亮的入口（去重，按原始行号）
+        const revealEntries = [];
+        const seenEntries = new Set();
+        hits.forEach((rec) => Array.from(rec.entries).forEach((idx) => {
+            if (seenEntries.has(idx)) return;
+            seenEntries.add(idx);
+            revealEntries.push(idx);
+        }));
+
+        els.projectSearchResult.className = 'search-result ok';
+        els.projectSearchResult.textContent = '命中 ' + hits.length + ' 个方法 · 已自动展开并高亮 '
+            + revealEntries.length + ' 个入口中的命中方法（点行可收起）';
+
+        hits.forEach((rec) => {
+            const block = document.createElement('div');
+            block.className = 'project-hit';
+            const label = document.createElement('div');
+            label.className = 'project-hit-method';
+            label.appendChild(document.createTextNode(rec.method.display || batchMethodKey(rec.method)));
+            label.appendChild(badgeDom('source-' + (rec.source || '').toLowerCase(),
+                SOURCE_LABEL[rec.source] || rec.source || '外部'));
+            block.appendChild(label);
+            const chips = document.createElement('div');
+            chips.className = 'search-chips';
+            Array.from(rec.entries).forEach((entryIdx) => {
+                const e = (batchModel.entries[entryIdx] || {}).entry || {};
+                const chip = document.createElement('button');
+                chip.type = 'button';
+                chip.className = 'search-chip';
+                chip.innerHTML = '<span class="chip-name"></span>'
+                    + '<span class="chip-count">' + (entryIdx + 1) + '</span>';
+                chip.querySelector('.chip-name').textContent = (e.className || '')
+                    + (e.methodName ? '#' + e.methodName : '');
+                chip.title = '展开/收起该入口调用链';
+                chip.addEventListener('click', () => toggleEntryBody(entryIdx));
+                chips.appendChild(chip);
+            });
+            block.appendChild(chips);
+            els.projectSearchChips.appendChild(block);
+        });
+
+        // 自动展开命中入口的调用链并在命中的方法节点上高亮
+        let firstHitRow = null;
+        revealEntries.forEach((idx) => {
+            const r = revealEntryMatches(idx, term, exact);
+            if (r && !firstHitRow) firstHitRow = r;
+        });
+        if (firstHitRow) firstHitRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    /** 原始图方法是否命中（口径同 matchNode，输入为 graph.methods 中的原始方法） */
+    function matchRawMethod(m, term, exact) {
+        const q = (term || '').trim();
+        if (!q) return false;
+        const name = m.name || '', display = m.display || '', owner = m.owner || '';
+        const className = owner.replace(/\//g, '.');
+        if (exact) {
+            return name === q || display === q || (className + '.' + name) === q;
+        }
+        const needle = q.toLowerCase();
+        return [name, display, owner, className].some((v) => v && v.toLowerCase().indexOf(needle) >= 0);
+    }
+
+    /** 展开某入口行内树并高亮命中方法；返回第一个命中节点的 rowEl（便于滚动定位） */
+    function revealEntryMatches(entryIdx, term, exact) {
+        const st = batchRowStates[entryIdx];
+        if (!st) return null;
+        // 确保行内树已渲染（全量加载已完成，缓存中应已有结果）
+        if (!st.rendered) {
+            // 同步建树（结果已在内存）；没有结果则跳过该入口
+            if (!buildEntryBodySync(st)) return null;
+        }
+        st.open = true;
+        st.rowEl.classList.add('open');
+        st.body.style.display = '';
+        updateCaret(st, true);
+
+        const g = st.result && st.result.graph;
+        if (!g || !g.methods) return null;
+
+        // 命中方法 id 集合 + 祖先集合（只需展开包含命中的路径，避免整树拉伸）
+        const targets = [];
+        g.methods.forEach((m, i) => { if (matchRawMethod(m, term, exact)) targets.push(i); });
+        if (targets.length === 0) return null;
+        const targetSet = new Set(targets);
+
+        const parentMap = new Map();
+        (g.edges || []).forEach((e) => {
+            const arr = parentMap.get(e.to) || [];
+            arr.push(e.from);
+            parentMap.set(e.to, arr);
+        });
+        const revealSet = new Set();
+        const stackP = targets.slice();
+        stackP.forEach((t) => revealSet.add(t));
+        while (stackP.length) {
+            const cur = stackP.pop();
+            (parentMap.get(cur) || []).forEach((p) => { if (!revealSet.has(p)) { revealSet.add(p); stackP.push(p); } });
+        }
+
+        let firstHit = null;
+        (function walk(node) {
+            if (targetSet.has(node.gid)) {
+                const en = nodeRegistry.get(node);
+                if (en) {
+                    en.rowEl.classList.add('hit');
+                    if (!firstHit) firstHit = en.rowEl;
+                }
+            }
+            if (revealSet.has(node.gid)) {
+                const en = nodeRegistry.get(node);
+                if (en && en.setExpanded) en.setExpanded(true);
+                (node.children || []).forEach(walk);
+            }
+        })(st.roots[0]);
+
+        return firstHit;
+    }
+
+    /** 在内存结果已就绪时同步建树（不拉网络），供搜索批量展开使用 */
+    function buildEntryBodySync(st) {
+        const slot = batchModel && batchModel.entries[st.idx];
+        const result = slot && slot.result;
+        if (!result) return null;
+        st.result = result;
+        st.body.innerHTML = '';
+        st.roots = rootsOf(result);
+        st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
+        st.rendered = true;
+        return result;
+    }
+
+    els.btnProjectSearch.addEventListener('click', runProjectSearch);
+    els.projectSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runProjectSearch(); });
+    els.btnProjectSearchClear.addEventListener('click', clearProjectSearch);
 
     // ------------------------------------------------------------------
     // 图结构适配层：把 schema=2 的 result.graph 惰性还原为树视图节点。
@@ -881,6 +1394,7 @@
             const view = methodView(m);
             let kidsCache = null;
             const node = {
+                gid: id,             // 图内方法 id：批量搜索/高亮定位用
                 source: m.source,
                 invokeType: parentEdge ? parentEdge.invoke : null,
                 line: parentEdge ? (parentEdge.line || 0) : 0,
@@ -926,6 +1440,7 @@
         els.resultSection.hidden = false;
         els.freqSection.hidden = false;
         els.btnExcel.disabled = false;
+        currentExcelMode = 'entry';
         els.btnExcel.title = '导出当前入口的 Excel 报告';
         els.btnExpandAll.style.display = '';
         els.btnCollapseAll.style.display = '';

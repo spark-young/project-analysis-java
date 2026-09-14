@@ -256,6 +256,26 @@
                 <div id="globalSearchChips" class="search-chips"></div>
             </div>
 
+            <!-- 项目级方法搜索：批量分析全量加载后，搜方法列出调用它的所有交易入口 -->
+            <div id="projectSearch" class="project-search" hidden>
+                <div class="project-search-head">
+                    <span class="project-search-title">项目级方法搜索</span>
+                    <span id="projectLoadState" class="hint"></span>
+                </div>
+                <div class="global-search">
+                    <input id="projectSearchInput" type="text"
+                           placeholder="搜方法：列出调用它的所有交易入口（如 getUserInfo / Mapper.select / log）">
+                    <select id="projectSearchMode">
+                        <option value="fuzzy">模糊</option>
+                        <option value="exact">精确</option>
+                    </select>
+                    <button id="btnProjectSearch" type="button" class="btn small">搜索</button>
+                    <button id="btnProjectSearchClear" type="button" class="btn small" title="清除">清除</button>
+                    <span id="projectSearchResult" class="search-result"></span>
+                    <div id="projectSearchChips" class="search-chips"></div>
+                </div>
+            </div>
+
             <div id="tree" class="tree"></div>
         </section>
 

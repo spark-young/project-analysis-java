@@ -16,6 +16,7 @@ import com.spark.callgraph.service.dto.EntryScanResult;
 import com.spark.callgraph.service.dto.EntryScanStatus;
 import com.spark.callgraph.service.dto.GitPrepareRequest;
 import com.spark.callgraph.service.dto.GitPrepareStatus;
+import com.spark.callgraph.service.dto.ProjectExcelRequest;
 import com.spark.callgraph.service.dto.ProjectInfo;
 import com.spark.callgraph.service.dto.ScanRequest;
 import org.springframework.http.HttpHeaders;
@@ -35,9 +36,11 @@ import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /**
@@ -296,6 +299,32 @@ public class AnalysisController {
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename*=UTF-8''" + URLEncoder.encode(name.toString(), "UTF-8"))
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
+    }
+
+    /** 项目级 Excel 导出：按缓存文件名加载全部入口，聚合生成一个多 Sheet 工作簿 */
+    @PostMapping("/report/excel-project")
+    public ResponseEntity<byte[]> excelProject(@RequestBody ProjectExcelRequest req) throws IOException {
+        List<AnalysisResult> results = new ArrayList<>();
+        if (req.getCacheFiles() != null) {
+            for (String f : req.getCacheFiles()) {
+                if (f == null || f.isEmpty()) continue;
+                Optional<AnalysisResult> r = cacheService.loadByFileName(req.getProjectPath(), f);
+                r.ifPresent(results::add);
+            }
+        }
+        if (results.isEmpty()) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST,
+                    "没有可用于导出的入口缓存，请先执行批量分析并等待全量加载完成");
+        }
+        String srcFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
+        byte[] bytes = excelReportGenerator.generateProject(results, srcFilter, req.getProjectPath());
+        String name = "callgraph_project_entries_" + results.size() + ".xlsx";
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8"))
                 .contentType(MediaType.parseMediaType(
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .body(bytes);
