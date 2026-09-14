@@ -9,6 +9,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import com.spark.callgraph.service.dto.CacheFileInfo;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -16,6 +18,9 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -96,8 +101,141 @@ public class AnalysisCacheService {
     /** 某项目是否有任意分析缓存文件（只查项目内目录） */
     public boolean hasAnyCache(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return false;
-        Path local = Paths.get(projectPath, ".callgraph", "cache");
+        Path local = cacheDir(projectPath);
         return hasJsonFile(local);
+    }
+
+    // ==================================================================
+    // 简化版：Step2 清单驱动的单份缓存（固定文件名 + 清单签名）
+    // ==================================================================
+
+    public static final String SINGLE_CACHE_FILE = "analysis_result.json";
+
+    /** 计算某次分析对应的缓存文件名（与 save/load 完全一致），供批量分析汇总索引用 */
+    public String fileNameOf(String projectPath, String className, String methodName,
+                             int maxDepth, int maxNodes, String freqSourceFilter) {
+        String projFp = projectFingerprint(projectPath);
+        String key = String.join("|",
+                safe(className), safe(methodName),
+                String.valueOf(maxDepth), String.valueOf(maxNodes),
+                safe(freqSourceFilter), safe(projFp));
+        String hash = sha1(key);
+        return humanReadableName(className, methodName, hash);
+    }
+
+    /** 计算 EntryList 的签名（confirmed 所有 key 排序拼接后 MD5） */
+    public String entryListFingerprint(List<com.spark.callgraph.service.dto.EntryList.EntryItem> confirmed) {
+        if (confirmed == null || confirmed.isEmpty()) return "";
+        try {
+            java.util.TreeSet<String> keys = new java.util.TreeSet<>();
+            for (var e : confirmed) keys.add(e.key());
+            String sorted = String.join("|", keys);
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] hash = md.digest(sorted.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (NoSuchAlgorithmException e) {
+            return String.valueOf(confirmed.size());
+        }
+    }
+
+    /** 保存单份缓存（覆盖写），同时存清单签名。
+     *  result 已经是 JSON 兼容结构（来自前端回传的完整结果），直接落盘，避免二次反序列化丢失。
+     */
+    public void saveSingle(String projectPath, Object result, String entryListHash, int entryCount) {
+        try {
+            Path dir = cacheDir(projectPath);
+            Files.createDirectories(dir);
+            Path file = dir.resolve(SINGLE_CACHE_FILE);
+
+            java.util.Map<String, Object> wrapper = new java.util.LinkedHashMap<>();
+            wrapper.put("entryListHash", entryListHash == null ? "" : entryListHash);
+            wrapper.put("entryCount", entryCount);
+            wrapper.put("analyzedAt", System.currentTimeMillis());
+            wrapper.put("result", result);
+
+            // 直接写（不原子，简单可靠）
+            mapper.writeValue(file.toFile(), wrapper);
+            log.info("[缓存] 单份已写入 entries={}, hash={}, file={}", entryCount, entryListHash, file);
+        } catch (Exception e) {
+            log.error("[缓存] 单份写入失败: {}", e.getMessage(), e);
+        }
+    }
+
+    /** 单份缓存最大体积（MB）：超过则视为旧版损坏/巨量格式，不再读取（避免进入项目卡死）。
+     *  批量分析现在只把轻量索引写进单份缓存，正常只有几 KB。 */
+    private static final long SINGLE_CACHE_MAX_BYTES = 30L * 1024 * 1024;
+
+    /** 加载单份缓存。返回 null 表示不存在（或体积过大被忽略）；返回 Map 含 result + meta */
+    public java.util.Map<String, Object> loadSingle(String projectPath) {
+        try {
+            Path file = cacheDir(projectPath).resolve(SINGLE_CACHE_FILE);
+            if (!Files.isRegularFile(file)) return null;
+            long size = Files.size(file);
+            if (size > SINGLE_CACHE_MAX_BYTES) {
+                log.warn("[缓存] 单份缓存体积过大({}MB)已忽略读取，请重新执行批量分析生成新格式: {}",
+                        size / 1024 / 1024, file);
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> wrapper = mapper.readValue(file.toFile(), java.util.Map.class);
+            return wrapper;
+        } catch (Exception e) {
+            log.warn("[缓存] 单份读取失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 列出项目内所有缓存文件（按最后修改时间降序，最新的排最前）。
+     * 用于前端下拉切换不同批次的分析结果。
+     */
+    public List<CacheFileInfo> listAll(String projectPath) {
+        List<CacheFileInfo> result = new ArrayList<>();
+        if (projectPath == null || projectPath.isEmpty()) return result;
+        Path dir = Paths.get(projectPath, ".callgraph", "cache");
+        if (!Files.isDirectory(dir)) return result;
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir, 2)) {
+            walk.filter(Files::isRegularFile)
+                .filter(p -> p.getFileName() != null
+                        && p.getFileName().toString().endsWith(".json"))
+                .forEach(p -> {
+                    try {
+                        String name = p.getFileName().toString();
+                        long size = Files.size(p);
+                        long mtime = Files.getLastModifiedTime(p).toMillis();
+                        result.add(new CacheFileInfo(name, size, mtime));
+                    } catch (IOException ignored) {}
+                });
+        } catch (Exception e) {
+            log.warn("[缓存] listAll 失败: {}", e.getMessage());
+        }
+        result.sort(Comparator.comparingLong((CacheFileInfo c) -> c.lastModifiedMs).reversed());
+        return result;
+    }
+
+    /** 加载项目内最新（修改时间最大）的缓存文件 */
+    public Optional<AnalysisResult> loadLatest(String projectPath) {
+        List<CacheFileInfo> list = listAll(projectPath);
+        if (list.isEmpty()) return Optional.empty();
+        return loadByFileName(projectPath, list.get(0).fileName);
+    }
+
+    /** 按具体文件名加载（用于下拉切换） */
+    public Optional<AnalysisResult> loadByFileName(String projectPath, String fileName) {
+        try {
+            Path file = cacheDir(projectPath).resolve(fileName);
+            if (!Files.isRegularFile(file)) {
+                log.warn("[缓存] 文件不存在: {}", file);
+                return Optional.empty();
+            }
+            log.info("[缓存] 按名称加载 {}", fileName);
+            return Optional.of(mapper.readValue(file.toFile(), AnalysisResult.class));
+        } catch (Exception e) {
+            log.warn("[缓存] 按名称加载失败 {}: {}", fileName, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     private static boolean hasJsonFile(Path dir) {

@@ -55,9 +55,11 @@ class AnalysisControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.className").value("com.demo.OrderService"))
                 .andExpect(jsonPath("$.methodName").value("place"))
-                .andExpect(jsonPath("$.roots.length()").value(1))
-                .andExpect(jsonPath("$.roots[0].method.name").value("place"))
-                .andExpect(jsonPath("$.roots[0].method.display").value("place()"))
+                .andExpect(jsonPath("$.schema").value(2))
+                .andExpect(jsonPath("$.graph.roots.length()").value(1))
+                .andExpect(jsonPath("$.graph.methods[0].name").value("place"))
+                .andExpect(jsonPath("$.graph.methods[0].display")
+                        .value("com.demo.OrderService#place()"))
                 .andExpect(jsonPath("$.stats.totalNodes").value(
                         org.hamcrest.Matchers.greaterThan(10)))
                 .andExpect(jsonPath("$.stats.projectMethods").value(
@@ -73,7 +75,7 @@ class AnalysisControllerTest {
         mvc.perform(post("/api/analyze").contentType(MediaType.APPLICATION_JSON)
                         .content(body(demoClasses.toString(), "com.demo.OrderService", "")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.roots.length()").value(
+                .andExpect(jsonPath("$.graph.roots.length()").value(
                         org.hamcrest.Matchers.greaterThan(5)))
                 .andExpect(jsonPath("$.methodName").doesNotExist());
     }
@@ -84,7 +86,9 @@ class AnalysisControllerTest {
                         .content(body(demoClasses.toString(), "OrderService", "loop")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.className").value("com.demo.OrderService"))
-                .andExpect(jsonPath("$.roots[0].children[0].cycle").value(true));
+                .andExpect(jsonPath("$.graph.roots.length()").value(1))
+                .andExpect(jsonPath("$.graph.methods[0].name").value("loop"))
+                .andExpect(jsonPath("$.graph.methods[0].cycle").value(true));
     }
 
     @Test
@@ -204,9 +208,9 @@ class AnalysisControllerTest {
         mvc.perform(post("/api/analyze").contentType(MediaType.APPLICATION_JSON)
                         .content(entriesBody))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.roots.length()").value(2))
-                .andExpect(jsonPath("$.roots[0].method.name").value("list"))
-                .andExpect(jsonPath("$.roots[1].method.name").value("main"))
+                .andExpect(jsonPath("$.graph.roots.length()").value(2))
+                .andExpect(jsonPath("$.graph.methods[?(@.name == 'list')]").isNotEmpty())
+                .andExpect(jsonPath("$.graph.methods[?(@.name == 'main')]").isNotEmpty())
                 .andExpect(jsonPath("$.stats.entryCount").value(2))
                 .andExpect(jsonPath("$.className").doesNotExist());
     }

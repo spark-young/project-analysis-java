@@ -1,6 +1,9 @@
 package com.spark.callgraph.report;
 
-import com.spark.callgraph.engine.model.CallNode;
+import com.spark.callgraph.engine.model.CallGraph;
+import com.spark.callgraph.engine.model.GraphEdge;
+import com.spark.callgraph.engine.model.GraphMethod;
+import com.spark.callgraph.engine.model.SourceType;
 import com.spark.callgraph.service.NoiseRuleService;
 import com.spark.callgraph.service.dto.AnalysisResult;
 import com.spark.callgraph.service.dto.MethodCaller;
@@ -42,15 +45,16 @@ public class ExcelReportGenerator {
     }
 
     public byte[] generate(AnalysisResult result) throws IOException {
-        return generate(result, "ALL");
+        return generate(result, "ALL", null);
     }
 
     /**
-     * 生成 Excel。methodFrequency 区块按来源筛选 + 启用的样板规则过滤。
+     * 生成 Excel。methodFrequency 区块按来源筛选 + 启用的样板规则过滤（全局+项目级合并）。
      *
      * @param sourceFilter ALL/PROJECT/DEPENDENCY/EXTERNAL
+     * @param projectPath  项目路径（传了就合并项目级噪声规则；null 只查全局）
      */
-    public byte[] generate(AnalysisResult result, String sourceFilter) throws IOException {
+    public byte[] generate(AnalysisResult result, String sourceFilter, String projectPath) throws IOException {
         try (SXSSFWorkbook wb = new SXSSFWorkbook(200)) {
             CellStyle headerStyle = headerStyle(wb);
             CellStyle rootStyle = rootStyle(wb);
@@ -65,7 +69,7 @@ public class ExcelReportGenerator {
                         && !"ALL".equalsIgnoreCase(sourceFilter)) {
                     if (!sourceFilter.equalsIgnoreCase(mf.getSource())) continue;
                 }
-                if (noiseRuleService.isNoise(mf.getMethod(), mf.getSource())) {
+                if (noiseRuleService.isNoise(mf.getMethod(), mf.getSource(), projectPath)) {
                     noiseRemoved.add(mf);
                 } else {
                     kept.add(mf);
@@ -74,23 +78,9 @@ public class ExcelReportGenerator {
 
             writeOverview(wb, result, headerStyle, sourceFilter, kept, noiseRemoved);
             writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
-            writeFilteredOutSheet(wb, noiseRemoved, headerStyle);
+            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
 
-            Set<String> usedSheetNames = new HashSet<>();
-            int sheetCount = 0;
-            for (CallNode root : result.getRoots()) {
-                if (sheetCount >= MAX_SHEETS) break;
-                String name = sheetName(root, usedSheetNames);
-                Sheet sheet = wb.createSheet(name);
-                writeMethodSheet(sheet, root, headerStyle, rootStyle);
-                sheetCount++;
-            }
-            if (result.getRoots().size() > MAX_SHEETS) {
-                Sheet overview = wb.getSheetAt(0);
-                int r = overview.getLastRowNum() + 1;
-                overview.createRow(r).createCell(0)
-                        .setCellValue("入口方法超过 " + MAX_SHEETS + " 个，仅导出前 " + MAX_SHEETS + " 个（建议按具体方法分析）");
-            }
+            writeRootSheets(wb, result, headerStyle, rootStyle);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -156,7 +146,7 @@ public class ExcelReportGenerator {
     /**
      * 按来源筛选 + 启用的样板规则过滤方法频次列表。
      */
-    private List<MethodFrequency> filterFrequency(List<MethodFrequency> all, String sourceFilter) {
+    private List<MethodFrequency> filterFrequency(List<MethodFrequency> all, String sourceFilter, String projectPath) {
         List<MethodFrequency> out = new ArrayList<>();
         for (MethodFrequency mf : all) {
             String src = mf.getSource();
@@ -166,7 +156,7 @@ public class ExcelReportGenerator {
                 if (!sourceFilter.equalsIgnoreCase(src)) continue;
             }
             // 样板规则过滤（传入完整方法标识，内部解析类名/方法名/参数个数）
-            if (noiseRuleService.isNoise(mf.getMethod(), src)) continue;
+            if (noiseRuleService.isNoise(mf.getMethod(), src, projectPath)) continue;
             out.add(mf);
         }
         return out;
@@ -225,7 +215,8 @@ public class ExcelReportGenerator {
      * 写入"被过滤方法"Sheet：列出命中样板规则的方法，供用户检查是否有误杀。
      * 最后一列显示命中的规则名称。
      */
-    private void writeFilteredOutSheet(SXSSFWorkbook wb, List<MethodFrequency> noiseRemoved, CellStyle headerStyle) {
+    private void writeFilteredOutSheet(SXSSFWorkbook wb, List<MethodFrequency> noiseRemoved,
+                                       CellStyle headerStyle, String projectPath) {
         if (noiseRemoved == null || noiseRemoved.isEmpty()) return;
         Sheet sheet = wb.createSheet("被过滤方法");
         int r = 0;
@@ -261,7 +252,7 @@ public class ExcelReportGenerator {
             }
             row.createCell(4).setCellValue(callers.toString());
             row.createCell(5).setCellValue(
-                    noiseRuleService.getMatchedRule(mf.getMethod(), mf.getSource()));
+                    noiseRuleService.getMatchedRule(mf.getMethod(), mf.getSource(), projectPath));
         }
         sheet.setColumnWidth(0, 8 * 256);
         sheet.setColumnWidth(1, 90 * 256);
@@ -273,10 +264,32 @@ public class ExcelReportGenerator {
     }
 
     // ------------------------------------------------------------------
-    // 方法 Sheet
+    // 方法 Sheet（图版：每个入口方法一个 Sheet，DFS 平铺去重节点）
     // ------------------------------------------------------------------
 
-    private void writeMethodSheet(Sheet sheet, CallNode root, CellStyle headerStyle, CellStyle rootStyle) {
+    private void writeRootSheets(SXSSFWorkbook wb, AnalysisResult result,
+                                 CellStyle headerStyle, CellStyle rootStyle) {
+        CallGraph g = result.getGraph();
+        List<Integer> roots = g.getRoots();
+        Set<String> usedSheetNames = new HashSet<>();
+        int sheetCount = 0;
+        for (int rootId : roots) {
+            if (sheetCount >= MAX_SHEETS) break;
+            String name = sheetName(g.getMethods().get(rootId), usedSheetNames);
+            Sheet sheet = wb.createSheet(name);
+            writeMethodSheet(sheet, g, rootId, headerStyle, rootStyle);
+            sheetCount++;
+        }
+        if (roots.size() > MAX_SHEETS) {
+            Sheet overview = wb.getSheetAt(0);
+            int r = overview.getLastRowNum() + 1;
+            overview.createRow(r).createCell(0)
+                    .setCellValue("入口方法超过 " + MAX_SHEETS + " 个，仅导出前 " + MAX_SHEETS + " 个（建议按具体方法分析）");
+        }
+    }
+
+    private void writeMethodSheet(Sheet sheet, CallGraph graph, int rootId,
+                                  CellStyle headerStyle, CellStyle rootStyle) {
         Row header = sheet.createRow(0);
         for (int i = 0; i < HEADERS.length; i++) {
             Cell c = header.createCell(i);
@@ -284,7 +297,8 @@ public class ExcelReportGenerator {
             c.setCellStyle(headerStyle);
         }
         int[] rowIdx = {1};
-        writeNode(sheet, root, 0, rowIdx, rootStyle);
+        boolean[] visited = new boolean[graph.getMethods().size()];
+        writeNode(sheet, graph, rootId, null, 0, rowIdx, rootStyle, visited);
         sheet.createFreezePane(0, 1);
         sheet.setColumnWidth(0, 6 * 256);
         sheet.setColumnWidth(1, 80 * 256);
@@ -295,33 +309,36 @@ public class ExcelReportGenerator {
         sheet.setAutoFilter(new org.apache.poi.ss.util.CellRangeAddress(0, 0, 0, HEADERS.length - 1));
     }
 
-    private void writeNode(Sheet sheet, CallNode node, int level, int[] rowIdx, CellStyle rootStyle) {
+    private void writeNode(Sheet sheet, CallGraph graph, int methodId, GraphEdge parentEdge,
+                           int level, int[] rowIdx, CellStyle rootStyle, boolean[] visited) {
+        if (visited[methodId]) return;   // 去重：每个方法仅在入口链中展开一次，避免重复/栈溢出
+        visited[methodId] = true;
+        GraphMethod m = graph.getMethods().get(methodId);
         Row row = sheet.createRow(rowIdx[0]++);
         List<String> remarks = new ArrayList<>();
-        if (node.isCycle()) remarks.add("环：已出现在上层路径");
-        if (node.isTruncated()) remarks.add("截断：深度/节点上限");
-        if (node.getSource() == com.spark.callgraph.engine.model.SourceType.EXTERNAL) remarks.add("外部：类不在类路径");
+        if (m.isCycle()) remarks.add("环：已出现在上层路径");
+        if (m.getSource() == SourceType.EXTERNAL) remarks.add("外部：类不在类路径");
 
         row.createCell(0).setCellValue(level);
         Cell methodCell = row.createCell(1);
-        methodCell.setCellValue(node.getMethod().getIdentifier());
+        methodCell.setCellValue(m.getDisplay());
         if (level == 0) methodCell.setCellStyle(rootStyle);
-        row.createCell(2).setCellValue(node.getSource().getLabel());
-        row.createCell(3).setCellValue(node.getInvokeType() == null ? "入口" : node.getInvokeType().getLabel());
-        row.createCell(4).setCellValue(node.getLine() > 0 ? String.valueOf(node.getLine()) : "");
+        row.createCell(2).setCellValue(m.getSource().getLabel());
+        row.createCell(3).setCellValue(parentEdge == null ? "入口" : parentEdge.getInvoke().getLabel());
+        row.createCell(4).setCellValue(parentEdge != null && parentEdge.getLine() > 0
+                ? String.valueOf(parentEdge.getLine()) : "");
         row.createCell(5).setCellValue(String.join("；", remarks));
 
-        for (CallNode child : node.getChildren()) {
-            writeNode(sheet, child, level + 1, rowIdx, rootStyle);
+        for (GraphEdge e : graph.edgesOf(methodId)) {
+            writeNode(sheet, graph, e.getTo(), e, level + 1, rowIdx, rootStyle, visited);
         }
     }
 
-    // ------------------------------------------------------------------
-    // 辅助
-    // ------------------------------------------------------------------
-
-    private String sheetName(CallNode root, Set<String> used) {
-        String base = root.getMethod().getSimpleClassName() + "." + root.getMethod().getName();
+    private String sheetName(GraphMethod m, Set<String> used) {
+        String owner = m.getOwner();
+        int lastSlash = owner.lastIndexOf('/');
+        String simple = lastSlash >= 0 ? owner.substring(lastSlash + 1) : owner;
+        String base = simple + "." + m.getName();
         String safe = WorkbookUtil.createSafeSheetName(base);
         if (safe.length() > 31) safe = safe.substring(0, 31);
         String name = safe;

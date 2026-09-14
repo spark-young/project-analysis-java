@@ -1,7 +1,9 @@
 package com.spark.callgraph.engine;
 
+import com.spark.callgraph.engine.model.CallGraph;
 import com.spark.callgraph.engine.model.CallNode;
 import com.spark.callgraph.engine.model.ClassInfo;
+import com.spark.callgraph.engine.model.GraphMethod;
 import com.spark.callgraph.engine.model.InvokeType;
 import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.RawCall;
@@ -9,17 +11,27 @@ import com.spark.callgraph.engine.model.Resolution;
 import com.spark.callgraph.engine.model.SourceType;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
- * 调用树构建器：DFS + 路径内环检测 + 深度/节点上限 + 同级去重。
+ * 调用图构建器：DFS + 路径内环检测 + 深度/节点上限 + 同级去重。
  * 语义：虚调用按静态接收类型解析；接口/抽象分派展示「声明节点 + 全部实现子节点」。
+ *
+ * <p>支持两种产出：</p>
+ * <ul>
+ *   <li>{@link #build}/{@link #buildRoots}：旧版树结构（渲染视图，仍可用作夹具/兼容）。</li>
+ *   <li>{@link #buildGraph}/{@link #buildGraphRoots}：新版图结构（节点表+边表，瘦身上线）。</li>
+ * </ul>
  */
 public final class CallGraphBuilder {
 
     private final ClassMetadataRegistry registry;
+    /** 同级去重表：from → 已挂载的 to 集合（单次构建生命周期内共享） */
+    private final Map<Integer, Set<Integer>> seenEdgesPerParent = new HashMap<>();
 
     public CallGraphBuilder(ClassMetadataRegistry registry) {
         this.registry = registry;
@@ -135,5 +147,153 @@ public final class CallGraphBuilder {
 
     private static CallNode newNode(MethodKey method, SourceType source, InvokeType invokeType, int line) {
         return new CallNode(method, source, invokeType, line);
+    }
+
+    // ==================================================================
+    // 图结构构建（新存储格式：去重节点表 + 边表）
+    // ==================================================================
+
+    /** 单个入口构建为一个图；为每个入口分配独立节点预算（与 buildRoots 相同的防串扰策略）。 */
+    public CallGraph buildGraph(MethodKey root, int maxDepth, int maxNodes) {
+        resetSharedState();
+        CallGraph g = new CallGraph();
+        int[] budget = {maxNodes};
+        int rootId = ensureMethod(g, root, sourceOf(root), budget);
+        g.getRoots().add(rootId);
+        expandGraph(g, rootId, 0, new HashSet<>(), maxDepth, budget);
+        return g;
+    }
+
+    /** 多个入口构建到同一个图（共享去重节点表），各自独立预算。 */
+    public CallGraph buildGraphRoots(List<MethodKey> roots, int maxDepth, int maxNodes) {
+        resetSharedState();
+        CallGraph g = new CallGraph();
+        for (MethodKey root : roots) {
+            int[] budget = {maxNodes};
+            int rootId = ensureMethod(g, root, sourceOf(root), budget);
+            g.getRoots().add(rootId);
+            expandGraph(g, rootId, 0, new HashSet<>(), maxDepth, budget);
+        }
+        return g;
+    }
+
+    private void resetSharedState() {
+        seenEdgesPerParent.clear();
+    }
+
+    /** 图版 expand：语义与 {@link #expand} 完全一致，但把"挂子节点建树"改为"建边+去重节点"。 */
+    private void expandGraph(CallGraph g, int callerId, int depth, Set<MethodKey> path,
+                             int maxDepth, int[] budget) {
+        MethodKey callerKey = g.getMethods().get(callerId).toKey();
+        ClassInfo ci = registry.get(callerKey.getOwner());
+        if (ci == null) return;                                      // 外部类无字节码
+        List<RawCall> calls = registry.callsOf(callerKey);
+        if (calls.isEmpty()) return;
+        if (depth >= maxDepth) { g.setTruncated(true); return; }
+
+        for (RawCall raw : calls) {
+            Resolution res = registry.resolve(raw.getOwner(), raw.getName(), raw.getDescriptor());
+            switch (res.getKind()) {
+                case JDK:
+                    break;
+                case EXTERNAL: {
+                    MethodKey target = res.getTargets().get(0);
+                    int targetId = ensureMethod(g, target, SourceType.EXTERNAL, budget);
+                    if (targetId >= 0) {
+                        addEdgeDedup(g, callerId, targetId, raw);
+                    }
+                    break;                                          // 不展开
+                }
+                case SINGLE: {
+                    MethodKey target = res.getTargets().get(0);
+                    if (path.contains(target)) {                    // 环：方法级标记，不强建新节点/边
+                        markCycle(g, target);
+                        break;
+                    }
+                    int childId = ensureMethod(g, target, sourceOf(target), budget);
+                    if (childId < 0) { g.setTruncated(true); continue; }
+                    if (addEdgeDedup(g, callerId, childId, raw)) {
+                        path.add(target);
+                        expandGraph(g, childId, depth + 1, path, maxDepth, budget);
+                        path.remove(target);
+                    }
+                    break;
+                }
+                case MULTI: {
+                    MethodKey declared = MethodKey.of(raw.getOwner(), raw.getName(), raw.getDescriptor());
+                    int declaredId = ensureMethod(g, declared, sourceOf(declared), budget);
+                    if (declaredId < 0) { g.setTruncated(true); continue; }
+                    if (addEdgeDedup(g, callerId, declaredId, raw)) {
+                        if (depth + 2 > maxDepth) {
+                            g.setTruncated(true);
+                        } else {
+                            for (MethodKey impl : res.getTargets()) {
+                                if (path.contains(impl)) {          // 环：方法级标记
+                                    markCycle(g, impl);
+                                    continue;
+                                }
+                                int implChild = ensureMethod(g, impl, sourceOf(impl), budget);
+                                if (implChild < 0) { g.setTruncated(true); continue; }
+                                if (addEdgeDedup(g, declaredId, implChild, InvokeType.IMPL, raw.getLine())) {
+                                    path.add(impl);
+                                    expandGraph(g, implChild, depth + 2, path, maxDepth, budget);
+                                    path.remove(impl);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+    /** 将方法标记为环（若节点已注册）。不强制新节点。 */
+    private void markCycle(CallGraph g, MethodKey key) {
+        for (int i = 0; i < g.getMethods().size(); i++) {
+            GraphMethod m = g.getMethods().get(i);
+            if (m.getOwner().equals(key.getOwner()) && m.getName().equals(key.getName())
+                    && m.getDescriptor().equals(key.getDescriptor())) {
+                m.setCycle(true);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 注册方法并返回 id；预算耗尽返回 -1（调用方负责标记截断）。
+     * 去重命中不耗预算；新增节点时递减 budget（根节点已在 buildGraph 提前占用 1）。
+     */
+    private int ensureMethod(CallGraph g, MethodKey key, SourceType source, int[] budget) {
+        int existing = indexOfMethod(g, key);
+        if (existing >= 0) return existing;                         // 去重命中：不耗预算
+        if (budget[0] <= 0) return -1;                              // 预算耗尽
+        budget[0]--;
+        int id = g.getMethods().size();
+        g.getMethods().add(GraphMethod.of(key, source));
+        return id;
+    }
+
+    private int indexOfMethod(CallGraph g, MethodKey key) {
+        for (int i = 0; i < g.getMethods().size(); i++) {
+            GraphMethod m = g.getMethods().get(i);
+            if (m.getOwner().equals(key.getOwner()) && m.getName().equals(key.getName())
+                    && m.getDescriptor().equals(key.getDescriptor())) return i;
+        }
+        return -1;
+    }
+
+    /** 同级去重后挂边。同父→同被调只建一次。返回是否真正挂载。 */
+    private boolean addEdgeDedup(CallGraph g, int from, int to, RawCall raw) {
+        return addEdgeDedup(g, from, to, raw.getInvokeType(), raw.getLine());
+    }
+
+    private boolean addEdgeDedup(CallGraph g, int from, int to, InvokeType invoke, int line) {
+        Set<Integer> seen = seenEdgesPerParent.computeIfAbsent(from, k -> new HashSet<>());
+        if (!seen.add(to)) return false;                            // 同级去重（同父到同被调只建一次）
+        g.addEdge(from, to, invoke, line);
+        return true;
     }
 }

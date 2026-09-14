@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Java 方法调用链分析工具</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="style.css?v=20260914b">
 </head>
 <body>
 <header class="header">
@@ -102,89 +102,96 @@
     <!-- ============================================================= -->
     <section id="viewAnalyze" hidden>
 
-        <!-- 当前项目 + 两条显式分析路径 -->
-        <div class="card">
-            <!-- 当前项目 -->
-            <div class="form-grid form-grid-common">
-                <div class="form-item span-2">
-                    <label>当前项目</label>
+        <!-- 项目详情：Step 1/2/3 -->
+        <div class="card steps-container">
+            <!-- Step 1 当前项目 -->
+            <div class="step-panel step-panel-project">
+                <div class="step-rail">
+                    <div class="step-rail-dot"><span class="step-num">1</span></div>
+                    <div class="step-rail-line"></div>
+                </div>
+                <div class="step-body">
+                    <div class="step-header">
+                        <span class="step-title">项目</span>
+                        <span class="step-sub hint">已就绪</span>
+                        <div class="step-actions">
+                            <button id="btnBackToProjects" type="button" class="btn small ghost">← 返回列表</button>
+                        </div>
+                    </div>
                     <div class="current-project-bar">
                         <span id="currentProjectBadge" class="badge source-project">LOCAL</span>
                         <span id="currentProjectName" class="current-project-name">—</span>
                         <span id="currentProjectPath" class="current-project-path hint"></span>
-                        <button id="btnBackToProjects" type="button" class="btn small ghost">← 返回列表</button>
                     </div>
                 </div>
             </div>
 
-            <!-- 分隔线 -->
-            <div class="path-divider"></div>
+            <!-- Step 2 交易入口清单 -->
+            <div class="step-panel step-panel-entries">
+                <div class="step-rail">
+                    <div class="step-rail-dot"><span class="step-num">2</span></div>
+                    <div class="step-rail-line"></div>
+                </div>
+                <div class="step-body">
+                    <div class="step-header">
+                        <span class="step-title">交易入口清单</span>
+                        <span id="entryListStats" class="step-sub hint">加载中...</span>
+                        <div class="step-actions">
+                            <button id="btnEntryScan" type="button" class="btn small primary">🔍 自动扫描加入清单</button>
+                            <button id="btnEntryAdd" type="button" class="btn small">➕ 手动添加</button>
+                        </div>
+                    </div>
 
-            <!-- 路径 A：智能扫描（推荐新用户） -->
-            <div class="path-block path-primary">
-                <div class="path-header">
-                    <span class="path-title">🔍 路径 A · 智能扫描</span>
-                    <span class="path-desc">自动发现项目的 REST/Dubbo/定时任务/main 入口，你可以挑着分析</span>
-                </div>
-                <div class="path-actions">
-                    <button id="btnScanEntries" type="button" class="btn">扫描交易入口</button>
-                    <span class="path-sep">或者</span>
-                    <button id="btnAnalyzeAuto" type="button" class="btn primary">一键扫描并全量分析</button>
-                </div>
-                <!-- 扫描进度条 -->
-                <div id="entryScanProgress" class="scan-progress" hidden>
-                    <div class="scan-progress-bar-wrap">
-                        <div id="entryScanProgressBar" class="scan-progress-bar" style="width:0%"></div>
+                    <!-- confirmed 主体列表 -->
+                    <div id="entryConfirmedList" class="entry-list">
+                        <div class="entry-empty">还没有入口 → 点上面的「🔍 自动扫描加入清单」或「➕ 手动添加」来建清单</div>
                     </div>
-                    <div id="entryScanProgressText" class="scan-progress-text">准备中...</div>
-                </div>
-            </div>
 
-            <!-- 分隔线 -->
-            <div class="path-divider"></div>
-
-            <!-- 路径 B：精确指定（老手可选） -->
-            <div class="path-block path-secondary">
-                <div class="path-header">
-                    <span class="path-title">🎯 路径 B · 精确指定（可选）</span>
-                    <span class="path-desc">知道自己要分析哪个类/方法？直接填下面跳过扫描</span>
-                </div>
-                <div class="form-grid path-form">
-                    <div class="form-item">
-                        <label for="className">类名 <span class="opt">（填了就只分析这个类）</span></label>
-                        <input id="className" list="classList" type="text" placeholder="全限定名或唯一简名，如 com.demo.OrderService">
-                        <datalist id="classList"></datalist>
-                        <div class="hint">支持自动补全；同名类需用全限定名</div>
-                    </div>
-                    <div class="form-item">
-                        <label for="methodName">方法名 <span class="opt">（可选）</span></label>
-                        <input id="methodName" type="text" placeholder="留空分析整个类（每个方法一棵树）">
-                        <div class="hint">重载方法会全部作为入口</div>
-                    </div>
-                    <div class="form-item">
-                        <label for="maxDepth">分析深度</label>
-                        <select id="maxDepth">
-                            <option value="5">5 层</option>
-                            <option value="10">10 层</option>
-                            <option value="15">15 层</option>
-                            <option value="20" selected>20 层（默认）</option>
-                            <option value="30">30 层</option>
-                        </select>
-                        <div class="hint">接口/抽象分派的实现层占一层</div>
-                    </div>
-                    <div class="form-item path-submit">
-                        <button id="btnAnalyzeManual" type="button" class="btn">只分析指定类</button>
-                    </div>
+                    <!-- excluded 折叠区 -->
+                    <details id="entryExcludedDetails" class="entry-excluded-details" hidden>
+                        <summary>🗑️ 已排除的入口 <span id="entryExcludedCount" class="hint"></span></summary>
+                        <div id="entryExcludedList" class="entry-list entry-excluded"></div>
+                    </details>
                 </div>
             </div>
 
-            <!-- 分隔线 -->
-            <div class="path-divider"></div>
-
-            <!-- 工具栏 -->
-            <div class="toolbar-row">
-                <button id="btnReAnalyze" type="button" class="btn" title="忽略缓存，强制重新完整分析整个项目">♻ 重新分析</button>
-                <button id="btnExcel" type="button" class="btn" disabled>📊 下载 Excel 报告</button>
+            <!-- Step 3 批量分析 -->
+            <div class="step-panel step-panel-execute">
+                <div class="step-rail">
+                    <div class="step-rail-dot"><span class="step-num">3</span></div>
+                </div>
+                <div class="step-body">
+                    <div class="step-header">
+                        <span class="step-title">批量分析</span>
+                        <span id="batchAnalyzeStats" class="step-sub hint">—</span>
+                    </div>
+                    <!-- 状态提示条（清单变更 / Git 更新 / 暂无缓存 → 引导用户分析） -->
+                    <div id="step3HintBar" class="step3-hint-bar" hidden>
+                        <span id="step3HintIcon" class="step3-hint-icon">ℹ️</span>
+                        <span id="step3HintText" class="step3-hint-text"></span>
+                    </div>
+                    <div class="step-actions" style="margin-top:8px;flex-wrap:wrap;gap:10px;align-items:center;">
+                        <div class="depth-control">
+                            <span class="depth-label">分析深度</span>
+                            <input type="number" id="maxDepth" class="depth-input"
+                                   min="1" max="200" value="20" step="1">
+                            <div class="depth-presets">
+                                <button type="button" class="depth-preset" data-depth="10">10</button>
+                                <button type="button" class="depth-preset" data-depth="20">20</button>
+                                <button type="button" class="depth-preset" data-depth="30">30</button>
+                                <button type="button" class="depth-preset" data-depth="50">50</button>
+                            </div>
+                        </div>
+                        <button id="btnBatchAnalyze" type="button" class="btn primary">📦 按清单批量分析</button>
+                        <button id="btnExcel" type="button" class="btn success" disabled>📊 下载 Excel 报告</button>
+                    </div>
+                    <div id="batchProgress" class="scan-progress" hidden>
+                        <div class="scan-progress-bar-wrap">
+                            <div id="batchProgressBar" class="scan-progress-bar" style="width:0%"></div>
+                        </div>
+                        <div id="batchProgressText" class="scan-progress-text">准备中...</div>
+                    </div>
+                </div>
             </div>
 
             <div id="errorBanner" class="error-banner" hidden></div>
@@ -217,6 +224,7 @@
                     <span id="resultTitle"></span>
                 </div>
                 <div class="tree-controls">
+                    <button id="btnBackToList" type="button" class="btn small" hidden>← 返回清单</button>
                     <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
                     <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
                 </div>
@@ -276,6 +284,57 @@
         </section>
     </section>
 
+    <!-- 手动添加交易入口 Modal -->
+    <div id="addEntryOverlay" class="overlay" hidden></div>
+    <div id="addEntryModal" class="card add-entry-modal" hidden>
+        <div class="modal-header">
+            <span class="modal-title">➕ 手动添加交易入口</span>
+            <button type="button" class="modal-close" id="addEntryClose">╳</button>
+        </div>
+        <div class="modal-body">
+            <!-- 类名 -->
+            <div class="modal-field">
+                <label class="modal-label">类名 <span class="required">*</span></label>
+                <input id="addEntryClass" type="text" list="addEntryClassList"
+                       placeholder="支持简名 OrderController，同名类需填全限定名">
+                <datalist id="addEntryClassList"></datalist>
+                <div class="modal-hint">示例：com.demo.OrderController 或 OrderController</div>
+            </div>
+            <!-- 方法名 -->
+            <div class="modal-field">
+                <label class="modal-label">方法名</label>
+                <select id="addEntryMethod" class="modal-select">
+                    <option value="">留空（整个类所有方法都作为入口）</option>
+                </select>
+                <input id="addEntryMethodText" type="text"
+                       placeholder="也可以直接输入方法名（覆盖上面的下拉）"
+                       style="margin-top:6px;">
+                <div class="modal-hint">类名填好后，下拉会自动列出该类的方法</div>
+            </div>
+            <!-- 快捷粘贴 -->
+            <div class="modal-field">
+                <label class="modal-label">快捷粘贴（可选，覆盖上面）</label>
+                <textarea id="addEntryPaste" rows="2"
+                          placeholder="com.demo.OrderController#createOrder(Lcom/demo/Order;)V"></textarea>
+                <div class="modal-hint">支持 3 种格式：<br>
+                    ① com.demo.OrderController（整个类）<br>
+                    ② com.demo.OrderController#createOrder（指定方法）<br>
+                    ③ com.demo.OrderController#createOrder(LOrder;)V（精确重载）</div>
+            </div>
+
+            <!-- 检测状态行 -->
+            <div class="modal-verify-row">
+                <span id="addEntryVerifyStatus" class="modal-verify-status">未检测</span>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <div style="flex:1;"></div>
+            <button type="button" class="btn" id="addEntryVerify">🔎 检测</button>
+            <button type="button" class="btn ghost" id="addEntryCancel">取消</button>
+            <button type="button" class="btn primary" id="addEntryConfirm" disabled>加入清单</button>
+        </div>
+    </div>
+
     <!-- 样板方法过滤规则管理弹窗 -->
     <div id="noiseRulesOverlay" class="overlay" hidden></div>
     <div id="noiseRulesPanel" class="card noise-rules-panel" hidden>
@@ -290,6 +349,12 @@
                 <button id="btnNoiseRuleSave" type="button" class="btn small primary">保存生效</button>
                 <button id="btnNoiseRulesClose" type="button" class="btn-close-corner" aria-label="关闭">✕</button>
             </div>
+        </div>
+        <!-- 全局 / 项目级 Tab 切换 -->
+        <div class="nr-scope-tabs">
+            <button type="button" class="nr-scope-tab active" data-scope="global">🌐 全局默认（所有项目通用）</button>
+            <button type="button" class="nr-scope-tab" data-scope="project">📦 当前项目（仅影响本项目）</button>
+            <span id="nrScopeHint" class="nr-scope-hint hint"></span>
         </div>
         <div class="nr-toolbar">
             <button id="btnNoiseRuleSelectAll" type="button" class="btn small">全选启用</button>
@@ -318,6 +383,6 @@
     </div>
 </footer>
 
-<script src="app.js"></script>
+<script src="app.js?v=20260914b"></script>
 </body>
 </html>

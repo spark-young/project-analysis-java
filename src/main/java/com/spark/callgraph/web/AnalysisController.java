@@ -1,14 +1,17 @@
 package com.spark.callgraph.web;
 
 import com.spark.callgraph.report.ExcelReportGenerator;
+import com.spark.callgraph.service.AnalysisCacheService;
 import com.spark.callgraph.service.AnalysisException;
 import com.spark.callgraph.service.AnalysisService;
+import com.spark.callgraph.service.BatchAnalyzeService;
 import com.spark.callgraph.service.EntryScanService;
 import com.spark.callgraph.service.GitPrepareService;
 import com.spark.callgraph.service.JavacCompileService;
 import com.spark.callgraph.service.MavenCompileService;
 import com.spark.callgraph.service.dto.AnalyzeRequest;
 import com.spark.callgraph.service.dto.AnalysisResult;
+import com.spark.callgraph.service.dto.BatchAnalyzeStatus;
 import com.spark.callgraph.service.dto.EntryScanResult;
 import com.spark.callgraph.service.dto.EntryScanStatus;
 import com.spark.callgraph.service.dto.GitPrepareRequest;
@@ -50,16 +53,21 @@ public class AnalysisController {
     private final GitPrepareService gitPrepareService;
     private final MavenCompileService mavenCompileService;
     private final JavacCompileService javacCompileService;
+    private final BatchAnalyzeService batchAnalyzeService;
+    private final AnalysisCacheService cacheService;
 
     public AnalysisController(AnalysisService analysisService, ExcelReportGenerator excelReportGenerator,
                               EntryScanService entryScanService, GitPrepareService gitPrepareService,
-                              MavenCompileService mavenCompileService, JavacCompileService javacCompileService) {
+                              MavenCompileService mavenCompileService, JavacCompileService javacCompileService,
+                              BatchAnalyzeService batchAnalyzeService, AnalysisCacheService cacheService) {
         this.analysisService = analysisService;
         this.excelReportGenerator = excelReportGenerator;
         this.entryScanService = entryScanService;
         this.gitPrepareService = gitPrepareService;
         this.mavenCompileService = mavenCompileService;
         this.javacCompileService = javacCompileService;
+        this.batchAnalyzeService = batchAnalyzeService;
+        this.cacheService = cacheService;
     }
 
     @GetMapping("/defaults")
@@ -78,9 +86,42 @@ public class AnalysisController {
         return analysisService.searchClasses(path, q);
     }
 
+    @GetMapping("/classes/methods")
+    public List<Map<String, String>> methods(@RequestParam("path") String path,
+                                              @RequestParam("class") String cls) {
+        return analysisService.getMethods(path, cls);
+    }
+
+    @GetMapping("/classes/verify")
+    public Map<String, Object> verify(@RequestParam("path") String path,
+                                      @RequestParam("class") String cls,
+                                      @RequestParam(value = "method", required = false) String method,
+                                      @RequestParam(value = "descriptor", required = false, defaultValue = "") String descriptor) {
+        return analysisService.verifyEntry(path, cls, method, descriptor);
+    }
+
     @PostMapping("/analyze")
     public AnalysisResult analyze(@RequestBody AnalyzeRequest req) {
         return analysisService.analyze(req);
+    }
+
+    /** 按交易入口清单批量分析（异步）：返回 jobId，前端轮询进度 */
+    @PostMapping("/analyze/batch")
+    public Map<String, String> analyzeBatch(@RequestBody AnalyzeRequest req) {
+        String jobId = batchAnalyzeService.startAsync(req);
+        Map<String, String> resp = new HashMap<>();
+        resp.put("jobId", jobId);
+        return resp;
+    }
+
+    /** 查询批量分析进度（DONE 时返回完整结果） */
+    @GetMapping("/analyze/batch/progress/{jobId}")
+    public BatchAnalyzeStatus analyzeBatchProgress(@PathVariable String jobId) {
+        BatchAnalyzeStatus status = batchAnalyzeService.status(jobId);
+        if (status == null) {
+            throw new AnalysisException(HttpStatus.NOT_FOUND, "任务不存在或已过期: " + jobId);
+        }
+        return status;
     }
 
     @PostMapping("/scan/entries")
@@ -230,16 +271,23 @@ public class AnalysisController {
 
     @PostMapping("/report/excel")
     public ResponseEntity<byte[]> excel(@RequestBody AnalyzeRequest req) throws IOException {
+        AnalysisResult result = null;
+        // 批量分析展开某入口时：按缓存文件名直接加载，避免重新分析
+        if (req.getCacheFileName() != null && !req.getCacheFileName().isEmpty()) {
+            result = cacheService.loadByFileName(req.getProjectPath(), req.getCacheFileName()).orElse(null);
+        }
         // 优先复用最近一次分析结果，避免重复分析导致客户端超时断开
-        AnalysisResult result = analysisService.getLastResult(req.getProjectPath());
+        if (result == null) {
+            result = analysisService.getLastResult(req.getProjectPath());
+        }
         if (result == null) {
             result = analysisService.analyze(req);
         }
         String srcFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
-        byte[] bytes = excelReportGenerator.generate(result, srcFilter);
+        byte[] bytes = excelReportGenerator.generate(result, srcFilter, req.getProjectPath());
         StringBuilder name = new StringBuilder("callgraph_")
                 .append(result.getClassName() == null
-                        ? "entries_" + result.getRoots().size()
+                        ? "entries_" + result.getGraph().getRoots().size()
                         : result.getClassName().replaceAll("[^\\w.]", "_"));
         if (result.getMethodName() != null) {
             name.append("_").append(result.getMethodName().replaceAll("[^\\w]", "_"));

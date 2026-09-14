@@ -2,7 +2,9 @@ package com.spark.callgraph.report;
 
 import com.spark.callgraph.engine.CallGraphBuilder;
 import com.spark.callgraph.engine.ClassMetadataRegistry;
-import com.spark.callgraph.engine.model.CallNode;
+import com.spark.callgraph.engine.model.CallGraph;
+import com.spark.callgraph.engine.model.GraphEdge;
+import com.spark.callgraph.engine.model.GraphMethod;
 import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.SourceType;
 import com.spark.callgraph.service.NoiseRuleService;
@@ -19,7 +21,9 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -38,34 +42,44 @@ class ExcelReportGeneratorTest {
                 .build();
     }
 
-    private AnalysisResult buildResult(CallNode... trees) {
+    private AnalysisResult buildResult(CallGraph... graphs) {
         AnalysisResult result = new AnalysisResult();
         result.setProjectPath("/tmp/demo");
         result.setProjectName("demo");
         result.setLayoutType("MAVEN");
         result.setClassName("com.demo.OrderService");
-        result.setMethodName(trees.length == 1 ? trees[0].getMethod().getName() : null);
-        List<CallNode> roots = new ArrayList<>();
-        int total = 0;
-        for (CallNode t : trees) {
-            roots.add(t);
-            total += count(t);
+        result.setMethodName(graphs.length == 1
+                ? graphs[0].getMethods().get(graphs[0].getRoots().get(0)).getName() : null);
+        // 合并多图：去重节点后按 MethodKey 重映射边与根下标
+        CallGraph combined = new CallGraph();
+        for (CallGraph g : graphs) {
+            for (GraphMethod m : g.getMethods()) combined.ensureMethod(m);
         }
-        result.setRoots(roots);
-        result.getStats().setEntryCount(trees.length);
-        result.getStats().setTotalNodes(total);
+        Map<MethodKey, Integer> idx = new HashMap<>();
+        for (int i = 0; i < combined.getMethods().size(); i++) {
+            idx.put(combined.getMethods().get(i).toKey(), i);
+        }
+        for (CallGraph g : graphs) {
+            for (int root : g.getRoots()) {
+                combined.getRoots().add(idx.get(g.getMethods().get(root).toKey()));
+            }
+            for (GraphEdge e : g.getEdges()) {
+                combined.addEdge(
+                        idx.get(g.getMethods().get(e.getFrom()).toKey()),
+                        idx.get(g.getMethods().get(e.getTo()).toKey()),
+                        e.getInvoke(), e.getLine());
+            }
+        }
+        result.setGraph(combined);
+        result.getStats().setEntryCount(graphs.length);
+        result.getStats().setTotalNodes(combined.getMethods().size());
+        result.getStats().setEdgeCount(combined.getEdges().size());
         return result;
     }
 
-    private static int count(CallNode node) {
-        int c = 1;
-        for (CallNode child : node.getChildren()) c += count(child);
-        return c;
-    }
-
-    private CallNode placeTree() {
+    private CallGraph placeTree() {
         return new CallGraphBuilder(registry)
-                .build(MethodKey.of("com/demo/OrderService", "place", "()V"), 20, 100000);
+                .buildGraph(MethodKey.of("com/demo/OrderService", "place", "()V"), 20, 100000);
     }
 
     @Test
@@ -89,9 +103,9 @@ class ExcelReportGeneratorTest {
             assertEquals("备注", header.getCell(5).getStringCellValue());
             assertNull(header.getCell(6), "应为 6 列，不再有第 7 列");
 
-            // 行数 = 节点数（不含表头）
-            int rows = sheet.getLastRowNum(); // 0-based，含表头
-            assertEquals(count(placeTree()) + 1, rows + 1);
+            // 行数 = 去重方法数（图节点表）（不含表头）
+            int methodCount = result.getGraph().getMethods().size();
+            assertEquals(methodCount, sheet.getLastRowNum(), "数据行数应等于去重方法数");
 
             // 首行为入口方法：全限定类名#方法名(参数) 格式
             Row first = sheet.getRow(1);
@@ -129,13 +143,15 @@ class ExcelReportGeneratorTest {
     @Test
     void test_sheetNameDedup_and_longName() throws IOException {
         // 两个同名方法根 + 一个超长类名
-        CallNode t1 = new CallGraphBuilder(registry)
-                .build(MethodKey.of("com/demo/OrderService", "pay", "(I)V"), 2, 1000);
-        CallNode t2 = new CallGraphBuilder(registry)
-                .build(MethodKey.of("com/demo/OrderService", "pay", "(Ljava/lang/String;)V"), 2, 1000);
-        CallNode longName = new CallNode(
+        CallGraph t1 = new CallGraphBuilder(registry)
+                .buildGraph(MethodKey.of("com/demo/OrderService", "pay", "(I)V"), 2, 1000);
+        CallGraph t2 = new CallGraphBuilder(registry)
+                .buildGraph(MethodKey.of("com/demo/OrderService", "pay", "(Ljava/lang/String;)V"), 2, 1000);
+        CallGraph longName = new CallGraph();
+        int id = longName.ensureMethod(GraphMethod.of(
                 MethodKey.of("com/demo/AVeryVeryVeryVeryVeryVeryVeryLongServiceClassNameForTest", "doSomething", "()V"),
-                SourceType.PROJECT, null, -1);
+                SourceType.PROJECT));
+        longName.getRoots().add(id);
         AnalysisResult result = buildResult(t1, t2, longName);
 
         byte[] bytes = generator.generate(result);

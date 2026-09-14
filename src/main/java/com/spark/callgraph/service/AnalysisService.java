@@ -5,8 +5,10 @@ import com.spark.callgraph.engine.ClassMetadataRegistry;
 import com.spark.callgraph.engine.ClasspathResolver;
 import com.spark.callgraph.engine.MavenRepoLocator;
 import com.spark.callgraph.engine.ProjectLayout;
-import com.spark.callgraph.engine.model.CallNode;
+import com.spark.callgraph.engine.model.CallGraph;
 import com.spark.callgraph.engine.model.ClassInfo;
+import com.spark.callgraph.engine.model.GraphEdge;
+import com.spark.callgraph.engine.model.GraphMethod;
 import com.spark.callgraph.engine.model.MethodKey;
 import com.spark.callgraph.engine.model.SourceType;
 import com.spark.callgraph.service.dto.AnalysisResult;
@@ -110,7 +112,7 @@ public class AnalysisService {
     public RegistryHandle registryFor(String projectPath, ProgressCallback progressCb) {
         CacheSlot slot = obtainRegistry(projectPath, progressCb);
         return new RegistryHandle(slot.registry, slot.layout.getProjectName(),
-                new ArrayList<>(slot.layout.getWarnings()));
+                slot.layout.getType().name(), new ArrayList<>(slot.layout.getWarnings()));
     }
 
     /** 自定义进度回调接口 */
@@ -123,16 +125,20 @@ public class AnalysisService {
     public static final class RegistryHandle {
         private final ClassMetadataRegistry registry;
         private final String projectName;
+        private final String layoutType;
         private final List<String> warnings;
 
-        RegistryHandle(ClassMetadataRegistry registry, String projectName, List<String> warnings) {
+        RegistryHandle(ClassMetadataRegistry registry, String projectName,
+                       String layoutType, List<String> warnings) {
             this.registry = registry;
             this.projectName = projectName;
+            this.layoutType = layoutType;
             this.warnings = warnings;
         }
 
         public ClassMetadataRegistry getRegistry() { return registry; }
         public String getProjectName() { return projectName; }
+        public String getLayoutType() { return layoutType; }
         public List<String> getWarnings() { return warnings; }
     }
 
@@ -160,6 +166,95 @@ public class AnalysisService {
         return out;
     }
 
+    /** 返回某个类的所有方法（name + descriptor），供前端下拉选 */
+    public List<Map<String, String>> getMethods(String path, String fullClassName) {
+        List<Map<String, String>> out = new ArrayList<>();
+        if (fullClassName == null || fullClassName.trim().isEmpty()) return out;
+        ClassMetadataRegistry registry = obtainRegistry(path).registry;
+        String internalName = fullClassName.trim().replace('.', '/');
+        ClassInfo ci = registry.get(internalName);
+        if (ci == null) return out;
+        for (var mk : ci.methodKeys()) {
+            Map<String, String> m = new HashMap<>();
+            m.put("name", mk.getName());
+            m.put("descriptor", mk.getDescriptor());
+            out.add(m);
+        }
+        // 按方法名排序（同名不同重载放一起）
+        out.sort((a, b) -> a.get("name").compareTo(b.get("name")));
+        return out;
+    }
+
+    /** 验证 className + methodName + descriptor 是否在项目中真实存在 */
+    public Map<String, Object> verifyEntry(String path, String className, String methodName, String descriptor) {
+        Map<String, Object> resp = new HashMap<>();
+        if (className == null || className.trim().isEmpty()) {
+            resp.put("ok", false); resp.put("reason", "类名不能为空"); return resp;
+        }
+        ClassMetadataRegistry registry = obtainRegistry(path).registry;
+        String internalName = className.trim().replace('.', '/');
+        ClassInfo ci = registry.get(internalName);
+        if (ci == null) {
+            // 再试 simpleName 匹配
+            String simple = internalName.substring(internalName.lastIndexOf('/') + 1);
+            var candidates = registry.classesBySimpleName(simple);
+            if (candidates == null || candidates.isEmpty()) {
+                resp.put("ok", false); resp.put("reason", "项目中未找到类: " + className); return resp;
+            }
+            if (candidates.size() == 1) {
+                ci = registry.get(candidates.iterator().next());
+            } else {
+                resp.put("ok", false);
+                resp.put("reason", "找到 " + candidates.size() + " 个同名类，请填全限定名");
+                List<String> fullNames = new ArrayList<>();
+                for (String cn : candidates) fullNames.add(cn.replace('/', '.'));
+                resp.put("candidates", fullNames);
+                return resp;
+            }
+        }
+        // class 存在
+        if (methodName == null || methodName.trim().isEmpty()) {
+            resp.put("ok", true); resp.put("reason", "类存在: " + ci.getInternalName().replace('/', '.'));
+            return resp;
+        }
+        // method 验证
+        String mname = methodName.trim();
+        String desc = descriptor == null ? "" : descriptor.trim();
+        if (desc.isEmpty()) {
+            // 不指定 descriptor → 只要有同名方法就算通过
+            boolean found = false;
+            List<String> descs = new ArrayList<>();
+            for (var mk : ci.methodKeys()) {
+                if (mk.getName().equals(mname)) { found = true; descs.add(mk.getDescriptor()); }
+            }
+            if (!found) {
+                resp.put("ok", false);
+                resp.put("reason", "类存在但方法 " + mname + " 不存在");
+                resp.put("available", ci.methodKeys().stream().map(mk -> mk.getName()).distinct().collect(Collectors.toList()));
+                return resp;
+            }
+            if (descs.size() == 1) {
+                resp.put("ok", true);
+                resp.put("descriptor", descs.get(0));
+                resp.put("reason", "✓ 已匹配唯一重载，建议 descriptor: " + descs.get(0));
+            } else {
+                resp.put("ok", true);
+                resp.put("multipleOverloads", descs);
+                resp.put("reason", "✓ 方法存在但有 " + descs.size() + " 个重载，建议指定 descriptor 精确匹配");
+            }
+            return resp;
+        }
+        // descriptor 也指定了
+        if (ci.hasOwnMethod(mname, desc)) {
+            resp.put("ok", true);
+            resp.put("reason", "✓ 完整匹配: " + className + "#" + mname + desc);
+        } else {
+            resp.put("ok", false);
+            resp.put("reason", "类存在，但未找到方法 " + mname + desc);
+        }
+        return resp;
+    }
+
     public AnalysisResult analyze(AnalyzeRequest req) {
         long start = System.currentTimeMillis();
         validate(req);
@@ -177,12 +272,16 @@ public class AnalysisService {
                     maxDepth, MAX_NODES, freqFilter);
             if (cached.isPresent()) {
                 AnalysisResult hit = cached.get();
-                hit.setStats(hit.getStats() == null ? new AnalysisResult.Stats() : hit.getStats());
-                hit.getStats().setDurationMs(System.currentTimeMillis() - start);
-                lastResult = hit;
-                lastResultProjectPath = req.getProjectPath();
-                log.info("[缓存] 命中持久化缓存，跳过完整分析 ({}ms)", hit.getStats().getDurationMs());
-                return hit;
+                // schema=1 旧树缓存/损坏：图为空则作废，重新分析（不沿用空结果）
+                if (hit.getSchema() == 2 && !hit.getGraph().getMethods().isEmpty()) {
+                    hit.setStats(hit.getStats() == null ? new AnalysisResult.Stats() : hit.getStats());
+                    hit.getStats().setDurationMs(System.currentTimeMillis() - start);
+                    lastResult = hit;
+                    lastResultProjectPath = req.getProjectPath();
+                    log.info("[缓存] 命中持久化缓存，跳过完整分析 ({}ms)", hit.getStats().getDurationMs());
+                    return hit;
+                }
+                log.info("[缓存] 命中但 schema/图无效，作废重析");
             }
         }
 
@@ -211,9 +310,9 @@ public class AnalysisService {
                     ? null : req.getMethodName().trim();
         }
 
-        // --- 4. 执行调用链分析 ---
+        // --- 4. 执行调用图分析（去重节点表 + 边表） ---
         CallGraphBuilder builder = new CallGraphBuilder(registry);
-        List<CallNode> trees = builder.buildRoots(roots, maxDepth, MAX_NODES);
+        CallGraph graph = builder.buildGraphRoots(roots, maxDepth, MAX_NODES);
 
         AnalysisResult result = new AnalysisResult();
         result.setProjectPath(req.getProjectPath());
@@ -221,9 +320,9 @@ public class AnalysisService {
         result.setLayoutType(layout.getType().name());
         result.setClassName(className);
         result.setMethodName(methodName);
-        result.setRoots(trees);
+        result.setGraph(graph);
         result.setWarnings(new ArrayList<>(layout.getWarnings()));
-        fillStats(result, trees, System.currentTimeMillis() - start);
+        fillStats(result, graph, System.currentTimeMillis() - start);
 
         // --- 5. 内存缓存（供 Excel 导出复用） ---
         lastResult = result;
@@ -256,6 +355,32 @@ public class AnalysisService {
             return lastResult;
         }
         return null;
+    }
+
+    /** 记录最近一次分析结果（供批量分析服务在异步完成后复用 Excel 导出） */
+    public void rememberLastResult(AnalysisResult result, String projectPath) {
+        this.lastResult = result;
+        this.lastResultProjectPath = projectPath;
+    }
+
+    /** 解析单个交易入口引用为根方法列表（供批量分析服务复用） */
+    public List<MethodKey> resolveEntryRoots(ClassMetadataRegistry registry, EntryRef ref) {
+        String owner = resolveEntryClass(registry, ref.getClassName());
+        ClassInfo info = registry.get(owner);
+        return entryMethods(info, ref.getMethodName(), ref.getMethodDescriptor());
+    }
+
+    /** 由调用图组装完整分析结果（复用统计/频次汇总逻辑），供批量分析服务复用 */
+    public AnalysisResult assembleResult(String projectPath, RegistryHandle handle,
+                                         CallGraph graph, long durationMs) {
+        AnalysisResult result = new AnalysisResult();
+        result.setProjectPath(projectPath);
+        result.setProjectName(handle.getProjectName());
+        result.setLayoutType(handle.getLayoutType());
+        result.setGraph(graph);
+        result.setWarnings(new ArrayList<>(handle.getWarnings()));
+        fillStats(result, graph, durationMs);
+        return result;
     }
 
     // ------------------------------------------------------------------
@@ -378,18 +503,17 @@ public class AnalysisService {
         return (ci.methodAccess(m.getName(), m.getDescriptor()) & (ACC_SYNTHETIC | ACC_BRIDGE)) != 0;
     }
 
-    private void fillStats(AnalysisResult result, List<CallNode> trees, long durationMs) {
+    private void fillStats(AnalysisResult result, CallGraph graph, long durationMs) {
         AnalysisResult.Stats stats = result.getStats();
-        stats.setEntryCount(trees.size());
+        stats.setEntryCount(graph.getRoots().size());
+        stats.setTotalNodes(graph.getMethods().size());
+        stats.setEdgeCount(graph.getEdges().size());
+        stats.setTruncated(graph.isTruncated());
         stats.setDurationMs(durationMs);
-        Map<MethodKey, MethodAgg> agg = new HashMap<>();
-        for (CallNode root : trees) {
-            collectStats(root, null, stats, agg);
-        }
-        // 去重后的独立方法数（map key 即全量独立方法，按 source 分类）
+        // 去重后的独立方法数（节点表全量，按 source 分类）
         int project = 0, dep = 0, ext = 0;
-        for (MethodAgg a : agg.values()) {
-            switch (a.source) {
+        for (GraphMethod m : graph.getMethods()) {
+            switch (m.getSource()) {
                 case PROJECT:     project++; break;
                 case DEPENDENCY:  dep++;     break;
                 default:          ext++;     break;
@@ -398,25 +522,24 @@ public class AnalysisService {
         stats.setProjectMethods(project);
         stats.setDependencyMethods(dep);
         stats.setExternalMethods(ext);
-        result.setMethodFrequency(topFrequency(agg));
+        result.setMethodFrequency(topFrequency(collectGraphStats(graph)));
     }
 
-    /** 一次 DFS 同时完成：总节点计数、截断标记、去重收集、入度(被调次数)、调用方与行号采集 */
-    private void collectStats(CallNode node, MethodKey caller, AnalysisResult.Stats stats,
-                              Map<MethodKey, MethodAgg> agg) {
-        stats.setTotalNodes(stats.getTotalNodes() + 1);
-        if (node.isTruncated()) stats.setTruncated(true);
-        MethodAgg a = agg.computeIfAbsent(node.getMethod(), k -> new MethodAgg());
-        if (a.source == null) a.source = node.getSource();
-        if (caller != null) {
+    /** 由图边表汇总：被调次数 = 入边数，调用方 = 入边来源方法 + 行号 */
+    private Map<MethodKey, MethodAgg> collectGraphStats(CallGraph graph) {
+        Map<MethodKey, MethodAgg> agg = new HashMap<>();
+        for (GraphEdge edge : graph.getEdges()) {
+            GraphMethod target = graph.getMethods().get(edge.getTo());
+            GraphMethod caller = graph.getMethods().get(edge.getFrom());
+            MethodKey targetKey = target.toKey();
+            MethodAgg a = agg.computeIfAbsent(targetKey, k -> new MethodAgg());
+            if (a.source == null) a.source = target.getSource();
             a.callCount++;
             if (a.callers.size() < CALLER_CAPTURE_LIMIT) {
-                a.callers.add(new CallerInfo(caller, node.getLine()));
+                a.callers.add(new CallerInfo(caller.toKey(), edge.getLine()));
             }
         }
-        for (CallNode c : node.getChildren()) {
-            collectStats(c, node.getMethod(), stats, agg);
-        }
+        return agg;
     }
 
     /** 构建"高频被调方法"排行：被调次数降序，同次数按标识稳定序，截取 Top N */

@@ -3,8 +3,11 @@ package com.spark.callgraph.web;
 import com.spark.callgraph.service.AnalysisException;
 import com.spark.callgraph.service.AnalysisCacheService;
 import com.spark.callgraph.service.AnalysisService;
+import com.spark.callgraph.service.EntryListService;
 import com.spark.callgraph.service.ProjectRegistry;
 import com.spark.callgraph.service.ProjectRegistry.RegisteredProject;
+import com.spark.callgraph.service.dto.EntryList;
+import com.spark.callgraph.service.dto.AnalysisResult;
 import com.spark.callgraph.service.dto.ProjectInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +18,9 @@ import org.springframework.web.bind.annotation.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
 
@@ -31,12 +36,14 @@ public class ProjectsController {
     private final ProjectRegistry registry;
     private final AnalysisService analysisService;
     private final AnalysisCacheService cacheService;
+    private final EntryListService entryListService;
 
     public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
-                              AnalysisCacheService cacheService) {
+                              AnalysisCacheService cacheService, EntryListService entryListService) {
         this.registry = registry;
         this.analysisService = analysisService;
         this.cacheService = cacheService;
+        this.entryListService = entryListService;
     }
 
     /** 列出所有项目，并附加实时检测的状态 */
@@ -261,6 +268,104 @@ public class ProjectsController {
         p.lastOpenedAt = System.currentTimeMillis();
         registry.save(p);
         return p;
+    }
+
+    /** 列出项目内所有缓存文件（元信息，不含内容） */
+    @GetMapping("/{id}/cache")
+    public List<com.spark.callgraph.service.dto.CacheFileInfo> listCache(@PathVariable String id) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+        return cacheService.listAll(p.projectPath);
+    }
+
+    /** 加载项目内最新缓存（返回完整 AnalysisResult，可为空） */
+    @GetMapping("/{id}/cache/latest")
+    public ResponseEntity<?> loadLatestCache(@PathVariable String id) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+        return cacheService.loadLatest(p.projectPath)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
+    /** 按文件名加载指定缓存批次 */
+    @GetMapping("/{id}/cache/load")
+    public ResponseEntity<?> loadCache(@PathVariable String id, @RequestParam String fileName) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+        return cacheService.loadByFileName(p.projectPath, fileName)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    // --------------------------------------------------------------
+    // 简化版：Step2 清单驱动的单份缓存
+    // --------------------------------------------------------------
+
+    @PostMapping("/{id}/cache/save-single")
+    public Map<String, Object> saveSingleCache(@PathVariable String id,
+                                                 @RequestBody Map<String, Object> body) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+
+        Object result = body.get("result");
+        // 后端自己算 hash + count，不依赖前端传（避免算法不一致）
+        EntryList entryList = entryListService.load(p.projectPath);
+        String hash = cacheService.entryListFingerprint(entryList.getConfirmed());
+        int count = entryList.getConfirmed().size();
+        cacheService.saveSingle(p.projectPath, result, hash, count);
+
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("ok", true);
+        return resp;
+    }
+
+    @GetMapping("/{id}/cache/load-single")
+    public Map<String, Object> loadSingleCache(@PathVariable String id) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+
+        EntryList entryList = entryListService.load(p.projectPath);
+        int currentEntryCount = entryList.getConfirmed().size();
+
+        Map<String, Object> cached = cacheService.loadSingle(p.projectPath);
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("currentEntryCount", currentEntryCount);
+
+        if (cached == null) {
+            resp.put("hasCache", false);
+            return resp;
+        }
+        // 算当前清单的 hash，让前端判断是否过期
+        String currentHash = cacheService.entryListFingerprint(entryList.getConfirmed());
+        String cachedHash = (String) cached.get("entryListHash");
+        boolean dirty = !currentHash.equals(cachedHash);
+
+        resp.put("hasCache", true);
+        resp.put("dirty", dirty);
+        resp.put("cachedEntryCount", cached.get("entryCount"));
+        resp.put("analyzedAt", cached.get("analyzedAt"));
+        resp.put("result", cached.get("result"));
+        return resp;
+    }
+
+    /** 按缓存文件名加载单个入口的完整分析结果（批量分析展开某入口时用） */
+    @GetMapping("/{id}/cache/load-file")
+    public Map<String, Object> loadCacheFile(@PathVariable String id,
+                                             @RequestParam("file") String fileName) {
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+
+        java.util.Optional<AnalysisResult> r = cacheService.loadByFileName(p.projectPath, fileName);
+        Map<String, Object> resp = new HashMap<>();
+        if (r.isEmpty()) {
+            resp.put("ok", false);
+            resp.put("error", "缓存文件不存在或已过期: " + fileName);
+            return resp;
+        }
+        resp.put("ok", true);
+        resp.put("result", r.get());
+        return resp;
     }
 
     /** 删除项目（只从注册表移除，不删除磁盘上的工作目录） */
