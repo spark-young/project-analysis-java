@@ -288,10 +288,14 @@ public class AnalysisController {
         }
         String srcFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
         byte[] bytes = excelReportGenerator.generate(result, srcFilter, req.getProjectPath());
-        StringBuilder name = new StringBuilder("callgraph_")
-                .append(result.getClassName() == null
-                        ? "entries_" + result.getGraph().getRoots().size()
-                        : result.getClassName().replaceAll("[^\\w.]", "_"));
+        StringBuilder name = new StringBuilder("callgraph_");
+        String projectName = result.getProjectName();
+        if (projectName != null && !projectName.isEmpty()) {
+            name.append(projectName.replaceAll("[^\\w\\u4e00-\\u9fa5.-]", "_")).append("_");
+        }
+        name.append(result.getClassName() == null
+                ? "entries_" + result.getGraph().getRoots().size()
+                : result.getClassName().replaceAll("[^\\w.]", "_"));
         if (result.getMethodName() != null) {
             name.append("_").append(result.getMethodName().replaceAll("[^\\w]", "_"));
         }
@@ -321,10 +325,15 @@ public class AnalysisController {
         }
         String srcFilter = req.getFreqSourceFilter() == null ? "ALL" : req.getFreqSourceFilter();
         byte[] bytes = excelReportGenerator.generateProject(results, srcFilter, req.getProjectPath());
-        String name = "callgraph_project_entries_" + results.size() + ".xlsx";
+        StringBuilder name = new StringBuilder("callgraph_project");
+        String projectName = results.get(0).getProjectName();
+        if (projectName != null && !projectName.isEmpty()) {
+            name.append("_").append(projectName.replaceAll("[^\\w\\u4e00-\\u9fa5.-]", "_"));
+        }
+        name.append("_entries_").append(results.size()).append(".xlsx");
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename*=UTF-8''" + URLEncoder.encode(name, "UTF-8"))
+                        "attachment; filename*=UTF-8''" + URLEncoder.encode(name.toString(), "UTF-8"))
                 .contentType(MediaType.parseMediaType(
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
                 .body(bytes);

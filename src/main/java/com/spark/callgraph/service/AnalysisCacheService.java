@@ -22,10 +22,13 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Stream;
 
 /**
  * 分析结果持久化缓存（JSON）。
- * 存于 D:\.callgraph\cache\<hash>.json，hash = 请求指纹。
+ * 存于项目根目录 ".callgraph/cache/" 下，入口级文件名 = SimpleClass#method_<hash>.json，
+ * hash 只由 入口 + 分析配置 决定，不含项目指纹 —— 同一入口重分析覆盖同名文件，不堆积旧版本。
  */
 @Service
 public class AnalysisCacheService {
@@ -43,8 +46,8 @@ public class AnalysisCacheService {
     public Optional<AnalysisResult> load(String projectPath, String className, String methodName,
                                           int maxDepth, int maxNodes, String freqSourceFilter) {
         try {
-            String projFp = projectFingerprint(projectPath);
-            Path file = cacheFile(projectPath, className, methodName, maxDepth, maxNodes, freqSourceFilter, projFp);
+            Path file = cacheDir(projectPath)
+                    .resolve(cacheName(className, methodName, maxDepth, maxNodes, freqSourceFilter));
             if (!Files.isRegularFile(file)) {
                 Path legacy = legacyCacheFile(projectPath, className, methodName, maxDepth, maxNodes, freqSourceFilter);
                 if (!Files.isRegularFile(legacy)) return Optional.empty();
@@ -62,8 +65,8 @@ public class AnalysisCacheService {
                      int maxDepth, int maxNodes, String freqSourceFilter,
                      AnalysisResult result) {
         try {
-            String projFp = projectFingerprint(projectPath);
-            Path file = cacheFile(projectPath, className, methodName, maxDepth, maxNodes, freqSourceFilter, projFp);
+            Path file = cacheDir(projectPath)
+                    .resolve(cacheName(className, methodName, maxDepth, maxNodes, freqSourceFilter));
             Files.createDirectories(file.getParent());
             mapper.writeValue(file.toFile(), result);
             log.info("[缓存] 已写入 {}", file.getFileName());
@@ -111,16 +114,42 @@ public class AnalysisCacheService {
 
     public static final String SINGLE_CACHE_FILE = "analysis_result.json";
 
-    /** 计算某次分析对应的缓存文件名（与 save/load 完全一致），供批量分析汇总索引用 */
-    public String fileNameOf(String projectPath, String className, String methodName,
+    /** 批量完成后清理本批未覆盖的 per-entry JSON（旧指纹版本 / 已移除入口），只保留本次覆盖到的名字，避免堆积。
+     *  只清理"入口级 hash 文件"，不动 analysis_result.json 等固定主缓存。 */
+    public void pruneBatchEntries(String projectPath, Set<String> keepNames) {
+        if (projectPath == null || projectPath.isEmpty() || keepNames == null) return;
+        Path dir = cacheDir(projectPath);
+        try (Stream<Path> list = Files.list(dir)) {
+            list.filter(p -> Files.isRegularFile(p))
+                    .filter(p -> isPerEntryFile(p.getFileName().toString()))
+                    .filter(p -> !keepNames.contains(p.getFileName().toString()))
+                    .forEach(p -> {
+                        try {
+                            Files.deleteIfExists(p);
+                        } catch (IOException e) {
+                            log.warn("[缓存] 清理旧入口文件失败 {}: {}", p, e.getMessage());
+                        }
+                    });
+        } catch (IOException ignored) {
+        }
+    }
+
+    /** per-entry 文件判定：以 8 位十六进制哈希结尾的 .json（区别于 analysis_result.json 等固定文件） */
+    private boolean isPerEntryFile(String name) {
+        if (name == null || name.equals(SINGLE_CACHE_FILE) || !name.endsWith(".json")) return false;
+        int dot = name.lastIndexOf('.');
+        int under = name.lastIndexOf('_');
+        if (under < 0 || dot <= under) return false;
+        String hex = name.substring(under + 1, dot);
+        return hex.matches("[0-9a-f]{8}");
+    }
+
+    /** 计算某次分析对应的缓存文件名（与 save/load 完全一致），供批量分析汇总索引用。
+     *  只含 入口 + 分析配置，不含项目指纹 —— 同一入口用同一配置重分析时覆盖同名文件，
+     *  避免代码变更后旧 JSON 不断堆积。 */
+    public String fileNameOf(String className, String methodName,
                              int maxDepth, int maxNodes, String freqSourceFilter) {
-        String projFp = projectFingerprint(projectPath);
-        String key = String.join("|",
-                safe(className), safe(methodName),
-                String.valueOf(maxDepth), String.valueOf(maxNodes),
-                safe(freqSourceFilter), safe(projFp));
-        String hash = sha1(key);
-        return humanReadableName(className, methodName, hash);
+        return cacheName(className, methodName, maxDepth, maxNodes, freqSourceFilter);
     }
 
     /** 计算 EntryList 的签名（confirmed 所有 key 排序拼接后 MD5） */
@@ -252,15 +281,14 @@ public class AnalysisCacheService {
         }
     }
 
-    private Path cacheFile(String projectPath, String className, String methodName,
-                           int maxDepth, int maxNodes, String freqSourceFilter, String projFp) {
+    /** 入口级缓存文件名：入口 + 分析配置决定，不含项目指纹（保证重分析覆盖同名文件） */
+    private static String cacheName(String className, String methodName,
+                                    int maxDepth, int maxNodes, String freqSourceFilter) {
         String key = String.join("|",
                 safe(className), safe(methodName),
                 String.valueOf(maxDepth), String.valueOf(maxNodes),
-                safe(freqSourceFilter), safe(projFp));
-        String hash = sha1(key);
-        String name = humanReadableName(className, methodName, hash);
-        return cacheDir(projectPath).resolve(name);
+                safe(freqSourceFilter));
+        return humanReadableName(className, methodName, sha1(key));
     }
 
     /** 旧文件名兼容（hash-only），仅在 load 时 fallback 查找 */
@@ -308,6 +336,7 @@ public class AnalysisCacheService {
     /**
      * 项目指纹：用于判断源码/构建是否有变化。
      * 优先级：Git HEAD > pom.xml/build.gradle 时间 > target/classes 最新 .class 时间。
+     * 注意：仅作源码变更判断用，不参与缓存文件名计算。
      */
     static String projectFingerprint(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return "";

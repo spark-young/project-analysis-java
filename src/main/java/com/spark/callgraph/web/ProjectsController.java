@@ -4,11 +4,17 @@ import com.spark.callgraph.service.AnalysisException;
 import com.spark.callgraph.service.AnalysisCacheService;
 import com.spark.callgraph.service.AnalysisService;
 import com.spark.callgraph.service.EntryListService;
+import com.spark.callgraph.service.GitCloneService;
+import com.spark.callgraph.service.GitRefService;
 import com.spark.callgraph.service.ProjectRegistry;
 import com.spark.callgraph.service.ProjectRegistry.RegisteredProject;
-import com.spark.callgraph.service.dto.EntryList;
 import com.spark.callgraph.service.dto.AnalysisResult;
+import com.spark.callgraph.service.dto.EntryList;
+import com.spark.callgraph.service.dto.GitRefs;
 import com.spark.callgraph.service.dto.ProjectInfo;
+import com.spark.callgraph.service.dto.RemoteStatus;
+import com.spark.callgraph.service.dto.SwitchRequest;
+import com.spark.callgraph.service.dto.SwitchStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -37,13 +43,18 @@ public class ProjectsController {
     private final AnalysisService analysisService;
     private final AnalysisCacheService cacheService;
     private final EntryListService entryListService;
+    private final GitCloneService gitCloneService;
+    private final GitRefService gitRefService;
 
     public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
-                              AnalysisCacheService cacheService, EntryListService entryListService) {
+                              AnalysisCacheService cacheService, EntryListService entryListService,
+                              GitCloneService gitCloneService, GitRefService gitRefService) {
         this.registry = registry;
         this.analysisService = analysisService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
+        this.gitCloneService = gitCloneService;
+        this.gitRefService = gitRefService;
     }
 
     /** 列出所有项目，并附加实时检测的状态 */
@@ -268,6 +279,34 @@ public class ProjectsController {
         p.lastOpenedAt = System.currentTimeMillis();
         registry.save(p);
         return p;
+    }
+
+    // --------------------------------------------------------------
+    // Git 分支 / Tag 切换与远端更新检测
+    // --------------------------------------------------------------
+
+    /** 列出远端仓库的分支与 Tag（用于下拉框选择） */
+    @GetMapping("/{id}/git/refs")
+    public GitRefs gitRefs(@PathVariable String id) {
+        return gitRefService.listRefs(id);
+    }
+
+    /** 检查本地当前引用是否落后于远端，并回写最近检查时间 */
+    @GetMapping("/{id}/git/remote-status")
+    public RemoteStatus gitRemoteStatus(@PathVariable String id) {
+        return gitRefService.checkRemoteUpdate(id);
+    }
+
+    /** 异步切换到指定分支 / Tag，返回 jobId */
+    @PostMapping("/{id}/git/switch")
+    public SwitchStatus gitSwitch(@PathVariable String id, @RequestBody SwitchRequest req) {
+        return gitRefService.startSwitch(id, req);
+    }
+
+    /** 查询切换任务进度 */
+    @GetMapping("/{id}/git/switch/{jobId}")
+    public SwitchStatus gitSwitchStatus(@PathVariable String id, @PathVariable String jobId) {
+        return gitRefService.switchStatus(jobId);
     }
 
     /** 列出项目内所有缓存文件（元信息，不含内容） */

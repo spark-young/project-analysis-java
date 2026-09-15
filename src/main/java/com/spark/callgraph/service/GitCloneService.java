@@ -1,6 +1,9 @@
 package com.spark.callgraph.service;
 
 import com.jcraft.jsch.Session;
+import com.spark.callgraph.service.dto.GitRefs;
+import com.spark.callgraph.service.dto.GitSwitchResult;
+import com.spark.callgraph.service.dto.RemoteStatus;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.transport.JschConfigSessionFactory;
@@ -18,7 +21,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,6 +52,193 @@ public class GitCloneService {
     /** clone/pull 完成后清理回调，避免 ThreadLocal 泄漏 */
     public void endProgress() {
         progressCb.remove();
+    }
+
+    /**
+     * 列出远端仓库的分支与 Tag（用 git ls-remote，无需本地工作区）。
+     * 网络失败/无远端时返回空列表（不抛异常阻断 UI）。
+     */
+    public GitRefs listRefs(String repoUrl, String token, String username) throws Exception {
+        GitRefs refs = new GitRefs();
+        String authed = authedUrl(repoUrl, token, username);
+        try {
+            String out = git(new String[]{"ls-remote", "--symref", "--heads", "--tags", authed}, repoUrl);
+            Set<String> branches = new LinkedHashSet<>();
+            Set<String> tags = new LinkedHashSet<>();
+            for (String raw : out.split("\n")) {
+                String line = raw.trim();
+                if (line.isEmpty()) continue;
+                // symref 行：ref: refs/heads/master\tHEAD
+                if (line.startsWith("ref:")) {
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 2 && parts[1].startsWith("refs/heads/")) {
+                        refs.setDefaultBranch(parts[1].substring("refs/heads/".length()));
+                    }
+                    continue;
+                }
+                int tab = line.indexOf('\t');
+                if (tab < 0) continue;
+                String refName = line.substring(tab + 1);
+                if (refName.startsWith("refs/heads/")) {
+                    branches.add(refName.substring("refs/heads/".length()));
+                } else if (refName.startsWith("refs/tags/")) {
+                    String name = refName.substring("refs/tags/".length());
+                    if (name.endsWith("^{}")) name = name.substring(0, name.length() - 3);
+                    tags.add(name);
+                }
+            }
+            refs.setBranches(new ArrayList<>(branches));
+            refs.setTags(new ArrayList<>(tags));
+            if (refs.getDefaultBranch() == null) {
+                if (branches.contains("main")) refs.setDefaultBranch("main");
+                else if (branches.contains("master")) refs.setDefaultBranch("master");
+                else if (!branches.isEmpty()) refs.setDefaultBranch(branches.iterator().next());
+            }
+        } catch (Exception e) {
+            refs.setBranches(new ArrayList<>());
+            refs.setTags(new ArrayList<>());
+        }
+        return refs;
+    }
+
+    /**
+     * 比较本地 HEAD 与远端指定引用的 SHA，判断本地是否落后于远端。
+     * 网络失败/引用不存在时返回 UNKNOWN 并附 hint。
+     */
+    public RemoteStatus checkRemoteUpdate(Path repoDir, String repoUrl, String ref, String refType,
+            String token, String username) throws Exception {
+        RemoteStatus rs = new RemoteStatus();
+        rs.setCheckedAt(System.currentTimeMillis());
+        String authed = authedUrl(repoUrl, token, username);
+        try {
+            String localSha = git(new String[]{"-C", repoDir.toString(), "rev-parse", "HEAD"}, repoUrl).trim();
+            rs.setLocalSha(localSha);
+            String remoteSha = remoteShaOf(authed, repoUrl, ref, refType);
+            if (remoteSha == null || remoteSha.isEmpty()) {
+                rs.setStatus("UNKNOWN");
+                rs.setHint("远端不存在引用：" + ref);
+                return rs;
+            }
+            rs.setRemoteSha(remoteSha);
+            rs.setStatus(remoteSha.equals(localSha) ? "UP_TO_DATE" : "BEHIND");
+        } catch (Exception e) {
+            rs.setStatus("UNKNOWN");
+            rs.setHint(e.getMessage());
+        }
+        return rs;
+    }
+
+    /**
+     * 切换到指定分支或 Tag。
+     * 流程：脏工作区先 git stash（含未跟踪文件）→ fetch → checkout → stash pop。
+     * 冲突时保留 stash（改动不丢失）并置 conflict 标记。
+     */
+    public GitSwitchResult switchRef(Path repoDir, String repoUrl, String target, String targetType,
+            String token, String username, BiConsumer<Integer, String> progress) throws Exception {
+        GitSwitchResult result = new GitSwitchResult();
+        result.setRef(target);
+        result.setRefType(targetType);
+        String authed = authedUrl(repoUrl, token, username);
+        String dir = repoDir.toString();
+
+        // 1) 脏检查 + stash
+        String status = git(new String[]{"-C", dir, "status", "--porcelain"}, repoUrl);
+        boolean dirty = status != null && !status.trim().isEmpty();
+        if (dirty) {
+            git(new String[]{"-C", dir, "stash", "push", "-u", "-m", "callgraph-autoswitch"}, repoUrl);
+            result.setStashed(true);
+        }
+
+        // 2) fetch + checkout；失败时恢复 stash
+        try {
+            if ("TAG".equalsIgnoreCase(targetType)) {
+                git(new String[]{"-C", dir, "fetch", "--tags", "--prune", authed}, repoUrl, progress);
+                git(new String[]{"-C", dir, "checkout", "tags/" + target}, repoUrl);
+            } else {
+                git(new String[]{"-C", dir, "fetch", "--tags", "--prune", authed,
+                        "refs/heads/" + target + ":refs/remotes/origin/" + target}, repoUrl, progress);
+                if (hasLocalBranch(repoDir, target, repoUrl)) {
+                    git(new String[]{"-C", dir, "checkout", target}, repoUrl);
+                    git(new String[]{"-C", dir, "merge", "--ff-only", "origin/" + target}, repoUrl);
+                } else {
+                    git(new String[]{"-C", dir, "checkout", "-b", target, "origin/" + target}, repoUrl);
+                }
+            }
+        } catch (Exception e) {
+            if (result.isStashed()) {
+                try {
+                    git(new String[]{"-C", dir, "stash", "pop"}, repoUrl);
+                } catch (Exception ignore) {
+                    // stash 保留在栈上，改动未丢失
+                }
+            }
+            throw e;
+        }
+
+        // 3) stash pop
+        if (result.isStashed()) {
+            try {
+                git(new String[]{"-C", dir, "stash", "pop"}, repoUrl);
+                result.setStashPopped(true);
+            } catch (IOException e) {
+                String msg = e.getMessage();
+                if (msg != null && msg.contains("CONFLICT")) {
+                    result.setConflict(true);
+                } else {
+                    throw e;
+                }
+            }
+        }
+        result.setOutput("OK");
+        return result;
+    }
+
+    /** 本地是否已存在指定分支 */
+    private boolean hasLocalBranch(Path repoDir, String branch, String repoUrl)
+            throws IOException, InterruptedException {
+        try {
+            git(new String[]{"-C", repoDir.toString(), "rev-parse", "--verify", "refs/heads/" + branch}, repoUrl);
+            return true;
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** 取远端指定引用的 SHA（Tag 优先取 peel 后的提交点，兼容轻量/附注标签） */
+    private String remoteShaOf(String authedUrl, String originalUrl, String ref, String refType)
+            throws IOException, InterruptedException {
+        List<String> args = new ArrayList<>();
+        args.add("ls-remote");
+        args.add(authedUrl);
+        if ("TAG".equalsIgnoreCase(refType)) {
+            args.add("refs/tags/" + ref);
+            args.add("refs/tags/" + ref + "^{}");
+        } else {
+            args.add("refs/heads/" + ref);
+        }
+        String out = git(args.toArray(new String[0]), originalUrl);
+        String sha = null;
+        for (String raw : out.split("\n")) {
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+            sha = line.split("\\s+")[0];
+        }
+        return sha;
+    }
+
+    /** 组装带认证的 URL：清洗 → SSH 转 HTTPS → 注入 token（仅本次命令用，不落盘） */
+    private String authedUrl(String repoUrl, String token, String username) {
+        String url = sanitizeUrl(repoUrl);
+        String converted = sshToHttps(url);
+        if (converted != null) {
+            url = sanitizeUrl(converted);
+        }
+        if (token != null && !token.trim().isEmpty()) {
+            String user = (username != null && !username.trim().isEmpty())
+                    ? username.trim() : defaultUsername(url);
+            url = withAuth(url, user, token.trim());
+        }
+        return url;
     }
 
     /** git@host:group/repo.git → https://host/group/repo.git */

@@ -16,8 +16,10 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -134,6 +136,7 @@ public class BatchAnalyzeService {
             AnalysisResult.Stats combined = summary.getStats();
             combined.setEntryCount(entries.size());
             int failed = 0;
+            Set<String> written = new HashSet<>();   // 本批成功落盘的入口文件名，用于清扫旧文件
 
             for (int i = 0; i < entries.size(); i++) {
                 EntryRef ref = entries.get(i);
@@ -169,8 +172,9 @@ public class BatchAnalyzeService {
                     cacheService.save(path, ref.getClassName(), ref.getMethodName(),
                             maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER, result);
 
-                    entry.setFileName(cacheService.fileNameOf(path, ref.getClassName(), ref.getMethodName(),
+                    entry.setFileName(cacheService.fileNameOf(ref.getClassName(), ref.getMethodName(),
                             maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER));
+                    written.add(entry.getFileName());
                     entry.setStats(result.getStats());
 
                     // 汇总统计（时长取总和，其余累加）
@@ -198,6 +202,11 @@ public class BatchAnalyzeService {
             cacheService.saveSingle(path, summary,
                     cacheService.entryListFingerprint(entryList.getConfirmed()),
                     entryList.getConfirmed().size());
+
+            // 清扫本批未覆盖的旧入口文件（代码变更产生的旧指纹版本 / 已移除入口）
+            if (!written.isEmpty()) {
+                cacheService.pruneBatchEntries(path, written);
+            }
 
             job.update(BatchAnalyzeStatus.State.DONE, 100,
                     "✓ 完成！成功 " + (entries.size() - failed) + " 个，失败 " + failed + " 个",

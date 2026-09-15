@@ -119,6 +119,14 @@ public class ProjectRegistry {
         public boolean analyzed;     // 是否有分析缓存
         public boolean existsOnDisk;  // 磁盘目录是否存在
 
+        // === Git 分支/Tag 切换与远端更新检测字段（向后兼容，旧 JSON 反序列化为 null）===
+        public String gitToken;              // 认证 token（方案 A：持久化复用）
+        public String gitUsername;           // 配套用户名
+        public String currentRef;            // 当前所在分支名或 Tag 名
+        public String currentRefType;        // "BRANCH" / "TAG"
+        public String remoteUpdateStatus;    // "UP_TO_DATE" / "BEHIND" / "UNKNOWN"
+        public Long lastCheckTime;           // 最近一次远端检查时间（epoch 毫秒）
+
         public RegisteredProject() {}
 
         public String getId() { return id; }
@@ -139,5 +147,18 @@ public class ProjectRegistry {
         public void setCreatedAt(long createdAt) { this.createdAt = createdAt; }
         public String getLastError() { return lastError; }
         public void setLastError(String lastError) { this.lastError = lastError; }
+
+        public String getGitToken() { return gitToken; }
+        public void setGitToken(String gitToken) { this.gitToken = gitToken; }
+        public String getGitUsername() { return gitUsername; }
+        public void setGitUsername(String gitUsername) { this.gitUsername = gitUsername; }
+        public String getCurrentRef() { return currentRef; }
+        public void setCurrentRef(String currentRef) { this.currentRef = currentRef; }
+        public String getCurrentRefType() { return currentRefType; }
+        public void setCurrentRefType(String currentRefType) { this.currentRefType = currentRefType; }
+        public String getRemoteUpdateStatus() { return remoteUpdateStatus; }
+        public void setRemoteUpdateStatus(String remoteUpdateStatus) { this.remoteUpdateStatus = remoteUpdateStatus; }
+        public Long getLastCheckTime() { return lastCheckTime; }
+        public void setLastCheckTime(Long lastCheckTime) { this.lastCheckTime = lastCheckTime; }
     }
 }

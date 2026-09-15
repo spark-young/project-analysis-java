@@ -31,6 +31,22 @@
         btnEntryScan: $('#btnEntryScan'),
         btnEntryAdd: $('#btnEntryAdd'),
         entryConfirmedList: $('#entryConfirmedList'),
+        entryConfirmToolbar: $('#entryConfirmToolbar'),
+        entryCheckAll: $('#entryCheckAll'),
+        btnBatchExclude: $('#btnBatchExclude'),
+        batchExcludeCount: $('#batchExcludeCount'),
+        entrySelectedCount: $('#entrySelectedCount'),
+        excludeModalOverlay: $('#excludeModalOverlay'),
+        excludeModal: $('#excludeModal'),
+        excludeModalClose: $('#excludeModalClose'),
+        excludeModalCount: $('#excludeModalCount'),
+        excludeModalList: $('#excludeModalList'),
+        excludeModalCancel: $('#excludeModalCancel'),
+        excludeModalConfirm: $('#excludeModalConfirm'),
+        excludeReasonPresets: $('#excludeReasonPresets'),
+        excludeReasonText: $('#excludeReasonText'),
+        excludeReasonUnified: $('#excludeReasonUnified'),
+        excludePerItemReasons: $('#excludePerItemReasons'),
         entryExcludedDetails: $('#entryExcludedDetails'),
         entryExcludedCount: $('#entryExcludedCount'),
         entryExcludedList: $('#entryExcludedList'),
@@ -54,9 +70,24 @@
         gitUsername: $('#gitUsername'),
         btnGitPrepare: $('#btnGitPrepare'),
         gitStatus: $('#gitStatus'),
+
+        // ---- Git 分支/Tag 切换 + 远端更新检测 ----
+        gitInfoBar: $('#gitInfoBar'),
+        gitCurrentRef: $('#gitCurrentRef'),
+        gitCurrentRefType: $('#gitCurrentRefType'),
+        gitRefSelect: $('#gitRefSelect'),
+        btnGitSwitch: $('#btnGitSwitch'),
+        btnGitCheckUpdate: $('#btnGitCheckUpdate'),
+        gitRemoteStatus: $('#gitRemoteStatus'),
+        gitLastCheck: $('#gitLastCheck'),
+        gitSwitchProgress: $('#gitSwitchProgress'),
+        gitSwitchProgressBar: $('#gitSwitchProgressBar'),
+        gitSwitchProgressText: $('#gitSwitchProgressText'),
+
         maxDepth: $('#maxDepth'),
         btnExcel: $('#btnExcel'),
         errorBanner: $('#errorBanner'),
+        toast: $('#toast'),
         entrySection: $('#entrySection'),
         entryProjectName: $('#entryProjectName'),
         entryFilter: $('#entryFilter'),
@@ -79,7 +110,7 @@
         btnFreqExpandAll: $('#btnFreqExpandAll'),
         btnFreqCollapseAll: $('#btnFreqCollapseAll'),
         btnFreqRefresh: $('#btnFreqRefresh'),
-        btnNoiseRules: $('#btnNoiseRules'),
+        btnNoiseRulesProject: $('#btnNoiseRulesProject'),
         noiseRulesOverlay: $('#noiseRulesOverlay'),
         noiseRulesPanel: $('#noiseRulesPanel'),
         noiseRulesList: $('#noiseRulesList'),
@@ -94,12 +125,42 @@
         btnNoiseRuleImport: $('#btnNoiseRuleImport'),
         noiseRuleImportFile: $('#noiseRuleImportFile'),
 
+        // ---- 全局过滤规则独立页面 ----
+        navToNoiseRules: $('#navToNoiseRules'),
+        viewNoiseRules: $('#viewNoiseRules'),
+        noiseRulesListPage: $('#noiseRulesListPage'),
+        btnNrPageAdd: $('#btnNrPageAdd'),
+        btnNrPageReset: $('#btnNrPageReset'),
+        btnNrPageSave: $('#btnNrPageSave'),
+        btnNrPageBack: $('#btnNrPageBack'),
+        btnNrPageSelectAll: $('#btnNrPageSelectAll'),
+        btnNrPageSelectNone: $('#btnNrPageSelectNone'),
+        btnNrPageInvert: $('#btnNrPageInvert'),
+        btnNrPageExport: $('#btnNrPageExport'),
+        btnNrPageImport: $('#btnNrPageImport'),
+        noiseRulePageImportFile: $('#noiseRulePageImportFile'),
+
         // ---- 手动添加入口 Modal ----
         addEntryOverlay: $('#addEntryOverlay'),
         addEntryModal: $('#addEntryModal'),
         addEntryClose: $('#addEntryClose'),
         addEntryCancel: $('#addEntryCancel'),
         addEntryConfirm: $('#addEntryConfirm'),
+        addEntryScanWrap: $('#addEntryScanWrap'),
+        addEntryScanStats: $('#addEntryScanStats'),
+        addEntryScanAll: $('#addEntryScanAll'),
+        addEntryScanList: $('#addEntryScanList'),
+
+        confirmOverlay: $('#confirmOverlay'),
+        confirmModal: $('#confirmModal'),
+        confirmTitle: $('#confirmTitle'),
+        confirmMessage: $('#confirmMessage'),
+        confirmOk: $('#confirmOk'),
+        confirmCancel: $('#confirmCancel'),
+        confirmClose: $('#confirmClose'),
+
+        loadingOverlay: $('#loadingOverlay'),
+        loadingText: $('#loadingText'),
         addEntryVerify: $('#addEntryVerify'),
         addEntryVerifyStatus: $('#addEntryVerifyStatus'),
         addEntryClass: $('#addEntryClass'),
@@ -124,9 +185,63 @@
         btnProjectSearch: $('#btnProjectSearch'),
         btnProjectSearchClear: $('#btnProjectSearchClear'),
         projectSearchResult: $('#projectSearchResult'),
-        projectSearchChips: $('#projectSearchChips'),
+        projectSearchNextHit: $('#btnProjectSearchNext'),
+        projectSearchPrevHit: $('#btnProjectSearchPrev'),
         loading: $('#loading'),
         loadingText: $('#loadingText'),
+
+        // ---- 扫描策略配置 ----
+        scanProfileSelect: $('#scanProfileSelect'),
+        btnScanStrategyManage: $('#btnScanStrategyManage'),
+        scanStrategyOverlay: $('#scanStrategyOverlay'),
+        scanStrategyPanel: $('#scanStrategyPanel'),
+        ssProfileList: $('#ssProfileList'),
+        btnSsProfileNew: $('#btnSsProfileNew'),
+        btnSsProfileCopy: $('#btnSsProfileCopy'),
+        btnSsProfileDelete: $('#btnSsProfileDelete'),
+        ssEditorEmpty: $('#ssEditorEmpty'),
+        ssEditorBody: $('#ssEditorBody'),
+        ssProfileName: $('#ssProfileName'),
+        ssProfileDesc: $('#ssProfileDesc'),
+        ssBuiltinTag: $('#ssBuiltinTag'),
+        ssDetectors: $('#ssDetectors'),
+        btnSsRuleAdd: $('#btnSsRuleAdd'),
+        ssRuleList: $('#ssRuleList'),
+        btnSsSave: $('#btnSsSave'),
+        btnSsReset: $('#btnSsReset'),
+        btnSsClose: $('#btnSsClose'),
+        ssRuleEditorOverlay: $('#ssRuleEditorOverlay'),
+        ssRuleEditor: $('#ssRuleEditor'),
+        ssRuleEditorTitle: $('#ssRuleEditorTitle'),
+        ssRuleEditorClose: $('#ssRuleEditorClose'),
+        ssRuleName: $('#ssRuleName'),
+        ssRuleKind: $('#ssRuleKind'),
+        ssRuleDynamic: $('#ssRuleDynamic'),
+        ssRuleExcludes: $('#ssRuleExcludes'),
+        ssRuleEnabled: $('#ssRuleEnabled'),
+        ssRuleEditorCancel: $('#ssRuleEditorCancel'),
+        ssRuleEditorOk: $('#ssRuleEditorOk'),
+
+        // ---- 系统配置页面（过滤规则 / 扫描策略 tab） ----
+        scTabNoise: $('#scTabNoise'),
+        scTabScan: $('#scTabScan'),
+        scTabContentNoise: $('#scTabContentNoise'),
+        scTabContentScan: $('#scTabContentScan'),
+        // 页面版扫描策略元素
+        ssPageProfileList: $('#ssPageProfileList'),
+        btnSsPageProfileNew: $('#btnSsPageProfileNew'),
+        btnSsPageProfileCopy: $('#btnSsPageProfileCopy'),
+        btnSsPageProfileDelete: $('#btnSsPageProfileDelete'),
+        ssPageEditorEmpty: $('#ssPageEditorEmpty'),
+        ssPageEditorBody: $('#ssPageEditorBody'),
+        ssPageProfileName: $('#ssPageProfileName'),
+        ssPageProfileDesc: $('#ssPageProfileDesc'),
+        ssPageBuiltinTag: $('#ssPageBuiltinTag'),
+        ssPageDetectors: $('#ssPageDetectors'),
+        btnSsPageRuleAdd: $('#btnSsPageRuleAdd'),
+        ssPageRuleList: $('#ssPageRuleList'),
+        btnSsPageSave: $('#btnSsPageSave'),
+        btnSsPageReset: $('#btnSsPageReset'),
     };
 
     let currentResult = null;
@@ -138,28 +253,51 @@
     // Step 2 入口清单状态
     let currentEntryList = null;   // EntryList DTO（confirmed + excluded）
     let currentCandidates = [];    // 本次扫描新增的候选（临时）
+    let entrySelKeys = new Set();  // 清单中勾选待排除的入口 key 集合
+    let excludeModalItems = [];    // 批量排除弹窗当前承载的条目
     let expandFns = [];      // 全部展开/收起用
     let searchTimer = null;
     const nodeRegistry = new Map();  // 数据节点 → { rowEl, setExpanded }
     let hitRows = [];                // 当前搜索高亮的行
     let activeSearch = null;         // 当前打开的行内搜索栏 { bar, node }
     let freqFilter = 'ALL';          // 方法调用次数分析的来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL
-    let projectFreqMode = false;     // 频率区当前是否显示"项目级聚合频率"（批量全量加载后）
+    let freqViewMode = 'entry';      // 频率区当前显示的数据视图：'entry' 单入口 | 'project' 项目级聚合
     let batchModel = null;           // 批量全量加载模型：{batch, projectId, entries, done,total,failed, loaded, index, projectFreq}
-    let noiseRules = [];             // 样板方法过滤规则（当前层级的，从后端加载）
+    let projSearchMarks = null;      // 项目级搜索标记：Map<入口idx, {hit:Set<gid>, hasHit:Set<gid>}>
+    let projSearchOrder = [];        // 命中扁平序列 [{entryIdx, gid}]，供「下一个命中」循环定位
+    let projSearchCursor = -1;       // 当前定位到第几个命中（-1 = 未开始）
+    let noiseRules = [];             // 过滤规则编辑缓冲区（弹窗/页面正在展示的那一层）
+    let globalRulesCache = [];       // 全局层规则缓存（参与合并过滤）
+    let projectRulesCache = [];      // 项目层规则缓存（参与合并过滤）
+    let activeNoiseRules = [];       // 实际生效的过滤规则集 = 全局层 + 当前项目层（合并）
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
+    let noiseRuleMode = 'panel';     // 当前编辑模式：'panel'（弹窗）| 'page'（独立页面）
     let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
+    let gitSwitchTimer = null;       // 分支/Tag 切换任务轮询定时器
+    let gitRefsCache = null;         // 最近一次分支/Tag 下拉数据 {branches, tags, defaultBranch}
+    // 扫描策略状态
+    let scanStrategy = null;         // 当前项目的有效扫描策略（ScanStrategy DTO）
+    let ssEditingProfileId = null;   // 管理弹窗中正在编辑的方案 id
+    let ssEditingRuleId = null;      // 二级规则编辑弹窗中正在编辑的规则 id（null = 新增）
+    let dsContext = 'modal';         // 扫描策略编辑上下文：'modal'（项目级弹窗）| 'page'（全局页面）
+    let globalScanStrategy = null;   // 全局扫描策略（页面版单独维护）
+    let ssPageEditingProfileId = null; // 页面版正在编辑的方案 id
 
     // ==============================================================
     // 项目列表 / 视图切换 / 持久化项目管理
     // ==============================================================
 
     function switchView(to) {
-        const isProjects = to === 'projects';
-        els.viewProjects.hidden = !isProjects;
-        els.viewAnalyze.hidden = isProjects;
-        els.navToProjects.classList.toggle('active', isProjects);
-        els.navToAnalyze.classList.toggle('active', !isProjects);
+        const showProjects = to === 'projects';
+        const showAnalyze = to === 'analyze';
+        const showNoiseRules = to === 'noiseRules';
+        if (!showNoiseRules) noiseRuleMode = 'panel';
+        els.viewProjects.hidden = !showProjects;
+        els.viewAnalyze.hidden = !showAnalyze;
+        els.viewNoiseRules.hidden = !showNoiseRules;
+        els.navToProjects.classList.toggle('active', showProjects);
+        els.navToAnalyze.classList.toggle('active', showAnalyze);
+        els.navToNoiseRules.classList.toggle('active', showNoiseRules);
     }
 
     async function refreshProjectList() {
@@ -236,38 +374,56 @@
     }
 
     async function enterProject(id) {
-        const listResp = await fetch('/api/projects');
-        const list = await listResp.json();
-        const p = list.find((x) => x.id === id);
-        if (!p) { alert('项目不存在或已被删除'); refreshProjectList(); return; }
-        await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
-        currentProjectId = id;
-        currentResult = null;
-        currentRequest = null;
-        currentBatchSummary = null;
-        currentCacheFileName = null;
-        if (p.type === 'GIT') {
-            gitProjectPath = p.projectPath;
-            sourceMode = 'git';
-        } else {
-            gitProjectPath = null;
-            sourceMode = 'local';
-            els.projectPath.value = p.projectPath || '';
-        }
-        setSourceMode(sourceMode);
-        els.currentProjectBadge.textContent = p.type || 'LOCAL';
-        els.currentProjectBadge.className = 'badge source-' + (p.type === 'GIT' ? 'dependency' : 'project').toLowerCase();
-        els.currentProjectName.textContent = p.name || '(未命名)';
-        els.currentProjectPath.textContent = p.projectPath || '';
-        els.entrySection.hidden = true;
-        els.resultSection.hidden = true;
-        els.freqSection.hidden = true;
-        clearError();
-        switchView('analyze');
+        showLoading('正在进入项目...');
+        try {
+            const listResp = await fetch('/api/projects');
+            const list = await listResp.json();
+            const p = list.find((x) => x.id === id);
+            if (!p) { alert('项目不存在或已被删除'); refreshProjectList(); return; }
+            await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
+            currentProjectId = id;
+            currentResult = null;
+            currentRequest = null;
+            currentBatchSummary = null;
+            currentCacheFileName = null;
+            if (p.type === 'GIT') {
+                gitProjectPath = p.projectPath;
+                sourceMode = 'git';
+            } else {
+                gitProjectPath = null;
+                sourceMode = 'local';
+                els.projectPath.value = p.projectPath || '';
+            }
+            setSourceMode(sourceMode);
+            // 项目切换后先同步两层过滤规则（项目路径变化，项目层规则需重新拉取），再加载清单
+            await loadNoiseRules();
+            await loadScanStrategy();
+            els.currentProjectBadge.textContent = p.type || 'LOCAL';
+            els.currentProjectBadge.className = 'badge source-' + (p.type === 'GIT' ? 'dependency' : 'project').toLowerCase();
+            els.currentProjectName.textContent = p.name || '(未命名)';
+            els.currentProjectPath.textContent = p.projectPath || '';
+            // Git 项目：展示分支/Tag 信息栏，加载可选引用并检查远端更新
+            if (p.type === 'GIT') {
+                showLoading('Git 项目：正在检查远端更新，请稍候...');
+                showGitInfoBar(p);
+                await loadGitRefs(id);
+                await checkGitRemoteStatus(id, true);
+            } else {
+                hideGitInfoBar();
+            }
+            els.entrySection.hidden = true;
+            els.resultSection.hidden = true;
+            els.freqSection.hidden = true;
+            clearError();
+            switchView('analyze');
 
-        // 先加载 Step2 已确认的交易入口清单（主体，先进来就能看到）
-        // 其内部会再触发 autoLoadCacheForProject（加载轻量批量索引 / 单入口结果）
-        await autoLoadEntryList(id);
+            // 先加载 Step2 已确认的交易入口清单（主体，先进来就能看到）
+            // 其内部会再触发 autoLoadCacheForProject（加载轻量批量索引 / 单入口结果）
+            showLoading('正在加载入口清单...');
+            await autoLoadEntryList(id);
+        } finally {
+            hideLoading();
+        }
     }
 
     /** 加载项目级已确认的交易入口清单（Step 2） */
@@ -370,6 +526,7 @@
     els.btnRefreshProjects.addEventListener('click', refreshProjectList);
     els.btnBackToProjects.addEventListener('click', () => {
         currentProjectId = null;
+        noiseRuleMode = 'panel';
         els.entrySection.hidden = true;
         els.resultSection.hidden = true;
         els.freqSection.hidden = true;
@@ -379,6 +536,28 @@
     els.navToAnalyze.addEventListener('click', () => {
         if (!currentProjectId) { alert('请先在项目列表中选择一个项目'); switchView('projects'); return; }
         switchView('analyze');
+    });
+    els.navToNoiseRules.addEventListener('click', () => {
+        noiseRuleMode = 'page';
+        noiseRuleScope = 'global';
+        loadNoiseRules();
+        renderNoiseRulesList();
+        // 重置到过滤规则 tab
+        els.scTabNoise.classList.add('active');
+        els.scTabScan.classList.remove('active');
+        els.scTabContentNoise.hidden = false;
+        els.scTabContentNoise.classList.add('active');
+        els.scTabContentScan.hidden = true;
+        els.scTabContentScan.classList.remove('active');
+        switchView('noiseRules');
+    });
+    els.btnNrPageBack.addEventListener('click', () => {
+        noiseRuleMode = 'panel';
+        if (currentProjectId) {
+            switchView('analyze');
+        } else {
+            switchView('projects');
+        }
     });
 
     // 旧缓存批次切换 UI + 重新分析按钮 已移除（改为单份缓存 + Step3 状态提示）
@@ -427,6 +606,56 @@
         els.errorBanner.textContent = '';
     }
 
+    let toastTimer = null;
+    /** 轻量提示：底部居中浮出，自动消失。type: success(默认)/error/warn */
+    function showToast(message, type, duration) {
+        els.toast.textContent = message;
+        els.toast.classList.remove('hide', 'error', 'warn');
+        if (type === 'error' || type === 'warn') els.toast.classList.add(type);
+        els.toast.hidden = false;
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => {
+            els.toast.classList.add('hide');
+            setTimeout(() => { els.toast.hidden = true; }, 250);
+        }, duration || 2200);
+    }
+
+    let confirmResolver = null;
+    /** 自定义确认弹窗（替代原生 confirm）：await showConfirm(msg) 返回 true/false */
+    function showConfirm(message, title) {
+        if (confirmResolver) confirmResolver(false); // 上一个未决确认按取消处理
+        els.confirmTitle.textContent = title || '确认操作';
+        els.confirmMessage.textContent = message;
+        els.confirmOverlay.hidden = false;
+        els.confirmModal.hidden = false;
+        return new Promise((resolve) => { confirmResolver = resolve; });
+    }
+    function settleConfirm(result) {
+        els.confirmOverlay.hidden = true;
+        els.confirmModal.hidden = true;
+        if (confirmResolver) {
+            const resolve = confirmResolver;
+            confirmResolver = null;
+            resolve(result);
+        }
+    }
+    els.confirmOk.addEventListener('click', () => settleConfirm(true));
+    els.confirmCancel.addEventListener('click', () => settleConfirm(false));
+    els.confirmClose.addEventListener('click', () => settleConfirm(false));
+    els.confirmOverlay.addEventListener('click', () => settleConfirm(false));
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && confirmResolver) settleConfirm(false);
+    });
+
+    /** 全屏加载遮罩：进入项目等耗时操作期间展示 */
+    function showLoading(text) {
+        els.loadingText.textContent = text || '正在加载...';
+        els.loadingOverlay.hidden = false;
+    }
+    function hideLoading() {
+        els.loadingOverlay.hidden = true;
+    }
+
     async function postJson(url, body) {
         const resp = await fetch(url, {
             method: 'POST',
@@ -442,6 +671,19 @@
 
     async function fetchJson(url) {
         const resp = await fetch(url);
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
+        }
+        return data;
+    }
+
+    async function putJson(url, body) {
+        const resp = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
             throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
@@ -570,6 +812,226 @@
             stopGitPoll();
             renderGitStatus({ status: 'FAILED', message: e.message });
         }
+    });
+
+    // ------------------------------------------------------------------
+    // Git 分支/Tag 切换 + 远端更新检测
+    // ------------------------------------------------------------------
+
+    function formatCheckTime(ms) {
+        if (!ms) return '';
+        const d = new Date(ms);
+        const pad = (n) => (n < 10 ? '0' + n : '' + n);
+        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
+            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    const GIT_REMOTE_STATUS_LABEL = {
+        UP_TO_DATE: '✓ 已是最新',
+        BEHIND: '▼ 远端有更新',
+        UNKNOWN: '未知',
+    };
+
+    function showGitInfoBar(p) {
+        els.gitInfoBar.hidden = false;
+        els.gitCurrentRef.textContent = p.currentRef || '—';
+        if (p.currentRefType) {
+            els.gitCurrentRefType.hidden = false;
+            els.gitCurrentRefType.textContent = p.currentRefType === 'TAG' ? 'TAG' : 'BRANCH';
+        } else {
+            els.gitCurrentRefType.hidden = true;
+        }
+        // 先用注册表里上次检查结果占位，随后被实时检查覆盖
+        renderGitRemoteBadge(p.remoteUpdateStatus, null);
+        els.gitLastCheck.textContent = p.lastCheckTime ? ('最近检查: ' + formatCheckTime(p.lastCheckTime)) : '';
+        els.gitSwitchProgress.hidden = true;
+        els.gitRefSelect.innerHTML = '';
+        els.gitRefSelect.disabled = false;
+        els.btnGitSwitch.disabled = true;
+        els.btnGitCheckUpdate.disabled = false;
+    }
+
+    function hideGitInfoBar() {
+        els.gitInfoBar.hidden = true;
+        stopGitSwitchPoll();
+    }
+
+    function renderGitRemoteBadge(status, hint) {
+        const badge = els.gitRemoteStatus;
+        const key = (status || 'UNKNOWN').toUpperCase();
+        const label = GIT_REMOTE_STATUS_LABEL[key] || status || '';
+        badge.className = 'badge git-remote-status ' + key.toLowerCase();
+        badge.textContent = label + (hint ? ' · ' + hint : '');
+        badge.hidden = false;
+    }
+
+    async function loadGitRefs(projectId) {
+        try {
+            const refs = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/refs');
+            gitRefsCache = refs;
+            const sel = els.gitRefSelect;
+            sel.innerHTML = '';
+            const branches = refs.branches || [];
+            const tags = refs.tags || [];
+            if (branches.length) {
+                const og = document.createElement('optgroup');
+                og.label = '分支';
+                branches.forEach((b) => {
+                    const o = document.createElement('option');
+                    o.value = b;
+                    o.dataset.refType = 'BRANCH';
+                    o.textContent = b;
+                    og.appendChild(o);
+                });
+                sel.appendChild(og);
+            }
+            if (tags.length) {
+                const og = document.createElement('optgroup');
+                og.label = 'Tag';
+                tags.forEach((t) => {
+                    const o = document.createElement('option');
+                    o.value = t;
+                    o.dataset.refType = 'TAG';
+                    o.textContent = t;
+                    og.appendChild(o);
+                });
+                sel.appendChild(og);
+            }
+            if (!branches.length && !tags.length) {
+                const o = document.createElement('option');
+                o.value = '';
+                o.textContent = '（无可用分支/Tag）';
+                sel.appendChild(o);
+            }
+            els.btnGitSwitch.disabled = sel.selectedOptions.length === 0;
+        } catch (e) {
+            els.btnGitSwitch.disabled = true;
+            console.warn('[Git] 分支/Tag 列表加载失败:', e);
+        }
+    }
+
+    async function checkGitRemoteStatus(projectId, silent) {
+        if (!silent) {
+            els.gitRemoteStatus.hidden = true;
+            els.gitLastCheck.textContent = '检查中...';
+        }
+        try {
+            const st = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/remote-status');
+            renderGitRemoteBadge(st.status, st.hint);
+            els.gitLastCheck.textContent = st.checkedAt ? ('最近检查: ' + formatCheckTime(st.checkedAt)) : '';
+        } catch (e) {
+            renderGitRemoteBadge('UNKNOWN', null);
+            els.gitLastCheck.textContent = '';
+            if (!silent) console.warn('[Git] 远端更新检查失败:', e);
+        }
+    }
+
+    function renderGitSwitchProgress(st) {
+        els.gitSwitchProgress.hidden = false;
+        const pct = Math.max(0, Math.min(100, st.progress || 0));
+        els.gitSwitchProgressBar.style.width = pct + '%';
+        els.gitSwitchProgressText.textContent = (st.step || st.message || '处理中...') + ' · ' + pct + '%';
+    }
+
+    function setGitSwitchBusy(busy) {
+        els.btnGitSwitch.disabled = busy;
+        els.btnGitCheckUpdate.disabled = busy;
+        els.gitRefSelect.disabled = busy;
+    }
+
+    function stopGitSwitchPoll() {
+        if (gitSwitchTimer) { clearInterval(gitSwitchTimer); gitSwitchTimer = null; }
+        els.btnGitSwitch.disabled = false;
+        els.btnGitCheckUpdate.disabled = false;
+        els.gitRefSelect.disabled = false;
+    }
+
+    async function onGitSwitchDone(projectId, st) {
+        stopGitSwitchPoll();
+        // DONE 时进度条还停留在最后一次编译快照，这里刷新为完成态
+        els.gitSwitchProgress.hidden = false;
+        els.gitSwitchProgressBar.style.width = '100%';
+        els.gitSwitchProgressText.textContent = '✓ 切换完成 · 100%';
+        const kind = st.refType === 'TAG' ? 'Tag' : '分支';
+        let msg = '✓ 已切换到' + kind + '「' + st.ref + '」';
+        let type = 'success';
+        let duration = 2200;
+        if (st.stashed) {
+            msg += '\n本地未提交改动已自动 stash';
+            duration = 3500;
+        }
+        if (st.conflict) {
+            msg += '\n⚠ stash pop 冲突：改动仍保留在 stash 中未恢复，请手动处理';
+            type = 'warn';
+            duration = 6000;
+        }
+        showToast(msg, type, duration);
+        await enterProject(projectId);
+    }
+
+    async function pollGitSwitchStatus(jobId, projectId) {
+        try {
+            const st = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/switch/' + encodeURIComponent(jobId));
+            renderGitSwitchProgress(st);
+            if (st.status === 'DONE') {
+                await onGitSwitchDone(projectId, st);
+            } else if (st.status === 'FAILED') {
+                stopGitSwitchPoll();
+                els.gitSwitchProgressText.textContent = '切换失败: ' + (st.message || '未知错误');
+                showToast('✕ 切换失败: ' + (st.message || '未知错误'), 'error', 5000);
+            }
+        } catch (e) {
+            stopGitSwitchPoll();
+            els.gitSwitchProgressText.textContent = '轮询异常: ' + e.message;
+            showToast('✕ 切换状态查询失败: ' + e.message, 'error', 5000);
+        }
+    }
+
+    async function startGitSwitch(projectId) {
+        const sel = els.gitRefSelect;
+        const opt = sel.selectedOptions && sel.selectedOptions[0];
+        if (!opt || !opt.value) { showToast('请先选择要切换的分支或 Tag', 'warn'); return; }
+        const ref = opt.value;
+        const refType = opt.dataset.refType || 'BRANCH';
+        const label = refType === 'TAG' ? 'Tag' : '分支';
+        if (ref === els.gitCurrentRef.textContent) {
+            if (!(await showConfirm('当前已在该' + label + '上，切换将重新拉取远端最新代码。\n确定继续？', '切换版本'))) return;
+        } else if (!(await showConfirm('确定切换到' + label + '「' + ref + '」？\n将自动 stash 未提交改动，切换后重新编译并刷新分析结果。', '切换版本'))) {
+            return;
+        }
+        setGitSwitchBusy(true);
+        els.gitSwitchProgress.hidden = false;
+        els.gitSwitchProgressBar.style.width = '2%';
+        els.gitSwitchProgressText.textContent = '提交任务...';
+        try {
+            const st = await postJson('/api/projects/' + encodeURIComponent(projectId) + '/git/switch', { ref: ref, refType: refType });
+            renderGitSwitchProgress(st);
+            if (st.status === 'DONE') {
+                await onGitSwitchDone(projectId, st);
+                return;
+            }
+            if (st.status === 'FAILED') {
+                stopGitSwitchPoll();
+                els.gitSwitchProgressText.textContent = '切换失败: ' + (st.message || '未知错误');
+                showToast('✕ 切换失败: ' + (st.message || '未知错误'), 'error', 5000);
+                return;
+            }
+            gitSwitchTimer = setInterval(() => pollGitSwitchStatus(st.jobId, projectId), 2000);
+        } catch (e) {
+            stopGitSwitchPoll();
+            els.gitSwitchProgressText.textContent = '提交失败: ' + e.message;
+            showToast('✕ 切换提交失败: ' + e.message, 'error', 5000);
+        }
+    }
+
+    els.btnGitSwitch.addEventListener('click', () => {
+        if (!currentProjectId) return;
+        startGitSwitch(currentProjectId);
+    });
+
+    els.btnGitCheckUpdate.addEventListener('click', async () => {
+        if (!currentProjectId) return;
+        await checkGitRemoteStatus(currentProjectId, false);
     });
 
     // ------------------------------------------------------------------
@@ -861,8 +1323,8 @@
             ].filter(Boolean).join(' · ');
             return '<div class="bt-row" data-idx="' + idx + '" data-file="' + escapeHtml(entry.fileName || '') + '">'
                 + '<span class="bt-index">' + (idx + 1) + '</span>'
-                + '<span class="bt-method">' + escapeHtml(entry.className || '')
-                + (entry.methodName ? '#' + escapeHtml(entry.methodName) : '') + '</span>'
+                + '<span class="bt-method">' + sigHtmlFromString(readableFullSig(entry.className, entry.methodName, entry.descriptor) || '')
+                + '</span>'
                 + (entry.failed
                     ? '<span class="bt-failed">✗ 失败</span>'
                     : '<span class="bt-stats">' + escapeHtml(chips) + '</span>')
@@ -893,6 +1355,7 @@
             row.setAttribute('data-idx', idx);
             row.addEventListener('click', () => toggleEntryBody(idx));
         });
+        markEntryRows();   // 重绘清单后恢复「含命中」入口标记
 
         els.freqSection.hidden = true;
         els.resultSection.hidden = false;
@@ -959,7 +1422,7 @@
         }
         st.result = result;
         st.body.innerHTML = '';
-        st.roots = rootsOf(result);
+        st.roots = rootsOf(result, st.idx);
         st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
         st.rendered = true;
         return result;
@@ -1016,10 +1479,13 @@
             })),
             done: 0, total: 0, failed: 0,
             loaded: false,    // 全部可加载项是否已就绪
-            index: null,      // methodKey → { method, source, entries:Set<entryIdx> }
             projectFreq: [],  // 项目级聚合频率
         };
-        projectFreqMode = true;
+        freqViewMode = 'project';
+        // 换了批次：旧的搜索标记全部失效
+        projSearchMarks = null;
+        projSearchOrder = [];
+        projSearchCursor = -1;
     }
 
     async function fetchEntryFile(fileName) {
@@ -1076,11 +1542,10 @@
         finalizeBatchLoad();
     }
 
-    /** 全量加载收尾：建索引/频率，置加载完成态并展示项目级面板 */
+    /** 全量加载收尾：聚合频率，置加载完成态并展示项目级面板 */
     function finalizeBatchLoad() {
         const loaded = batchModel.entries.filter((s) => s.result).length;
         batchModel.loaded = true;
-        batchModel.index = buildProjectIndex(batchModel.entries);
         batchModel.projectFreq = buildProjectFreq(batchModel.entries);
         const truncated = (batchModel.batch.entries || []).some((e) => e.stats && e.stats.truncated);
 
@@ -1112,20 +1577,136 @@
         return (m.owner || '') + '#' + (m.name || '') + (m.descriptor || '');
     }
 
-    /** 每个入口 graph.methods 本身即源自根的可达方法闭集 → 直接遍历建 Map[key]→(method, entries) */
-    function buildProjectIndex(entries) {
-        const index = new Map();
-        entries.forEach((slot, idx) => {
-            const g = slot.result && slot.result.graph;
-            if (!g || !g.methods) return;
-            g.methods.forEach((m) => {
-                const key = batchMethodKey(m);
-                let rec = index.get(key);
-                if (!rec) { rec = { method: m, source: m.source, entries: new Set() }; index.set(key, rec); }
-                rec.entries.add(idx);
-            });
-        });
-        return index;
+    // ------------------------------------------------------------------
+    // 方法签名统一展示：全限定类名#方法名(参数类型短名列表)，例：com.foo.Bar#write(Object, int)
+    // ------------------------------------------------------------------
+    const SIG_PRIM = { Z: 'boolean', B: 'byte', C: 'char', S: 'short', I: 'int', J: 'long', F: 'float', D: 'double', V: 'void' };
+
+    /** JVM 描述符参数 → 简短类型名列表，例：'(Ljava/lang/String;I)' → ['String', 'int'] */
+    function descriptorParamNames(descriptor) {
+        const out = [];
+        if (!descriptor) return out;
+        const i = descriptor.indexOf('(');
+        const j = descriptor.lastIndexOf(')');
+        if (i < 0 || j <= i) return out;
+        const body = descriptor.substring(i + 1, j);
+        let k = 0, n = body.length;
+        while (k < n) {
+            let arr = '';
+            while (body[k] === '[') { arr += '[]'; k++; }
+            const c = body[k];
+            if (c === 'L') {
+                const semi = body.indexOf(';', k);
+                const internal = body.substring(k + 1, semi < 0 ? n : semi);
+                out.push(shortInternalName(internal) + arr);
+                k = semi < 0 ? n : semi + 1;
+            } else {
+                out.push((SIG_PRIM[c] || c) + arr);
+                k++;
+            }
+        }
+        return out;
+    }
+    function shortInternalName(internal) {
+        const slash = internal.lastIndexOf('/');
+        const dollar = internal.lastIndexOf('$');
+        const cut = Math.max(slash, dollar);
+        return cut < 0 ? internal : internal.substring(cut + 1);
+    }
+    /** 统一可读签名：全限定类名#方法名(参数...)。无方法名(整类入口)只显示类名。 */
+    function readableFullSig(className, methodName, descriptor) {
+        const cls = className || '';
+        if (!methodName) return cls;
+        if (descriptor) {
+            const params = descriptorParamNames(descriptor);
+            return params.length > 0
+                ? cls + '#' + methodName + '(' + params.join(', ') + ')'
+                : cls + '#' + methodName + '()';
+        }
+        return cls + '#' + methodName;
+    }
+    /** 把统一可读签名拆成 类名 / 方法名 / 参数 三段，供分色展示 */
+    function sigPartsFromString(sig) {
+        const s = sig == null ? '' : String(sig);
+        const hash = s.indexOf('#');
+        if (hash < 0) return { cls: s, method: '', params: '' };
+        const cls = s.slice(0, hash);
+        const rest = s.slice(hash + 1);
+        const paren = rest.indexOf('(');
+        if (paren < 0) return { cls, method: rest, params: '' };
+        return { cls, method: rest.slice(0, paren), params: rest.slice(paren) };
+    }
+
+    /** 分色渲染签名（HTML 字符串）：类名淡、方法名深、入参次之 */
+    function sigHtmlFromString(sig) {
+        const p = sigPartsFromString(sig);
+        if (!p.method) {
+            return '<span class="sig"><span class="sig-cls">' + escapeHtml(p.cls) + '</span></span>';
+        }
+        return '<span class="sig">'
+            + '<span class="sig-cls">' + escapeHtml(p.cls) + '</span>'
+            + '<span class="sig-sep">#</span>'
+            + '<span class="sig-mname">' + escapeHtml(p.method) + '</span>'
+            + (p.params ? '<span class="sig-params">' + escapeHtml(p.params) + '</span>' : '')
+            + '</span>';
+    }
+
+    /** 分色渲染签名（DOM 节点），供只能用 textContent 的场景；外层 .sig 保证在 flex 容器里不被拆散 */
+    function appendSigFromString(parent, sig) {
+        const p = sigPartsFromString(sig);
+        const wrap = document.createElement('span');
+        wrap.className = 'sig';
+        const mk = (cls, text) => {
+            const el = document.createElement('span');
+            el.className = cls;
+            el.textContent = text;
+            return el;
+        };
+        if (!p.method) {
+            wrap.appendChild(mk('sig-cls', p.cls));
+        } else {
+            wrap.appendChild(mk('sig-cls', p.cls));
+            wrap.appendChild(mk('sig-sep', '#'));
+            wrap.appendChild(mk('sig-mname', p.method));
+            if (p.params) wrap.appendChild(mk('sig-params', p.params));
+        }
+        parent.appendChild(wrap);
+        return parent;
+    }
+
+    /** 判断一段参数是否已经是 JVM descriptor（形如 ''/J/I/[Ljava/lang/String;） */
+    function looksLikeDescriptor(body) {
+        let i = 0, n = body.length;
+        while (i < n) {
+            while (i < n && body[i] === '[') i++;
+            if (i >= n) return false;
+            const c = body[i];
+            if (c === 'L') {
+                const s = body.indexOf(';', i);
+                if (s < 0) return false;
+                i = s + 1;
+            } else if ('ZBCSIFDV'.indexOf(c) >= 0) {
+                i++;
+            } else {
+                return false;
+            }
+        }
+        return true;   // 空 body 也是合法 descriptor（无参方法）
+    }
+    /** 可读参数类型名 → 单个 JVM 类型描述符（尽力转换，供"精确重载"检测，检测端会自动校正） */
+    function readableTypeToDescriptor(name) {
+        let arr = '', t = name;
+        while (t.endsWith('[]')) { arr = '[' + arr; t = t.slice(0, -2); }
+        const primR = { boolean: 'Z', byte: 'B', char: 'C', short: 'S', int: 'I', long: 'J', float: 'F', double: 'D', void: 'V' };
+        if (primR[t]) return arr + primR[t];
+        if (t === 'Object') return arr + 'Ljava/lang/Object;';
+        if (t === 'String') return arr + 'Ljava/lang/String;';
+        if (t === 'Class') return arr + 'Ljava/lang/Class;';
+        return arr + 'L' + t.replace(/\./g, '/').replace(/\./g, '/') + ';';
+    }
+    function readableParamsToDescriptor(body) {
+        const parts = body.split(',').map((s) => s.trim());
+        return '(' + parts.filter(Boolean).map(readableTypeToDescriptor).join('') + ')';
     }
 
     /** 项目级频率：跨入口按边表入度求和（口径同后端 collectGraphStats，排除根方法） */
@@ -1164,14 +1745,23 @@
 
     /** 频率区数据源：项目级聚合 或 当前单入口的 methodFrequency */
     function currentFreqData() {
-        if (projectFreqMode && batchModel && batchModel.projectFreq) return batchModel.projectFreq;
+        if (freqViewMode === 'project' && batchModel && batchModel.projectFreq) return batchModel.projectFreq;
         return (currentResult && currentResult.methodFrequency) || [];
+    }
+
+    /** 规则变更后刷新频次列表：自动按当前视图取数（项目级聚合 / 单入口） */
+    function refreshFreqView() {
+        if (freqViewMode === 'project') {
+            if (batchModel && batchModel.projectFreq) renderFreqList(batchModel.projectFreq);
+        } else if (currentResult) {
+            renderFreqList(currentResult.methodFrequency || []);
+        }
     }
 
     /** 渲染项目级频率（复用 renderFreqList，来源过滤/样板规则自动生效） */
     function renderProjectFreq() {
         if (!batchModel || !batchModel.projectFreq) return;
-        projectFreqMode = true;
+        freqViewMode = 'project';
         els.freqSection.hidden = false;
         renderFreqList(batchModel.projectFreq);
     }
@@ -1181,94 +1771,33 @@
     function clearProjectSearch() {
         els.projectSearchResult.textContent = '';
         els.projectSearchResult.className = 'search-result';
-        els.projectSearchChips.innerHTML = '';
-        clearSearchHighlights();
-    }
-
-    /** 清除上次搜索的高亮 */
-    function clearSearchHighlights() {
-        document.querySelectorAll('.node-row.hit').forEach((el) => el.classList.remove('hit'));
+        clearProjectMarks();
     }
 
     function runProjectSearch() {
         const term = els.projectSearchInput.value.trim();
         clearProjectSearch();
         if (!term) return;
-        if (!batchModel || !batchModel.index || !batchModel.loaded) {
+        if (!batchModel || !batchModel.loaded) {
             els.projectSearchResult.className = 'search-result err';
             els.projectSearchResult.textContent = '全量加载尚未完成，请稍后再搜';
             return;
         }
         const exact = els.projectSearchMode.value === 'exact';
-        const needle = term.toLowerCase();
-        const hits = [];
-        batchModel.index.forEach((rec) => {
-            const m = rec.method || {};
-            let match;
-            if (exact) {
-                match = m.name === term || m.display === term
-                    || ((m.owner || '').replace(/\//g, '.') + '.' + m.name) === term;
-            } else {
-                match = [m.name, m.display, m.owner].some((v) => v && v.toLowerCase().indexOf(needle) >= 0);
-            }
-            if (match) hits.push(rec);
-        });
-        hits.sort((a, b) => a.method.display.localeCompare(b.method.display));
-
-        if (hits.length === 0) {
+        const { marks, order } = computeSearchMarks(term, exact);
+        if (order.length === 0) {
             els.projectSearchResult.className = 'search-result err';
             els.projectSearchResult.textContent = '未命中 —— 项目内没有方法匹配 "' + term + '"';
             return;
         }
-
-        // 需要展开+高亮的入口（去重，按原始行号）
-        const revealEntries = [];
-        const seenEntries = new Set();
-        hits.forEach((rec) => Array.from(rec.entries).forEach((idx) => {
-            if (seenEntries.has(idx)) return;
-            seenEntries.add(idx);
-            revealEntries.push(idx);
-        }));
-
+        projSearchMarks = marks;
+        projSearchOrder = order;
+        projSearchCursor = -1;
+        // 只标记不展开：入口行标「含命中」，树上节点按 命中/含命中 两级引导
+        applyNodeMarks();
+        markEntryRows();
         els.projectSearchResult.className = 'search-result ok';
-        els.projectSearchResult.textContent = '命中 ' + hits.length + ' 个方法 · 已自动展开并高亮 '
-            + revealEntries.length + ' 个入口中的命中方法（点行可收起）';
-
-        hits.forEach((rec) => {
-            const block = document.createElement('div');
-            block.className = 'project-hit';
-            const label = document.createElement('div');
-            label.className = 'project-hit-method';
-            label.appendChild(document.createTextNode(rec.method.display || batchMethodKey(rec.method)));
-            label.appendChild(badgeDom('source-' + (rec.source || '').toLowerCase(),
-                SOURCE_LABEL[rec.source] || rec.source || '外部'));
-            block.appendChild(label);
-            const chips = document.createElement('div');
-            chips.className = 'search-chips';
-            Array.from(rec.entries).forEach((entryIdx) => {
-                const e = (batchModel.entries[entryIdx] || {}).entry || {};
-                const chip = document.createElement('button');
-                chip.type = 'button';
-                chip.className = 'search-chip';
-                chip.innerHTML = '<span class="chip-name"></span>'
-                    + '<span class="chip-count">' + (entryIdx + 1) + '</span>';
-                chip.querySelector('.chip-name').textContent = (e.className || '')
-                    + (e.methodName ? '#' + e.methodName : '');
-                chip.title = '展开/收起该入口调用链';
-                chip.addEventListener('click', () => toggleEntryBody(entryIdx));
-                chips.appendChild(chip);
-            });
-            block.appendChild(chips);
-            els.projectSearchChips.appendChild(block);
-        });
-
-        // 自动展开命中入口的调用链并在命中的方法节点上高亮
-        let firstHitRow = null;
-        revealEntries.forEach((idx) => {
-            const r = revealEntryMatches(idx, term, exact);
-            if (r && !firstHitRow) firstHitRow = r;
-        });
-        if (firstHitRow) firstHitRow.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        els.projectSearchResult.textContent = projSearchSummary();
     }
 
     /** 原始图方法是否命中（口径同 matchNode，输入为 graph.methods 中的原始方法） */
@@ -1284,60 +1813,210 @@
         return [name, display, owner, className].some((v) => v && v.toLowerCase().indexOf(needle) >= 0);
     }
 
-    /** 展开某入口行内树并高亮命中方法；返回第一个命中节点的 rowEl（便于滚动定位） */
-    function revealEntryMatches(entryIdx, term, exact) {
+    /** 项目级搜索：按入口计算 命中集合 / 含命中集合（含命中 = 命中节点的祖先，沿边表反向闭包） */
+    function computeSearchMarks(term, exact) {
+        const marks = new Map();
+        const order = [];
+        const entries = (batchModel && batchModel.entries) || [];
+        entries.forEach((slot, idx) => {
+            const g = slot.result && slot.result.graph;
+            if (!g || !g.methods) return;
+            const targets = [];
+            g.methods.forEach((m, i) => {
+                if (!m) return;
+                // 被 noise 规则剪掉的方法不参与搜索（视图里本来就看不到）
+                if (isNoiseGraphMethod(m)) return;
+                if (matchRawMethod(m, term, exact)) targets.push(i);
+            });
+            if (targets.length === 0) return;
+            const hit = new Set(targets);
+            const hasHit = new Set();
+            const parents = new Map();
+            (g.edges || []).forEach((e) => {
+                const arr = parents.get(e.to) || [];
+                arr.push(e.from);
+                parents.set(e.to, arr);
+            });
+            const stack = targets.slice();
+            while (stack.length) {
+                const cur = stack.pop();
+                (parents.get(cur) || []).forEach((p) => {
+                    if (hit.has(p) || hasHit.has(p)) return;
+                    hasHit.add(p);
+                    stack.push(p);
+                });
+            }
+            marks.set(idx, { hit, hasHit });
+            targets.slice().sort((a, b) => a - b).forEach((gid) => order.push({ entryIdx: idx, gid }));
+        });
+        return { marks, order };
+    }
+
+    /** 节点所属入口的搜索标记；无标记返回 null */
+    function markOf(node) {
+        if (!projSearchMarks || node.entryIdx == null) return null;
+        return projSearchMarks.get(node.entryIdx) || null;
+    }
+
+    /** 给单个树节点套用 命中 / 含命中 标记（徽标插在 .row-badges 内，位于 🔎 之前） */
+    function applyNodeMark(node, row) {
+        row.classList.remove('is-hit', 'has-hit');
+        const badges = row.querySelector('.row-badges');
+        const old = badges && badges.querySelector('.row-hit-mark');
+        if (old) old.remove();
+        const mk = markOf(node);
+        if (!mk || !badges) return;
+        const isHit = mk.hit.has(node.gid);
+        if (!isHit && !mk.hasHit.has(node.gid)) return;
+        row.classList.add(isHit ? 'is-hit' : 'has-hit');
+        const tag = document.createElement('span');
+        tag.className = 'row-hit-mark' + (isHit ? ' is-hit-mark' : '');
+        tag.textContent = isHit ? '● 命中' : '⇣ 含命中';
+        badges.appendChild(tag);
+    }
+
+    /** 对当前已渲染的树节点重刷标记（搜索/清除时调用） */
+    function applyNodeMarks() {
+        nodeRegistry.forEach((entry, node) => {
+            if (entry && entry.rowEl) applyNodeMark(node, entry.rowEl);
+        });
+    }
+
+    /** 入口清单行标记：含命中的入口加「含命中 N 处」 */
+    function markEntryRows() {
+        batchRowStates.forEach((st) => {
+            if (!st || !st.rowEl) return;
+            st.rowEl.classList.remove('has-hit');
+            const old = st.rowEl.querySelector('.bt-hit-mark');
+            if (old) old.remove();
+        });
+        if (!projSearchMarks) return;
+        projSearchMarks.forEach((mk, idx) => {
+            const st = batchRowStates[idx];
+            if (!st || !st.rowEl) return;
+            st.rowEl.classList.add('has-hit');
+            const tag = document.createElement('span');
+            tag.className = 'bt-hit-mark';
+            tag.textContent = '含命中 ' + mk.hit.size + ' 处';
+            const action = st.rowEl.querySelector('.bt-action');
+            st.rowEl.insertBefore(tag, action || null);
+        });
+    }
+
+    /** 清除项目级搜索标记（入口行 + 树上节点） */
+    function clearProjectMarks() {
+        projSearchMarks = null;
+        projSearchOrder = [];
+        projSearchCursor = -1;
+        applyNodeMarks();
+        markEntryRows();
+    }
+
+    /** 搜索状态文案 */
+    function projSearchSummary() {
+        if (!projSearchOrder.length) return '';
+        const cursor = projSearchCursor >= 0
+            ? ' · 当前位置 ' + (projSearchCursor + 1) + '/' + projSearchOrder.length
+            : '';
+        return '命中 ' + projSearchOrder.length + ' 处 · 已标记 ' + projSearchMarks.size
+            + ' 个入口（展开逐层引导，点「下一个命中」可跳转）' + cursor;
+    }
+
+    /** 引导展开：无分叉（只有一个含命中的子节点）就一路穿透，遇分叉只展开这一层 */
+    function expandGuided(node, setExpanded) {
+        setExpanded(true);
+        if (!projSearchMarks) return;
+        let cur = node;
+        for (;;) {
+            const mk = markOf(cur);
+            if (!mk || mk.hit.has(cur.gid)) return;   // 无标记 / 已到命中 → 停止
+            const kids = cur.children || [];
+            if (kids.length !== 1) return;            // 有分叉 → 只展开这一层
+            const only = kids[0];
+            if (mk.hit.has(only.gid)) return;         // 下一层就是命中，已可见
+            if (!mk.hasHit.has(only.gid)) return;
+            const ke = nodeRegistry.get(only);
+            if (!ke || !ke.setExpanded) return;
+            ke.setExpanded(true);
+            cur = only;
+        }
+    }
+
+    /** 展开某入口到指定命中的完整路径并定位（供「下一个命中」），返回命中节点行 */
+    function revealHitPath(entryIdx, gid) {
         const st = batchRowStates[entryIdx];
         if (!st) return null;
-        // 确保行内树已渲染（全量加载已完成，缓存中应已有结果）
-        if (!st.rendered) {
-            // 同步建树（结果已在内存）；没有结果则跳过该入口
-            if (!buildEntryBodySync(st)) return null;
+        if (!st.rendered && !buildEntryBodySync(st)) return null;
+        if (!st.open) {
+            st.open = true;
+            st.rowEl.classList.add('open');
+            st.body.style.display = '';
+            updateCaret(st, true);
         }
-        st.open = true;
-        st.rowEl.classList.add('open');
-        st.body.style.display = '';
-        updateCaret(st, true);
-
         const g = st.result && st.result.graph;
-        if (!g || !g.methods) return null;
-
-        // 命中方法 id 集合 + 祖先集合（只需展开包含命中的路径，避免整树拉伸）
-        const targets = [];
-        g.methods.forEach((m, i) => { if (matchRawMethod(m, term, exact)) targets.push(i); });
-        if (targets.length === 0) return null;
-        const targetSet = new Set(targets);
-
-        const parentMap = new Map();
+        if (!g) return null;
+        // 命中 → 根：沿父边回溯出一条路径（取第一个父即可）
+        const parents = new Map();
         (g.edges || []).forEach((e) => {
-            const arr = parentMap.get(e.to) || [];
+            const arr = parents.get(e.to) || [];
             arr.push(e.from);
-            parentMap.set(e.to, arr);
+            parents.set(e.to, arr);
         });
-        const revealSet = new Set();
-        const stackP = targets.slice();
-        stackP.forEach((t) => revealSet.add(t));
-        while (stackP.length) {
-            const cur = stackP.pop();
-            (parentMap.get(cur) || []).forEach((p) => { if (!revealSet.has(p)) { revealSet.add(p); stackP.push(p); } });
+        const chain = [gid];
+        let cur = gid;
+        for (let guard = 0; guard < 10000; guard++) {
+            const ps = (parents.get(cur) || []).filter((p) => chain.indexOf(p) < 0);
+            if (!ps.length) break;
+            cur = ps[0];
+            chain.push(cur);
         }
+        chain.reverse();   // 根 → 命中
+        let node = st.roots.find((r) => r.gid === chain[0]);
+        if (!node) return null;
+        for (let i = 0; i < chain.length - 1; i++) {
+            const en = nodeRegistry.get(node);
+            if (!en || !en.setExpanded) break;
+            en.setExpanded(true);
+            const next = (node.children || []).find((c) => c.gid === chain[i + 1]);
+            if (!next) break;
+            node = next;
+        }
+        const te = nodeRegistry.get(node);
+        if (te && te.rowEl) {
+            te.rowEl.classList.add('flash');
+            setTimeout(() => te.rowEl.classList.remove('flash'), 1600);
+            te.rowEl.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            return te.rowEl;
+        }
+        return null;
+    }
 
-        let firstHit = null;
-        (function walk(node) {
-            if (targetSet.has(node.gid)) {
-                const en = nodeRegistry.get(node);
-                if (en) {
-                    en.rowEl.classList.add('hit');
-                    if (!firstHit) firstHit = en.rowEl;
-                }
-            }
-            if (revealSet.has(node.gid)) {
-                const en = nodeRegistry.get(node);
-                if (en && en.setExpanded) en.setExpanded(true);
-                (node.children || []).forEach(walk);
-            }
-        })(st.roots[0]);
+    /** 下一个命中：像 Excel 查找下一个一样循环定位 */
+    function nextProjectHit() {
+        if (!projSearchOrder.length) {
+            els.projectSearchResult.className = 'search-result err';
+            els.projectSearchResult.textContent = '请先搜索，再定位下一个命中';
+            return;
+        }
+        projSearchCursor = (projSearchCursor + 1) % projSearchOrder.length;
+        const item = projSearchOrder[projSearchCursor];
+        revealHitPath(item.entryIdx, item.gid);
+        els.projectSearchResult.className = 'search-result ok';
+        els.projectSearchResult.textContent = projSearchSummary();
+    }
 
-        return firstHit;
+    /** 上一个命中：反向循环定位 */
+    function prevProjectHit() {
+        if (!projSearchOrder.length) {
+            els.projectSearchResult.className = 'search-result err';
+            els.projectSearchResult.textContent = '请先搜索，再定位上一个命中';
+            return;
+        }
+        projSearchCursor = (projSearchCursor - 1 + projSearchOrder.length) % projSearchOrder.length;
+        const item = projSearchOrder[projSearchCursor];
+        revealHitPath(item.entryIdx, item.gid);
+        els.projectSearchResult.className = 'search-result ok';
+        els.projectSearchResult.textContent = projSearchSummary();
     }
 
     /** 在内存结果已就绪时同步建树（不拉网络），供搜索批量展开使用 */
@@ -1347,7 +2026,7 @@
         if (!result) return null;
         st.result = result;
         st.body.innerHTML = '';
-        st.roots = rootsOf(result);
+        st.roots = rootsOf(result, st.idx);
         st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
         st.rendered = true;
         return result;
@@ -1355,6 +2034,8 @@
 
     els.btnProjectSearch.addEventListener('click', runProjectSearch);
     els.projectSearchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runProjectSearch(); });
+    els.projectSearchNextHit.addEventListener('click', nextProjectHit);
+    els.projectSearchPrevHit.addEventListener('click', prevProjectHit);
     els.btnProjectSearchClear.addEventListener('click', clearProjectSearch);
 
     // ------------------------------------------------------------------
@@ -1364,10 +2045,98 @@
     // ------------------------------------------------------------------
 
     // 结果对象 → 其惰性根节点缓存的映射（保证渲染与全局搜索共用同一对象身份，命中 nodeRegistry）
-    let _adapterCache = { node: null, roots: [] };
+    // 额外按 noise 规则哈希失效：规则变更时自动重建
+    let _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
 
-    function rootsOf(result) {
-        if (_adapterCache.node === result) return _adapterCache.roots;
+    /** 启用中的 noise 规则哈希：用于 cache 失效 + 剪枝 */
+    function noiseRulesHash() {
+        return JSON.stringify((activeNoiseRules || []).filter((r) => r.enabled)
+            .map((r) => ({ s: r.source, m: r.methodPattern, c: r.classPattern, p: r.paramCount })));
+    }
+
+    /** 基于原始 GraphMethod 字段（owner/name/descriptor/source）判断 noise，避免字符串解析开销 */
+    function isNoiseGraphMethod(gm) {
+        if (!gm) return false;
+        const src = gm.source || 'EXTERNAL';
+        const className = (gm.owner || '').replace(/\//g, '.');
+        const methodName = gm.name || '';
+        const paramCount = descriptorParamCount(gm.descriptor);
+        for (const r of activeNoiseRules || []) {
+            if (!r.enabled) continue;
+            if (r.source && r.source !== 'ALL' && r.source !== src) continue;
+            if (!regexMatch(r.methodPattern, methodName)) continue;
+            if (r.classPattern && r.classPattern.trim() !== '') {
+                if (!regexMatch(r.classPattern, className)) continue;
+            }
+            if (r.paramCount != null && r.paramCount !== paramCount) continue;
+            return true;
+        }
+        return false;
+    }
+
+    /** 从 JVM 描述符里取参数个数（不依赖方法名后缀） */
+    function descriptorParamCount(descriptor) {
+        if (!descriptor) return 0;
+        const i = descriptor.indexOf('(');
+        const j = descriptor.lastIndexOf(')');
+        if (i < 0 || j <= i) return 0;
+        const body = descriptor.substring(i + 1, j);
+        let count = 0, k = 0, n = body.length;
+        while (k < n) {
+            while (body[k] === '[') k++;
+            const c = body[k];
+            if (c === 'L') {
+                const semi = body.indexOf(';', k);
+                k = semi < 0 ? n : semi + 1;
+            } else if (c !== 'V') {
+                k++;
+            } else {
+                break;
+            }
+            count++;
+        }
+        return count;
+    }
+
+    /** 清 adapter cache（规则变更/项目切换时调用） */
+    function invalidateAdapterCache() {
+        _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
+    }
+
+    /** 规则变更后自动重绘所有已展开的调用链（剪枝即时生效） */
+    function reapplyFilterToTree() {
+        // 先清搜索标记（依赖旧 registry 上的行元素，须在清空 registry 之前调用）
+        if (typeof clearProjectSearch === 'function') clearProjectSearch();
+        invalidateAdapterCache();
+
+        // 批量清单视图：els.tree 里是 .bt-row 行，不能整树重绘
+        const inBatchList = !!(els.tree && els.tree.querySelector('.bt-row'));
+
+        // 重建已展开的批量行内调用链；同时清掉旧节点注册，避免残留
+        nodeRegistry.clear();
+        expandFns.length = 0;
+        if (Array.isArray(batchRowStates)) {
+            batchRowStates.forEach((st) => {
+                if (!st || !st.result || !st.rendered || !st.body) return;
+                st.body.innerHTML = '';
+                st.roots = rootsOf(st.result, st.idx);
+                st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
+            });
+        }
+
+        // 单入口视图（非批量清单）：整树重绘
+        if (!inBatchList && els.tree && els.tree.children.length > 0 && currentResult) {
+            clearSearchHits();
+            els.tree.innerHTML = '';
+            rootsOf(currentResult).forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
+        }
+    }
+
+    function rootsOf(result, entryIdx) {
+        const curNoiseHash = noiseRulesHash();
+        if (_adapterCache.node === result
+            && _adapterCache.idx === entryIdx
+            && _adapterCache.noiseHash === curNoiseHash) return _adapterCache.roots;
         // 兼容退路：无 graph 的旧结果（正常不再发生）
         if (!result || !result.graph) {
             const legacy = (result && result.roots) || [];
@@ -1384,17 +2153,21 @@
             const lastSlash = owner.lastIndexOf('/');
             return {
                 name: m.name,
-                display: m.display,
+                display: readableFullSig(cn, m.name, m.descriptor) || m.display,
                 className: cn,
                 simpleClassName: lastSlash >= 0 ? owner.substring(lastSlash + 1) : owner,
             };
         }
         function makeNode(id, parentEdge, depth) {
             const m = g.methods[id];
+            if (!m) return null;
+            // —— 剪枝：命中 noise 规则的方法及其整棵子树从视图里消失 ——
+            if (isNoiseGraphMethod(m)) return null;
             const view = methodView(m);
             let kidsCache = null;
             const node = {
                 gid: id,             // 图内方法 id：批量搜索/高亮定位用
+                entryIdx: entryIdx,  // 所属入口序号：项目级搜索标记/引导用
                 source: m.source,
                 invokeType: parentEdge ? parentEdge.invoke : null,
                 line: parentEdge ? (parentEdge.line || 0) : 0,
@@ -1404,14 +2177,18 @@
                 get children() {
                     if (kidsCache) return kidsCache;
                     if (m.cycle) { kidsCache = []; return kidsCache; }
-                    kidsCache = (adj[id] || []).map((e) => makeNode(e.to, e, depth + 1));
+                    kidsCache = (adj[id] || [])
+                        .map((e) => makeNode(e.to, e, depth + 1))
+                        .filter(Boolean);   // 被 noise 过滤的子节点 makeNode 返回 null，此处剔除
                     return kidsCache;
                 }
             };
             return node;
         }
-        const roots = (g.roots || []).map((id) => makeNode(id, null, 0));
-        _adapterCache = { node: result, roots: roots };
+        const roots = (g.roots || [])
+            .map((id) => makeNode(id, null, 0))
+            .filter(Boolean);   // 根方法自己就命中 noise 的情况
+        _adapterCache = { node: result, idx: entryIdx, noiseHash: curNoiseHash, roots: roots };
         return _adapterCache.roots;
     }
 
@@ -1490,6 +2267,7 @@
         const all = result.methodFrequency || [];
         // 每次新分析重置筛选为"全部"
         freqFilter = 'ALL';
+        freqViewMode = 'entry';
         updateFreqFilterChips(all);
         renderFreqList(all);
     }
@@ -1547,7 +2325,7 @@
             const callerRows = (item.callers || [])
                 .map((c) => '<div class="mf-caller">'
                     + '<span class="mf-caller-mark">↳</span>'
-                    + '<span class="mf-caller-name">' + escapeHtml(c.caller) + '</span>'
+                    + '<span class="mf-caller-name">' + sigHtmlFromString(c.caller) + '</span>'
                     + (c.line && c.line > 0 ? '<span class="line-no">L' + c.line + '</span>' : '')
                     + '</div>')
                 .join('');
@@ -1556,7 +2334,7 @@
                 + '<span class="mf-toggle">▸</span>'
                 + '<span class="mf-rank">' + (idx + 1) + '</span>'
                 + '<span class="mf-body">'
-                + '<span class="mf-method">' + escapeHtml(item.method) + '</span>'
+                + '<span class="mf-method">' + sigHtmlFromString(item.method) + '</span>'
                 + badgeHtml('source-' + (item.source || '').toLowerCase(),
                     SOURCE_LABEL[item.source] || item.source)
                 + '</span>'
@@ -1584,7 +2362,7 @@
         const methodName = parenIdx >= 0 ? methodWithArgs.slice(0, parenIdx) : methodWithArgs;
         const paramCount = parseParamCount(methodWithArgs);
 
-        for (const r of noiseRules) {
+        for (const r of activeNoiseRules) {
             if (!r.enabled) continue;
             // 来源匹配
             if (r.source && r.source !== 'ALL' && r.source !== src) continue;
@@ -1676,7 +2454,7 @@
             freqFilter = chip.dataset.filter;
             els.freqFilterBar.querySelectorAll('.filter-chip')
                 .forEach((c) => c.classList.toggle('active', c === chip));
-            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+            refreshFreqView();
         });
     });
 
@@ -1695,21 +2473,37 @@
         return url;
     }
 
-    function loadNoiseRules() {
-        fetch(noiseRulesApiUrl()).then((r) => r.json()).then((data) => {
-            noiseRules = data || [];
-            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
-        }).catch(() => { noiseRules = []; });
+    /** 实际生效的过滤规则集 = 全局层 + 当前项目层（未选项目时仅全局层） */
+    function recomputeActiveNoiseRules() {
+        activeNoiseRules = (currentProjectId && currentProjectPath())
+            ? globalRulesCache.concat(projectRulesCache)
+            : globalRulesCache.slice();
     }
 
-    function openNoiseRulesPanel() {
-        // 重置 scope 到全局（更安全）
-        noiseRuleScope = 'global';
+    /** 从磁盘同步两层规则：更新两层缓存 + 编辑缓冲区指向当前 scope 层，并重绘规则列表 */
+    function loadNoiseRules() {
+        const pp = currentProjectPath();
+        const gReq = fetch('api/noise-rules').then((r) => r.json()).catch(() => []);
+        const pReq = (currentProjectId && pp)
+            ? fetch('api/noise-rules?projectPath=' + encodeURIComponent(pp)).then((r) => r.json()).catch(() => [])
+            : Promise.resolve([]);
+        return Promise.all([gReq, pReq]).then(([g, p]) => {
+            globalRulesCache = g || [];
+            projectRulesCache = p || [];
+            recomputeActiveNoiseRules();
+            noiseRules = (noiseRuleScope === 'project' ? projectRulesCache : globalRulesCache).slice();
+            renderNoiseRulesList();
+            return noiseRules;
+        });
+    }
+
+    function openNoiseRulesPanel(defaultScope) {
+        noiseRuleMode = 'panel';
+        noiseRuleScope = defaultScope || 'global';
         document.querySelectorAll('.nr-scope-tab').forEach(t =>
-            t.classList.toggle('active', t.dataset.scope === 'global'));
-        // 加载
-        loadNoiseRules();
-        // 更新 hint
+            t.classList.toggle('active', t.dataset.scope === noiseRuleScope));
+        updateNoiseRulesUI();
+        loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
         updateNoiseRulesScopeHint();
         renderNoiseRulesList();
         els.noiseRulesPanel.hidden = false;
@@ -1721,12 +2515,16 @@
         if (!hint) return;
         if (noiseRuleScope === 'global') {
             hint.textContent = '全局规则对所有项目生效';
+            hint.title = '';
         } else {
             const pp = currentProjectPath();
             if (pp) {
-                hint.textContent = '当前项目: ' + pp;
+                const segs = pp.replace(/[\\/]+$/, '').split(/[\\/]/);
+                hint.textContent = '当前项目: ' + segs[segs.length - 1];
+                hint.title = pp;
             } else {
-                hint.textContent = '⚠ 未选择项目，无法查看项目级规则';
+                hint.textContent = '⚠ 未选择项目';
+                hint.title = '';
             }
         }
     }
@@ -1735,27 +2533,40 @@
         els.noiseRulesOverlay.hidden = true;
     }
 
+    /** 根据当前 mode + scope 切换弹窗/页面内按钮可见性 */
+    function updateNoiseRulesUI() {
+        const isGlobalPanel = noiseRuleMode === 'panel' && noiseRuleScope === 'global';
+        els.btnNoiseRuleAdd.hidden = isGlobalPanel;
+        els.btnNoiseRuleReset.hidden = noiseRuleMode === 'panel';
+        els.btnNoiseRuleImport.hidden = isGlobalPanel;
+    }
+
     function renderNoiseRulesList() {
+        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const isGlobalPanel = noiseRuleMode === 'panel' && noiseRuleScope === 'global';
         if (noiseRules.length === 0) {
-            els.noiseRulesList.innerHTML = '<div class="mf-empty">暂无规则，点击"新增规则"添加</div>';
+            container.innerHTML = '<div class="mf-empty">暂无规则，点击"新增规则"添加</div>';
             return;
         }
-        els.noiseRulesList.innerHTML = noiseRules.map((r, idx) =>
-            '<div class="nr-item" data-idx="' + idx + '">'
+        container.innerHTML = noiseRules.map((r, idx) =>
+            '<div class="nr-item' + (isGlobalPanel ? ' readonly' : '') + '" data-idx="' + idx + '">'
             + '<div class="nr-row1">'
-            + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称">'
+            + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称"'
+                + (isGlobalPanel ? ' disabled' : '') + '>'
             + '<label class="nr-enable"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '> 启用</label>'
-            + '<button type="button" class="btn small warn nr-del">删除</button>'
+            + (isGlobalPanel ? '' : '<button type="button" class="btn small warn nr-del">删除</button>')
             + '</div>'
             + '<div class="nr-row2">'
             + '<span class="nr-label">方法名正则</span>'
-            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="如 getInstance">'
+            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="如 getInstance"'
+                + (isGlobalPanel ? ' disabled' : '') + '>'
             + '<span class="nr-label">类名正则</span>'
-            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="可选，如 .*Factory">'
+            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="可选，如 .*Factory"'
+                + (isGlobalPanel ? ' disabled' : '') + '>'
             + '</div>'
             + '<div class="nr-row3">'
             + '<span class="nr-label">来源</span>'
-            + '<select class="nr-source">'
+            + '<select class="nr-source"' + (isGlobalPanel ? ' disabled' : '') + '>'
             + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
                 '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
                 + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
@@ -1763,15 +2574,17 @@
             + '</select>'
             + '<span class="nr-label">参数个数</span>'
             + '<input class="nr-paramcount" type="number" min="0" value="'
-                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="不限">'
+                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="不限"'
+                + (isGlobalPanel ? ' disabled' : '') + '>'
             + '</div>'
             + '</div>'
         ).join('');
     }
 
-    /** 从弹窗输入收集规则 */
+    /** 从弹窗 / 页面输入收集规则 */
     function collectNoiseRulesFromPanel() {
-        const items = els.noiseRulesList.querySelectorAll('.nr-item');
+        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const items = container.querySelectorAll('.nr-item');
         const out = [];
         items.forEach((item) => {
             const pcInput = item.querySelector('.nr-paramcount').value.trim();
@@ -1788,66 +2601,90 @@
         return out;
     }
 
-    /** 将弹窗当前输入同步到内存 noiseRules 并实时刷新频次列表（无需保存即可预览过滤效果） */
+    /** 将弹窗/页面当前输入同步到内存并实时刷新频次列表 + 调用链剪枝预览。
+     *  全局只读态（Step3 弹窗的全局 Tab）不实时生效：点「保存生效」后才应用 */
     function applyNoiseRulesFromPanel() {
+        if (noiseRuleMode === 'panel' && noiseRuleScope === 'global') return;
         noiseRules = collectNoiseRulesFromPanel();
-        if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+        if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
+        else globalRulesCache = noiseRules.slice();
+        recomputeActiveNoiseRules();
+        refreshFreqView();
+        reapplyFilterToTree();
     }
 
-    els.btnNoiseRules.addEventListener('click', openNoiseRulesPanel);
+    // Step3 入口：打开弹窗，默认切到「当前项目」Tab（全局 Tab 只读）
+    els.btnNoiseRulesProject.addEventListener('click', () => openNoiseRulesPanel('project'));
     els.btnNoiseRulesClose.addEventListener('click', closeNoiseRulesPanel);
     els.noiseRulesOverlay.addEventListener('click', closeNoiseRulesPanel);
-    // 刷新过滤：若弹窗已打开则先同步弹窗内的最新编辑（含未保存），再重新渲染频次列表
+    // 刷新过滤：弹窗/页面打开时同步未保存的编辑；关闭时从磁盘重新拉取两层规则并重新过滤
     els.btnFreqRefresh.addEventListener('click', () => {
-        if (!els.noiseRulesPanel.hidden) {
+        if (!els.noiseRulesPanel.hidden || !els.viewNoiseRules.hidden) {
             applyNoiseRulesFromPanel();
-        } else if (currentResult) {
-            renderFreqList(currentResult.methodFrequency || []);
+        } else {
+            loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
         }
     });
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && !els.noiseRulesPanel.hidden) closeNoiseRulesPanel();
     });
 
-    // 弹窗内任意输入变化都实时同步到内存并刷新频次列表（无需保存即可预览）
+    // 弹窗 / 页面内任意输入变化都实时同步到内存并刷新频次列表（无需保存即可预览）
     els.noiseRulesList.addEventListener('change', (e) => {
         applyNoiseRulesFromPanel();
     });
+    els.noiseRulesListPage.addEventListener('change', (e) => {
+        applyNoiseRulesFromPanel();
+    });
 
-    // 全选启用 / 全不选 / 反选
+    // 全选启用 / 全不选 / 反选（作用在当前可见的列表）
+    function forEachNoiseRuleCheckbox(fn) {
+        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        container.querySelectorAll('.nr-enable input').forEach(fn);
+    }
     els.btnNoiseRuleSelectAll.addEventListener('click', () => {
-        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = true; });
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = true; });
         applyNoiseRulesFromPanel();
     });
     els.btnNoiseRuleSelectNone.addEventListener('click', () => {
-        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = false; });
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = false; });
         applyNoiseRulesFromPanel();
     });
     els.btnNoiseRuleInvert.addEventListener('click', () => {
-        els.noiseRulesList.querySelectorAll('.nr-enable input').forEach((cb) => { cb.checked = !cb.checked; });
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = !cb.checked; });
+        applyNoiseRulesFromPanel();
+    });
+    els.btnNrPageSelectAll.addEventListener('click', () => {
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = true; });
+        applyNoiseRulesFromPanel();
+    });
+    els.btnNrPageSelectNone.addEventListener('click', () => {
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = false; });
+        applyNoiseRulesFromPanel();
+    });
+    els.btnNrPageInvert.addEventListener('click', () => {
+        forEachNoiseRuleCheckbox((cb) => { cb.checked = !cb.checked; });
         applyNoiseRulesFromPanel();
     });
 
-    // 导出规则：下载 JSON 文件
-    els.btnNoiseRuleExport.addEventListener('click', () => {
+    // 导出规则：下载 JSON 文件（弹窗 / 页面共用）
+    function exportNoiseRules() {
         let url = 'api/noise-rules/export';
         if (noiseRuleScope === 'project') {
             const pp = currentProjectPath();
             if (pp) url += '?projectPath=' + encodeURIComponent(pp);
         }
         window.location.href = url;
-    });
+    }
+    els.btnNoiseRuleExport.addEventListener('click', exportNoiseRules);
+    els.btnNrPageExport.addEventListener('click', exportNoiseRules);
 
-    // 导入规则：触发文件选择
-    els.btnNoiseRuleImport.addEventListener('click', () => {
-        els.noiseRuleImportFile.value = '';
-        els.noiseRuleImportFile.click();
-    });
-    els.noiseRuleImportFile.addEventListener('change', (e) => {
+    // 导入规则：触发文件选择（弹窗 / 页面共用）
+    function handleNoiseRuleImportFile(e, fileInput) {
         const file = e.target.files[0];
         if (!file) return;
         if (!confirm('导入将覆盖当前层级的所有规则，确定继续？')) {
-            els.noiseRuleImportFile.value = '';
+            fileInput.value = '';
             return;
         }
         const fd = new FormData();
@@ -1864,13 +2701,28 @@
             })
             .then((data) => {
                 noiseRules = data || [];
+                if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
+                else globalRulesCache = noiseRules.slice();
+                recomputeActiveNoiseRules();
                 renderNoiseRulesList();
-                if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+                refreshFreqView();
+                reapplyFilterToTree();
             })
             .catch((err) => alert('导入失败：' + err.message + '（请确认是合法的 noise-rules.json 文件）'));
+    }
+    els.btnNoiseRuleImport.addEventListener('click', () => {
+        els.noiseRuleImportFile.value = '';
+        els.noiseRuleImportFile.click();
     });
+    els.noiseRuleImportFile.addEventListener('change', (e) => handleNoiseRuleImportFile(e, els.noiseRuleImportFile));
+    els.btnNrPageImport.addEventListener('click', () => {
+        els.noiseRulePageImportFile.value = '';
+        els.noiseRulePageImportFile.click();
+    });
+    els.noiseRulePageImportFile.addEventListener('change', (e) => handleNoiseRuleImportFile(e, els.noiseRulePageImportFile));
 
-    els.btnNoiseRuleAdd.addEventListener('click', () => {
+    // 新增规则（弹窗 / 页面共用）
+    function addNoiseRule() {
         noiseRules.push({
             id: 'rule-' + Date.now(),
             name: '新规则',
@@ -1882,18 +2734,27 @@
         });
         renderNoiseRulesList();
         applyNoiseRulesFromPanel();
-    });
+    }
+    els.btnNoiseRuleAdd.addEventListener('click', addNoiseRule);
+    els.btnNrPageAdd.addEventListener('click', addNoiseRule);
 
-    els.noiseRulesList.addEventListener('click', (e) => {
+    // 删除规则（弹窗 / 页面共用）
+    function handleNoiseRuleDelete(e) {
         if (e.target.classList.contains('nr-del')) {
             const idx = parseInt(e.target.closest('.nr-item').dataset.idx, 10);
             noiseRules.splice(idx, 1);
             renderNoiseRulesList();
             applyNoiseRulesFromPanel();
         }
-    });
+    }
+    els.noiseRulesList.addEventListener('click', handleNoiseRuleDelete);
+    els.noiseRulesListPage.addEventListener('click', handleNoiseRuleDelete);
 
-    els.btnNoiseRuleReset.addEventListener('click', () => {
+    // 恢复默认 / 清空规则（页面视图下可用；弹窗内隐藏）
+    els.btnNoiseRuleReset.addEventListener('click', () => resetNoiseRules());
+    els.btnNrPageReset.addEventListener('click', () => resetNoiseRules());
+
+    function resetNoiseRules() {
         const msg = noiseRuleScope === 'project'
             ? '确定清空当前项目的规则？清空后将回退到仅使用全局默认。'
             : '确定恢复默认规则？当前未保存的修改将丢失。';
@@ -1906,12 +2767,17 @@
         fetch(url, { method: 'POST' })
             .then((r) => r.json()).then((data) => {
                 noiseRules = data || [];
+                if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
+                else globalRulesCache = noiseRules.slice();
+                recomputeActiveNoiseRules();
                 renderNoiseRulesList();
-                if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+                refreshFreqView();
+                reapplyFilterToTree();
             });
-    });
+    }
 
-    els.btnNoiseRuleSave.addEventListener('click', () => {
+    // 保存生效（弹窗模式保存后关闭；页面模式保持打开）
+    function saveNoiseRules() {
         const rules = collectNoiseRulesFromPanel();
         fetch(noiseRulesApiUrl(), {
             method: 'PUT',
@@ -1919,10 +2785,19 @@
             body: JSON.stringify(rules),
         }).then((r) => r.json()).then((data) => {
             noiseRules = data || [];
-            closeNoiseRulesPanel();
-            if (currentResult) renderFreqList(currentResult.methodFrequency || []);
+            if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
+            else globalRulesCache = noiseRules.slice();
+            recomputeActiveNoiseRules();
+            if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
+            renderNoiseRulesList();
+            refreshFreqView();
+            reapplyFilterToTree();
+            const scopeLabel = noiseRuleScope === 'project' ? '项目级' : '全局';
+            showToast('✓ ' + scopeLabel + '过滤规则已保存并生效');
         }).catch(() => alert('保存失败，请检查规则格式'));
-    });
+    }
+    els.btnNoiseRuleSave.addEventListener('click', saveNoiseRules);
+    els.btnNrPageSave.addEventListener('click', saveNoiseRules);
 
     // Tab 切换（全局 ↔ 项目级）
     document.querySelectorAll('.nr-scope-tab').forEach((tab) => {
@@ -1935,7 +2810,8 @@
             noiseRuleScope = tab.dataset.scope;
             document.querySelectorAll('.nr-scope-tab').forEach(t =>
                 t.classList.toggle('active', t === tab));
-            loadNoiseRules();
+            updateNoiseRulesUI();
+            loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
             updateNoiseRulesScopeHint();
         });
     });
@@ -1965,11 +2841,8 @@
 
         const method = document.createElement('span');
         method.className = 'method';
-        method.textContent = node.method.display;
-
-        const cls = document.createElement('span');
-        cls.className = 'class';
-        cls.textContent = node.method.className;
+        // 分色渲染：全限定类名 / 方法名 / 入参 一眼可分
+        appendSigFromString(method, node.method.display);
 
         const badges = document.createElement('span');
         badges.className = 'row-badges';
@@ -1989,8 +2862,8 @@
 
         row.appendChild(toggle);
         row.appendChild(method);
-        row.appendChild(cls);
         row.appendChild(badges);
+        applyNodeMark(node, row);
 
         // 每个方法行一个搜索按钮：查它的调用链里是否调用了某方法
         const searchBtn = document.createElement('button');
@@ -2025,7 +2898,11 @@
             };
             entry.setExpanded = setExpanded;
             expandFns.push(setExpanded);
-            row.addEventListener('click', () => setExpanded(kids.style.display === 'none'));
+            // 展开时：命中路径若无分叉则一路穿透，遇分叉只展开这一层（逐层引导）
+            row.addEventListener('click', () => {
+                if (kids.style.display === 'none') expandGuided(node, setExpanded);
+                else setExpanded(false);
+            });
             wrap.appendChild(kids);
         } else {
             row.addEventListener('click', () => { /* 叶子/环节点无可展开 */ });
@@ -2251,8 +3128,8 @@
             chip.className = 'search-chip';
             chip.innerHTML = '<span class="chip-name"></span>'
                 + '<span class="chip-count">' + p.matches.length + '</span>';
-            chip.querySelector('.chip-name').textContent =
-                p.root.method ? p.root.method.display : '';
+            appendSigFromString(chip.querySelector('.chip-name'),
+                p.root.method ? p.root.method.display : '');
             chip.title = '定位 ' + (p.root.method ? p.root.method.display : '') + ' 的 '
                 + p.matches.length + ' 处命中';
             chip.addEventListener('click', () => {
@@ -2312,7 +3189,8 @@
     refreshProjectList();
 
     // 页面加载时恢复最近一个未过期的 Git 任务（在途或刚完成）
-    fetch('/api/git/latest').then(r => r.ok ? r.json() : null).then(st => {
+    // 无任务时后端返回 200 空响应体，r.json() 会抛错，故 catch 成 null
+    fetch('/api/git/latest').then(r => r.ok ? r.json().catch(() => null) : null).then(st => {
         if (!st || !st.status) return;
         // 恢复仓库地址到输入框
         if (st.repoUrl) els.repoUrl.value = st.repoUrl;
@@ -2372,6 +3250,7 @@
         } else {
             els.entryExcludedDetails.hidden = true;
         }
+        updateEntryToolbar();
     }
 
     function renderEntryRow(item, mode) {
@@ -2383,23 +3262,41 @@
             ? '<span class="entry-badge group-MANUAL">手动</span>'
             : '';
 
-        // 完整签名：全类名#方法名descriptor（descriptor 为空时省略）
-        const fullSig = fullCls
-            + (method ? '#' + method : '')
-            + (desc ? desc : (method ? '()' : ''));
+        // 完整签名（统一可读格式）：全限定类名#方法名(参数类型短名列表)
+        const fullSig = readableFullSig(fullCls, method, desc) || fullCls;
 
         if (mode === 'excluded') {
-            return `<div class="entry-row" data-key="${entryKey(item)}">
-                ${sourceBadge}${groupBadge}
-                <span class="entry-sig" title="${escapeHtml(fullSig)}">${escapeHtml(fullSig)}</span>
-                <button class="entry-restore-btn" onclick="restoreEntry('${entryKey(item).replace(/'/g, "\\'")}')">恢复</button>
+            const reason = item.excludeReason;
+            return `<div class="entry-ex-row">
+                <div class="entry-row" data-key="${entryKey(item)}">
+                    ${sourceBadge}${groupBadge}
+                    <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
+                    <button class="entry-restore-btn" onclick="restoreEntry('${entryKey(item).replace(/'/g, "\\'")}')">恢复</button>
+                </div>
+                ${reason ? `<div class="entry-reason" title="${escapeHtml(reason)}">排除原因：${escapeHtml(reason)}</div>` : ''}
             </div>`;
         }
-        return `<div class="entry-row" data-key="${entryKey(item)}">
+        const checked = entrySelKeys.has(entryKey(item)) ? ' checked' : '';
+        return `<div class="entry-row${checked ? ' selected' : ''}" data-key="${entryKey(item)}">
+            <input type="checkbox" class="entry-cb"${checked}>
             ${sourceBadge}${groupBadge}
-            <span class="entry-sig" title="${escapeHtml(fullSig)}">${escapeHtml(fullSig)}</span>
+            <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
             <button class="entry-exclude-btn" onclick="excludeEntry('${entryKey(item).replace(/'/g, "\\'")}')">排除</button>
         </div>`;
+    }
+
+    /** 刷新清单顶部操作栏：全选态 / 已选数量 / 批量排除按钮可用性 */
+    function updateEntryToolbar() {
+        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const has = confirmed.length > 0;
+        els.entryConfirmToolbar.hidden = !has;
+        if (!has) { entrySelKeys.clear(); return; }
+        const sel = confirmed.filter(i => entrySelKeys.has(entryKey(i))).length;
+        els.entrySelectedCount.textContent = sel > 0 ? '已选 ' + sel + ' 个' : '';
+        els.batchExcludeCount.textContent = sel > 0 ? ' (' + sel + ')' : '';
+        els.btnBatchExclude.disabled = sel === 0;
+        els.entryCheckAll.checked = sel > 0 && sel === confirmed.length;
+        els.entryCheckAll.indeterminate = sel > 0 && sel < confirmed.length;
     }
 
     function escapeHtml(s) {
@@ -2407,41 +3304,653 @@
             ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
     }
 
+    // ==============================================================
+    // 扫描策略配置（自动扫描方案管理）
+    // ==============================================================
+
+    /** 上下文辅助：根据 dsContext 返回当前正在编辑的策略和元素引用 */
+    function __ss() {
+        const page = dsContext === 'page';
+        return {
+            strategy: page ? globalScanStrategy : scanStrategy,
+            editingId: page ? ssPageEditingProfileId : ssEditingProfileId,
+            setEditingId: (id) => { page ? (ssPageEditingProfileId = id) : (ssEditingProfileId = id); },
+            profileListEl: page ? els.ssPageProfileList : els.ssProfileList,
+            editorEmptyEl: page ? els.ssPageEditorEmpty : els.ssEditorEmpty,
+            editorBodyEl: page ? els.ssPageEditorBody : els.ssEditorBody,
+            profileNameEl: page ? els.ssPageProfileName : els.ssProfileName,
+            profileDescEl: page ? els.ssPageProfileDesc : els.ssProfileDesc,
+            builtinTagEl: page ? els.ssPageBuiltinTag : els.ssBuiltinTag,
+            detectorsEl: page ? els.ssPageDetectors : els.ssDetectors,
+            ruleListEl: page ? els.ssPageRuleList : els.ssRuleList,
+            ruleAddEl: page ? els.btnSsPageRuleAdd : els.btnSsRuleAdd,
+            deleteBtn: page ? els.btnSsPageProfileDelete : els.btnSsProfileDelete,
+            saveUrl: page ? '/api/scan-strategy/global' : '/api/scan-strategy/project/' + currentProjectId,
+            resetUrl: page ? '/api/scan-strategy/global/reset' : '/api/scan-strategy/project/' + currentProjectId + '/reset',
+        };
+    }
+
+    /** 从后端加载当前项目的扫描策略并渲染下拉 */
+    async function loadScanStrategy() {
+        if (!currentProjectId) return;
+        try {
+            scanStrategy = await fetchJson('/api/scan-strategy/project/' + currentProjectId);
+            renderScanProfileSelect();
+        } catch (e) {
+            console.warn('[ScanStrategy] 加载失败:', e);
+            scanStrategy = null;
+        }
+    }
+
+    /** 填充扫描策略下拉框 */
+    function renderScanProfileSelect() {
+        const sel = els.scanProfileSelect;
+        if (!scanStrategy || !scanStrategy.profiles) {
+            sel.innerHTML = '<option value="">标准扫描</option>';
+            return;
+        }
+        const activeId = scanStrategy.activeProfileId || 'builtin-standard';
+        sel.innerHTML = scanStrategy.profiles.map(p => {
+            const label = p.builtin ? p.name + ' (内置)' : p.name;
+            return '<option value="' + escapeHtml(p.id) + '"'
+                + (p.id === activeId ? ' selected' : '')
+                + '>' + escapeHtml(label) + '</option>';
+        }).join('');
+    }
+
+    /** 从后端加载全局扫描策略（系统配置页面的扫描策略 tab） */
+    async function loadGlobalScanStrategy() {
+        try {
+            globalScanStrategy = await fetchJson('/api/scan-strategy/global');
+            if (!ssPageEditingProfileId && globalScanStrategy) {
+                ssPageEditingProfileId = globalScanStrategy.activeProfileId || 'builtin-standard';
+            }
+        } catch (e) {
+            console.warn('[GlobalScanStrategy] 加载失败:', e);
+            globalScanStrategy = null;
+        }
+    }
+
+    /** 渲染系统配置页面的扫描策略 tab 内容 */
+    function renderSsPageContent() {
+        if (!globalScanStrategy) {
+            showToast('全局策略数据尚未加载', 'warn');
+            return;
+        }
+        renderSsProfileList();
+        renderSsEditor();
+    }
+
+    /** 打开扫描策略管理弹窗 */
+    function openScanStrategyPanel() {
+        if (!scanStrategy) { showToast('策略数据尚未加载', 'warn'); return; }
+        dsContext = 'modal';
+        ssEditingProfileId = scanStrategy.activeProfileId || 'builtin-standard';
+        els.scanStrategyOverlay.hidden = false;
+        els.scanStrategyPanel.hidden = false;
+        renderSsProfileList();
+        renderSsEditor();
+    }
+
+    /** 关闭扫描策略管理弹窗（未保存的编辑直接丢弃，从磁盘重新拉取） */
+    function closeScanStrategyPanel() {
+        els.scanStrategyPanel.hidden = true;
+        els.scanStrategyOverlay.hidden = true;
+        ssEditingProfileId = null;
+        loadScanStrategy();
+    }
+
+    /** 渲染左侧方案列表 */
+    function renderSsProfileList() {
+        const ctx = __ss();
+        const activeId = ctx.editingId;
+        const profiles = (ctx.strategy && ctx.strategy.profiles) || [];
+        ctx.profileListEl.innerHTML = profiles.map(p => {
+            const isActive = p.id === activeId;
+            const isBuiltin = !!p.builtin;
+            const badge = isBuiltin ? '<span class="ss-pi-badge">内置</span>' : '';
+            const activeMark = isActive ? '<span class="ss-pi-active">✓ 当前</span>' : '';
+            return '<div class="ss-profile-item' + (isActive ? ' active' : '') + '" data-id="' + escapeHtml(p.id) + '">'
+                + '<span class="ss-pi-name">' + escapeHtml(p.name) + '</span>'
+                + badge
+                + activeMark
+                + '</div>';
+        }).join('');
+        ctx.profileListEl.querySelectorAll('.ss-profile-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const id = el.dataset.id;
+                if (id === ctx.editingId) return;
+                ctx.setEditingId(id);
+                renderSsProfileList();
+                renderSsEditor();
+            });
+        });
+        updateSsProfileActions();
+    }
+
+    /** 更新方案操作按钮状态（内置不能删/复制） */
+    function updateSsProfileActions() {
+        const profile = currentEditingProfile();
+        const isBuiltin = profile && !!profile.builtin;
+        __ss().deleteBtn.disabled = !profile || isBuiltin;
+    }
+
+    /** 获取当前正在编辑的方案对象 */
+    function currentEditingProfile() {
+        const ctx = __ss();
+        if (!ctx.strategy || !ctx.strategy.profiles || !ctx.editingId) return null;
+        return ctx.strategy.profiles.find(p => p.id === ctx.editingId);
+    }
+
+    /** 渲染右侧编辑器 */
+    function renderSsEditor() {
+        const ctx = __ss();
+        const profile = currentEditingProfile();
+        if (!profile) {
+            ctx.editorEmptyEl.hidden = false;
+            ctx.editorBodyEl.hidden = true;
+            return;
+        }
+        ctx.editorEmptyEl.hidden = true;
+        ctx.editorBodyEl.hidden = false;
+
+        const isBuiltin = !!profile.builtin;
+        ctx.profileNameEl.value = profile.name || '';
+        ctx.profileDescEl.value = profile.description || '';
+        ctx.builtinTagEl.hidden = !isBuiltin;
+        ctx.profileNameEl.disabled = isBuiltin;
+        ctx.profileDescEl.disabled = isBuiltin;
+
+        renderSsDetectors(profile, isBuiltin);
+        renderSsRuleList(profile, isBuiltin);
+    }
+
+    const DETECTOR_LABELS = {
+        REST: 'HTTP REST 接口（@Controller / @RestController）',
+        DUBBO: 'Dubbo RPC 接口（@DubboService）',
+        ELASTIC_JOB: 'ElasticJob 定时任务（extends AbstractSimpleElasticJob）',
+        MAIN: 'Main 方法入口（public static void main）',
+    };
+    const DETECTOR_ORDER = ['REST', 'DUBBO', 'ELASTIC_JOB', 'MAIN'];
+
+    /** 渲染探测器开关 */
+    function renderSsDetectors(profile, readonly) {
+        const ctx = __ss();
+        const detectors = profile.detectors || {};
+        ctx.detectorsEl.innerHTML = DETECTOR_ORDER.map(key => {
+            const checked = detectors[key] !== false;
+            return '<label class="ss-detector-item' + (readonly ? ' readonly' : '') + '">'
+                + '<input type="checkbox" data-key="' + key + '"'
+                + (checked ? ' checked' : '')
+                + (readonly ? ' disabled' : '')
+                + '> '
+                + (DETECTOR_LABELS[key] || key)
+                + '</label>';
+        }).join('');
+        if (!readonly) {
+            ctx.detectorsEl.querySelectorAll('input[data-key]').forEach(cb => {
+                cb.addEventListener('change', () => {
+                    const profile = currentEditingProfile();
+                    if (!profile) return;
+                    const key = cb.dataset.key;
+                    if (!profile.detectors) profile.detectors = {};
+                    profile.detectors[key] = cb.checked;
+                });
+            });
+        }
+    }
+
+    const RULE_KIND_LABELS = {
+        ANNOTATION_METHOD: '注解方法',
+        ANNOTATION_CLASS: '注解类',
+        PACKAGE: '包扫描',
+        INTERFACE_IMPLEMENT: '继承/实现',
+        CLASS_NAME: '类名匹配',
+        METHOD_NAME: '方法名匹配',
+    };
+
+    /** 渲染自定义规则列表 */
+    function renderSsRuleList(profile, readonly) {
+        const ctx = __ss();
+        const rules = (profile && profile.rules) || [];
+        ctx.ruleAddEl.disabled = readonly;
+        if (rules.length === 0) {
+            ctx.ruleListEl.innerHTML = '<div class="ss-rule-empty">暂无自定义规则</div>';
+            return;
+        }
+        ctx.ruleListEl.innerHTML = rules.map((r, idx) => {
+            const kindLabel = RULE_KIND_LABELS[r.kind] || r.kind;
+            const summary = describeRule(r);
+            const itemCls = 'ss-rule-item' + (r.enabled === false ? ' disabled' : '');
+            return '<div class="' + itemCls + '" data-idx="' + idx + '">'
+                + '<span class="ss-ri-kind">' + kindLabel + '</span>'
+                + '<span class="ss-ri-name">' + escapeHtml(r.name || '(未命名)') + '</span>'
+                + '<span class="ss-ri-detail">' + escapeHtml(summary) + '</span>'
+                + '<span class="ss-ri-actions">'
+                + '<button type="button" class="btn small ss-rule-edit"' + (readonly ? ' disabled' : '') + '>编辑</button>'
+                + '<button type="button" class="btn small warn ss-rule-del"' + (readonly ? ' disabled' : '') + '>删除</button>'
+                + '</span>'
+                + '</div>';
+        }).join('');
+        ctx.ruleListEl.querySelectorAll('.ss-rule-edit').forEach((btn, idx) => {
+            btn.addEventListener('click', () => {
+                const items = ctx.ruleListEl.querySelectorAll('.ss-rule-item');
+                const realIdx = Array.from(items).indexOf(btn.closest('.ss-rule-item'));
+                const rule = profile.rules[realIdx];
+                if (rule) openSsRuleEditor(rule, realIdx);
+            });
+        });
+        ctx.ruleListEl.querySelectorAll('.ss-rule-del').forEach((btn, idx) => {
+            btn.addEventListener('click', () => {
+                const items = ctx.ruleListEl.querySelectorAll('.ss-rule-item');
+                const realIdx = Array.from(items).indexOf(btn.closest('.ss-rule-item'));
+                if (profile.rules) profile.rules.splice(realIdx, 1);
+                renderSsRuleList(profile, readonly);
+            });
+        });
+    }
+
+    /** 生成规则简短的描述文字 */
+    function describeRule(r) {
+        if (r.kind === 'ANNOTATION_METHOD' || r.kind === 'ANNOTATION_CLASS') {
+            return '注解: ' + (r.annotation || '(未设置)');
+        }
+        if (r.kind === 'PACKAGE') {
+            return '包: ' + (r.packagePrefix || '(未设置)') + (r.recursive !== false ? ' (递归)' : '');
+        }
+        if (r.kind === 'INTERFACE_IMPLEMENT') {
+            return '接口/基类: ' + (r.interfaceName || '(未设置)');
+        }
+        if (r.kind === 'CLASS_NAME' || r.kind === 'METHOD_NAME') {
+            return '模式: ' + (r.pattern || '(未设置)');
+        }
+        return '';
+    }
+
+    // ---- 二级规则编辑弹窗 ----
+
+    /** 打开规则编辑弹窗 */
+    function openSsRuleEditor(rule, idx) {
+        ssEditingRuleId = idx != null ? idx : null;
+        els.ssRuleEditorTitle.textContent = idx != null ? '编辑规则' : '新增规则';
+        els.ssRuleName.value = (rule && rule.name) || '';
+        els.ssRuleKind.value = (rule && rule.kind) || 'ANNOTATION_METHOD';
+        els.ssRuleExcludes.value = (rule && rule.excludes) ? rule.excludes.join('\n') : '';
+        els.ssRuleEnabled.checked = rule ? (rule.enabled !== false) : true;
+        renderSsRuleDynamicFields(els.ssRuleKind.value, rule);
+        els.ssRuleEditorOverlay.hidden = false;
+        els.ssRuleEditor.hidden = false;
+        els.ssRuleName.focus();
+    }
+
+    /** 关闭规则编辑弹窗 */
+    function closeSsRuleEditor() {
+        els.ssRuleEditor.hidden = true;
+        els.ssRuleEditorOverlay.hidden = true;
+        ssEditingRuleId = null;
+    }
+
+    /** 规则类型切换 → 渲染动态字段 */
+    function renderSsRuleDynamicFields(kind, rule) {
+        let html = '';
+        if (kind === 'ANNOTATION_METHOD' || kind === 'ANNOTATION_CLASS') {
+            const hint = kind === 'ANNOTATION_METHOD'
+                ? '如 org.springframework.web.bind.annotation.GetMapping'
+                : '如 org.springframework.stereotype.Controller';
+            html = '<div class="modal-field">'
+                + '<label class="modal-label">注解全限定名</label>'
+                + '<input id="ssRuleAnnotation" class="modal-input" placeholder="' + hint + '"'
+                + ' value="' + escapeHtml((rule && rule.annotation) || '') + '">'
+                + '</div>';
+        } else if (kind === 'PACKAGE') {
+            html = '<div class="modal-field">'
+                + '<label class="modal-label">包名前缀</label>'
+                + '<input id="ssRulePackage" class="modal-input" placeholder="如 com.example.service"'
+                + ' value="' + escapeHtml((rule && rule.packagePrefix) || '') + '">'
+                + '</div>'
+                + '<label class="ss-rule-enabled"><input type="checkbox" id="ssRuleRecursive"'
+                + ((rule && rule.recursive !== false) ? ' checked' : '')
+                + '> 递归扫描子包</label>';
+        } else if (kind === 'INTERFACE_IMPLEMENT') {
+            html = '<div class="modal-field">'
+                + '<label class="modal-label">接口或基类全限定名</label>'
+                + '<input id="ssRuleInterface" class="modal-input" placeholder="如 com.example.MyService"'
+                + ' value="' + escapeHtml((rule && rule.interfaceName) || '') + '">'
+                + '</div>';
+        } else if (kind === 'CLASS_NAME') {
+            html = '<div class="modal-field">'
+                + '<label class="modal-label">类名通配模式</label>'
+                + '<input id="ssRulePattern" class="modal-input" placeholder="如 *Controller、com.example.*"'
+                + ' value="' + escapeHtml((rule && rule.pattern) || '') + '">'
+                + '</div>'
+                + '<div class="modal-field-hint">支持 *（单级包）和 **（多级通配）</div>';
+        } else if (kind === 'METHOD_NAME') {
+            html = '<div class="modal-field">'
+                + '<label class="modal-label">方法名通配模式</label>'
+                + '<input id="ssRulePattern" class="modal-input" placeholder="如 handle*、*Event"'
+                + ' value="' + escapeHtml((rule && rule.pattern) || '') + '">'
+                + '</div>'
+                + '<div class="modal-field-hint">支持 *（任意字符）和 **（多段通配）</div>';
+        }
+        els.ssRuleDynamic.innerHTML = html;
+    }
+
+    /** 从弹窗收集规则数据 */
+    function collectSsRuleFromEditor() {
+        const kind = els.ssRuleKind.value;
+        const rule = {
+            id: null,
+            name: els.ssRuleName.value.trim(),
+            kind: kind,
+            enabled: els.ssRuleEnabled.checked,
+            excludes: els.ssRuleExcludes.value.split('\n')
+                .map(s => s.trim()).filter(s => s.length > 0),
+        };
+        if (kind === 'ANNOTATION_METHOD' || kind === 'ANNOTATION_CLASS') {
+            rule.annotation = (document.getElementById('ssRuleAnnotation') || {}).value || '';
+        } else if (kind === 'PACKAGE') {
+            rule.packagePrefix = (document.getElementById('ssRulePackage') || {}).value || '';
+            rule.recursive = (document.getElementById('ssRuleRecursive') || {}).checked !== false;
+        } else if (kind === 'INTERFACE_IMPLEMENT') {
+            rule.interfaceName = (document.getElementById('ssRuleInterface') || {}).value || '';
+        } else if (kind === 'CLASS_NAME' || kind === 'METHOD_NAME') {
+            rule.pattern = (document.getElementById('ssRulePattern') || {}).value || '';
+        }
+        return rule;
+    }
+
+    // ---- 事件绑定（扫描策略） ----
+
+    // 管理按钮 → 打开弹窗
+    els.btnScanStrategyManage.addEventListener('click', openScanStrategyPanel);
+    els.btnSsClose.addEventListener('click', closeScanStrategyPanel);
+    els.scanStrategyOverlay.addEventListener('click', closeScanStrategyPanel);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !els.ssRuleEditor.hidden) closeSsRuleEditor();
+        if (e.key === 'Escape' && !els.scanStrategyPanel.hidden && els.ssRuleEditor.hidden) closeScanStrategyPanel();
+    });
+
+    // 下拉选择 → 立即切换生效（先取服务端最新数据，避免混入未保存的编辑）
+    els.scanProfileSelect.addEventListener('change', async () => {
+        if (!currentProjectId || !scanStrategy) return;
+        const newId = els.scanProfileSelect.value;
+        try {
+            const fresh = await fetchJson('/api/scan-strategy/project/' + currentProjectId);
+            fresh.activeProfileId = newId;
+            await putJson('/api/scan-strategy/project/' + currentProjectId, fresh);
+            scanStrategy = fresh;
+            renderScanProfileSelect();
+            showToast('已切换扫描方案', 'success');
+        } catch (e) {
+            showToast('切换失败: ' + e.message, 'error');
+        }
+    });
+
+    // ---- 通用操作函数（同时绑定到弹窗和页面按钮） ----
+
+    /** 保存生效 */
+    async function saveSsStrategy() {
+        const ctx = __ss();
+        const profile = currentEditingProfile();
+        if (!profile) return;
+        if (profile.builtin) {
+            showToast('内置方案不能修改，请复制后编辑', 'warn');
+            return;
+        }
+        const name = ctx.profileNameEl.value.trim();
+        if (!name) { showToast('请填写方案名称', 'warn'); return; }
+        profile.name = name;
+        profile.description = ctx.profileDescEl.value.trim();
+        if (ctx.strategy.activeProfileId === profile.id) {
+            renderScanProfileSelect();
+        }
+        try {
+            await putJson(ctx.saveUrl, ctx.strategy);
+            renderSsProfileList();
+            if (dsContext === 'modal') renderScanProfileSelect();
+            showToast('✓ 扫描策略已保存', 'success');
+        } catch (e) {
+            showToast('保存失败: ' + e.message, 'error');
+        }
+    }
+    els.btnSsSave.addEventListener('click', saveSsStrategy);
+    els.btnSsPageSave.addEventListener('click', saveSsStrategy);
+
+    /** 恢复默认 */
+    async function resetSsStrategy() {
+        const ok = await showConfirm('重置将丢失所有自定义方案和设置，确定要恢复默认吗？', '恢复默认');
+        if (!ok) return;
+        const ctx = __ss();
+        try {
+            await postJson(ctx.resetUrl, {});
+            if (dsContext === 'page') {
+                await loadGlobalScanStrategy();
+            } else {
+                await loadScanStrategy();
+            }
+            const ctx2 = __ss();
+            ctx2.setEditingId(ctx2.strategy.activeProfileId || 'builtin-standard');
+            renderSsProfileList();
+            renderSsEditor();
+            if (dsContext === 'modal') renderScanProfileSelect();
+            showToast('已恢复默认扫描策略', 'success');
+        } catch (e) {
+            showToast('重置失败: ' + e.message, 'error');
+        }
+    }
+    els.btnSsReset.addEventListener('click', resetSsStrategy);
+    els.btnSsPageReset.addEventListener('click', resetSsStrategy);
+
+    /** 新建方案 */
+    async function newSsProfile() {
+        const ctx = __ss();
+        try {
+            const data = await postJson('/api/scan-strategy/profile/new', {});
+            const newId = data.profileId;
+            const profile = {
+                id: newId,
+                name: '新建方案 ' + (ctx.strategy.profiles.length + 1),
+                description: '',
+                builtin: false,
+                detectors: { REST: true, DUBBO: true, ELASTIC_JOB: true, MAIN: true },
+                rules: [],
+            };
+            ctx.strategy.profiles.push(profile);
+            ctx.setEditingId(newId);
+            renderSsProfileList();
+            renderSsEditor();
+            showToast('已新建方案，编辑后点击「保存生效」', 'success');
+        } catch (e) {
+            showToast('新建失败: ' + e.message, 'error');
+        }
+    }
+    els.btnSsProfileNew.addEventListener('click', newSsProfile);
+    els.btnSsPageProfileNew.addEventListener('click', newSsProfile);
+
+    /** 复制方案 */
+    async function copySsProfile() {
+        const ctx = __ss();
+        const profile = currentEditingProfile();
+        if (!profile) { showToast('请先选择一个方案', 'warn'); return; }
+        try {
+            const data = await postJson('/api/scan-strategy/profile/new', {});
+            const newId = data.profileId;
+            const copy = JSON.parse(JSON.stringify(profile));
+            copy.id = newId;
+            copy.name = profile.name + ' (副本)';
+            copy.builtin = false;
+            ctx.strategy.profiles.push(copy);
+            ctx.setEditingId(newId);
+            renderSsProfileList();
+            renderSsEditor();
+            showToast('已复制方案，编辑后点击「保存生效」', 'success');
+        } catch (e) {
+            showToast('复制失败: ' + e.message, 'error');
+        }
+    }
+    els.btnSsProfileCopy.addEventListener('click', copySsProfile);
+    els.btnSsPageProfileCopy.addEventListener('click', copySsProfile);
+
+    /** 删除方案 */
+    async function deleteSsProfile() {
+        const ctx = __ss();
+        const profile = currentEditingProfile();
+        if (!profile) { showToast('请先选择一个方案', 'warn'); return; }
+        if (profile.builtin) { showToast('内置方案不能删除', 'warn'); return; }
+        const ok = await showConfirm('确定删除方案「' + profile.name + '」？', '删除方案');
+        if (!ok) return;
+        const idx = ctx.strategy.profiles.indexOf(profile);
+        if (idx >= 0) ctx.strategy.profiles.splice(idx, 1);
+        if (ctx.strategy.activeProfileId === profile.id) {
+            ctx.strategy.activeProfileId = 'builtin-standard';
+        }
+        ctx.setEditingId(ctx.strategy.activeProfileId || 'builtin-standard');
+        renderSsProfileList();
+        renderSsEditor();
+        if (dsContext === 'modal') renderScanProfileSelect();
+        showToast('已删除方案', 'success');
+    }
+    els.btnSsProfileDelete.addEventListener('click', deleteSsProfile);
+    els.btnSsPageProfileDelete.addEventListener('click', deleteSsProfile);
+
+    /** 新增规则 */
+    function addSsRule() {
+        const profile = currentEditingProfile();
+        if (!profile) { showToast('请先选择一个方案', 'warn'); return; }
+        if (profile.builtin) { showToast('内置方案不能编辑', 'warn'); return; }
+        openSsRuleEditor(null, null);
+    }
+    els.btnSsRuleAdd.addEventListener('click', addSsRule);
+    els.btnSsPageRuleAdd.addEventListener('click', addSsRule);
+
+    // 规则类型切换 → 动态字段
+    els.ssRuleKind.addEventListener('change', () => {
+        renderSsRuleDynamicFields(els.ssRuleKind.value, null);
+    });
+
+    // 规则编辑器确定
+    els.ssRuleEditorOk.addEventListener('click', () => {
+        const profile = currentEditingProfile();
+        if (!profile) { showToast('请先选择一个方案', 'warn'); return; }
+        const rule = collectSsRuleFromEditor();
+        if (!rule.name) { showToast('请填写规则名称', 'warn'); return; }
+        const kind = rule.kind;
+        if ((kind === 'ANNOTATION_METHOD' || kind === 'ANNOTATION_CLASS') && !rule.annotation) {
+            showToast('请填写注解全限定名', 'warn'); return;
+        }
+        if (kind === 'PACKAGE' && !rule.packagePrefix) {
+            showToast('请填写包名前缀', 'warn'); return;
+        }
+        if (kind === 'INTERFACE_IMPLEMENT' && !rule.interfaceName) {
+            showToast('请填写接口或基类全限定名', 'warn'); return;
+        }
+        if ((kind === 'CLASS_NAME' || kind === 'METHOD_NAME') && !rule.pattern) {
+            showToast('请填写通配模式', 'warn'); return;
+        }
+        const isEdit = ssEditingRuleId != null;
+        if (isEdit) {
+            const existing = profile.rules.find((r, i) => i === ssEditingRuleId);
+            if (existing) {
+                Object.assign(existing, rule);
+                existing.id = null;
+            }
+        } else {
+            rule.id = null;
+            if (!profile.rules) profile.rules = [];
+            profile.rules.push(rule);
+        }
+        closeSsRuleEditor();
+        const readonly = !!profile.builtin;
+        renderSsRuleList(profile, readonly);
+        showToast('规则已' + (isEdit ? '更新' : '添加'), 'success');
+    });
+
+    // 规则编辑器取消/关闭
+    els.ssRuleEditorCancel.addEventListener('click', closeSsRuleEditor);
+    els.ssRuleEditorClose.addEventListener('click', closeSsRuleEditor);
+    els.ssRuleEditorOverlay.addEventListener('click', closeSsRuleEditor);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !els.ssRuleEditor.hidden) closeSsRuleEditor();
+    });
+
+    // ---- 系统配置页面 tab 切换 ----
+
+    els.scTabNoise.addEventListener('click', () => {
+        els.scTabNoise.classList.add('active');
+        els.scTabScan.classList.remove('active');
+        els.scTabContentNoise.hidden = false;
+        els.scTabContentNoise.classList.add('active');
+        els.scTabContentScan.hidden = true;
+        els.scTabContentScan.classList.remove('active');
+    });
+
+    els.scTabScan.addEventListener('click', async () => {
+        els.scTabNoise.classList.remove('active');
+        els.scTabScan.classList.add('active');
+        els.scTabContentNoise.hidden = true;
+        els.scTabContentNoise.classList.remove('active');
+        els.scTabContentScan.hidden = false;
+        els.scTabContentScan.classList.add('active');
+        dsContext = 'page';
+        await loadGlobalScanStrategy();
+        renderSsPageContent();
+    });
+
     // ---- Step 2 按钮事件 ----
 
     // 🔍 自动扫描 → diff → 直接合并进清单 → 刷新
     els.btnEntryScan.addEventListener('click', async () => {
         if (!currentProjectId) { showError('请先进入项目'); return; }
         clearError();
-        showLoading('扫描入口中...');
+        const profile = scanStrategy && scanStrategy.profiles
+            ? scanStrategy.profiles.find(p => p.id === (scanStrategy.activeProfileId || 'builtin-standard'))
+            : null;
+        const profileLabel = profile ? profile.name : '标准扫描';
+        showLoading('扫描入口中...[' + profileLabel + ']');
         try {
             const resp = await postJson(
-                '/api/projects/' + currentProjectId + '/entries/scan', {});
+                '/api/projects/' + currentProjectId + '/entries/scan',
+                { profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined) });
             const candidates = resp.candidates || [];
+            const scanExisted = resp.existed || 0;
+            let mergeResp = null;
             if (candidates.length > 0) {
-                await postJson(
+                mergeResp = await postJson(
                     '/api/projects/' + currentProjectId + '/entries/merge', candidates);
             }
             await autoLoadEntryList(currentProjectId);
             hideLoading();
             const total = (currentEntryList && currentEntryList.confirmed) ? currentEntryList.confirmed.length : 0;
-            showError('✓ 扫描完成，新增 ' + candidates.length + ' 个，清单共 ' + total + ' 个', true);
+            const added = mergeResp ? (mergeResp.added || 0) : 0;
+            const existed = mergeResp ? (mergeResp.existed || 0) : scanExisted;
+            let msg = '✓ 扫描完成，新增 ' + added + ' 个';
+            if (existed > 0) msg += '，已存在 ' + existed + ' 个';
+            msg += '，清单共 ' + total + ' 个';
+            showError(msg, true);
         } catch (e) {
             hideLoading();
             showError('扫描失败: ' + e.message);
         }
     });
 
-    // ➕ 手动添加 → Modal
-    let addEntryVerified = false;  // 当前是否已通过检测
+    // ➕ 手动添加 → Modal（扫描机制：扫描出方法列表 → 勾选 → 批量加入）
+    let addEntryVerified = false;       // 扫描是否已完成
+    let currentScanCandidates = [];     // 当前扫描出的候选方法（add-batch 提交用）
+    let currentScanExisted = 0;         // 当前扫描结果中已在清单中的数量
     function openAddEntryModal() {
         els.addEntryClass.value = '';
-        els.addEntryMethod.innerHTML = '<option value="">留空（整个类所有方法都作为入口）</option>';
+        els.addEntryMethod.innerHTML = '<option value="">留空（扫描该类下所有命中规则的方法）</option>';
         els.addEntryMethodText.value = '';
         els.addEntryPaste.value = '';
-        setVerifyStatus('未检测', '');
+        setVerifyStatus('未扫描', '');
         addEntryVerified = false;
+        currentScanCandidates = [];
+        currentScanExisted = 0;
+        els.addEntryScanWrap.hidden = true;
+        els.addEntryScanList.innerHTML = '';
+        els.addEntryScanAll.checked = true;
         els.addEntryConfirm.disabled = true;
+        els.addEntryConfirm.textContent = '确定加入（0）';
         els.addEntryOverlay.hidden = false;
         els.addEntryModal.hidden = false;
         els.addEntryClass.focus();
@@ -2455,13 +3964,66 @@
         els.addEntryVerifyStatus.textContent = text;
         els.addEntryVerifyStatus.className = 'modal-verify-status' + (type ? ' vs-' + type : '');
     }
-    // 输入变动 → 重置检测状态
+    // 输入变动 → 重置扫描状态
     function resetVerify() {
         if (addEntryVerified) {
             addEntryVerified = false;
+            currentScanCandidates = [];
+            currentScanExisted = 0;
+            els.addEntryScanWrap.hidden = true;
+            els.addEntryScanList.innerHTML = '';
+            els.addEntryScanAll.checked = true;
             els.addEntryConfirm.disabled = true;
-            setVerifyStatus('已修改，请重新检测', 'warn');
+            els.addEntryConfirm.textContent = '确定加入（0）';
+            setVerifyStatus('已修改，请重新扫描', 'warn');
         }
+    }
+    // 渲染扫描结果列表 + 更新统计/确认按钮
+    function renderScanResults(candidates, existed) {
+        const listEl = els.addEntryScanList;
+        listEl.innerHTML = '';
+        currentScanExisted = existed || 0;
+        if (candidates.length === 0) {
+            listEl.innerHTML = '<div class="scan-result-empty">未扫描到可加入的新方法，可尝试放宽方法名或调整扫描规则</div>';
+        } else {
+            candidates.forEach((item) => {
+                const sig = readableFullSig(item.className, item.methodName, item.descriptor) || entryKey(item);
+                const key = entryKey(item);
+                const row = document.createElement('div');
+                row.className = 'scan-result-item';
+                row.innerHTML =
+                    '<input type="checkbox" class="scan-item-cb" data-key="' + key.replace(/"/g, '&quot;') + '" checked>'
+                    + '<span class="scan-item-sig">' + sigHtmlFromString(sig) + '</span>'
+                    + (item.group ? '<span class="scan-item-group">' + escapeHtml(item.group) + '</span>' : '');
+                listEl.appendChild(row);
+            });
+        }
+        updateScanStats();
+    }
+    // 统计条 + 确认按钮勾选数
+    function updateScanStats() {
+        const all = els.addEntryScanList.querySelectorAll('.scan-item-cb');
+        const checked = els.addEntryScanList.querySelectorAll('.scan-item-cb:checked').length;
+        els.addEntryScanAll.checked = all.length > 0 && all.length === checked;
+        els.addEntryConfirm.textContent = '确定加入（' + checked + '）';
+        els.addEntryConfirm.disabled = checked === 0;
+        let statsText = '扫描到 ' + all.length + ' 个可加入的方法，勾选 ' + checked + ' 个';
+        if (currentScanExisted > 0) statsText += '；' + currentScanExisted + ' 个已在清单中（不会重复加入）';
+        els.addEntryScanStats.textContent = statsText;
+    }
+    // 手动扫描：读取输入（类名 + 可选方法名）
+    function readAddEntryInput() {
+        let className = '', methodName = '';
+        const pasteRaw = els.addEntryPaste.value.trim();
+        if (pasteRaw) {
+            const p = parseEntryString(pasteRaw);
+            className = p.className;
+            methodName = p.methodName || '';
+        } else {
+            className = els.addEntryClass.value.trim();
+            methodName = els.addEntryMethodText.value.trim() || els.addEntryMethod.value.trim();
+        }
+        return { className, methodName };
     }
 
     els.btnEntryAdd.addEventListener('click', openAddEntryModal);
@@ -2534,7 +4096,8 @@
     function parseEntryString(raw) {
         // 支持: com.demo.OrderController
         //       com.demo.OrderController#createOrder
-        //       com.demo.OrderController#createOrder(LOrder;)V
+        //       com.demo.OrderController#createOrder(Order)          ← 可读精确重载
+        //       com.demo.OrderController#createOrder(Lcom/demo/Order;)V  ← 兼容旧 JVM 描述符
         const hashIdx = raw.indexOf('#');
         if (hashIdx < 0) {
             return { className: raw, methodName: null, descriptor: '' };
@@ -2549,119 +4112,99 @@
         // 找最后一个 )
         const closeParen = afterHash.lastIndexOf(')');
         if (closeParen >= 0) {
-            return { className: cls, methodName: method, descriptor: afterHash.substring(parenIdx, closeParen + 1) };
+            const body = afterHash.substring(parenIdx + 1, closeParen);
+            // 已经是 JVM descriptor 原样保留，否则把可读参数列表转成 descriptor
+            const descriptor = looksLikeDescriptor(body) ? '(' + body + ')' : readableParamsToDescriptor(body);
+            return { className: cls, methodName: method, descriptor };
         }
         return { className: cls, methodName: method, descriptor: '' };
     }
 
-    // 🔎 检测按钮
+    // 🔎 扫描按钮：调用 scan-manual，渲染扫描结果列表
     els.addEntryVerify.addEventListener('click', async () => {
         if (!currentProjectId) { showError('请先进入项目'); return; }
-        let className = '', methodName = '', descriptor = '';
-        const pasteRaw = els.addEntryPaste.value.trim();
-        if (pasteRaw) {
-            const p = parseEntryString(pasteRaw);
-            className = p.className; methodName = p.methodName || ''; descriptor = p.descriptor || '';
-        } else {
-            className = els.addEntryClass.value.trim();
-            methodName = els.addEntryMethodText.value.trim() || els.addEntryMethod.value.trim();
-            if (els.addEntryMethod.value) {
-                const opt = els.addEntryMethod.querySelector(`option[value="${els.addEntryMethod.value}"]`);
-                if (opt && opt.dataset.desc) descriptor = opt.dataset.desc;
-            }
-        }
-        if (!className) { setVerifyStatus('请先填类名', 'err'); return; }
-        const path = currentProjectPath();
-        if (!path) { setVerifyStatus('项目路径无效', 'err'); return; }
+        const input = readAddEntryInput();
+        if (!input.className) { setVerifyStatus('请先填类名', 'err'); return; }
 
         els.addEntryVerify.disabled = true;
-        setVerifyStatus('检测中...', '');
+        els.addEntryScanWrap.hidden = false;
+        els.addEntryScanList.innerHTML = '<div class="scan-result-empty">扫描中...</div>';
+        els.addEntryScanStats.textContent = '扫描中...';
+        setVerifyStatus('扫描中...', '');
+        currentScanCandidates = [];
         try {
-            const url = '/api/classes/verify?path=' + encodeURIComponent(path)
-                + '&class=' + encodeURIComponent(className)
-                + (methodName ? '&method=' + encodeURIComponent(methodName) : '')
-                + (descriptor ? '&descriptor=' + encodeURIComponent(descriptor) : '');
-            const resp = await fetch(url);
-            const data = await resp.json();
-            if (data.ok) {
-                setVerifyStatus(data.reason || '✓ 存在', data.multipleOverloads ? 'warn' : 'ok');
-                addEntryVerified = true;
-                els.addEntryConfirm.disabled = false;
-                // 如果后端帮补了唯一 descriptor → 自动填回去
-                if (data.descriptor && !descriptor) {
-                    // 让用户知道 descriptor 被自动补了
-                }
-            } else {
-                setVerifyStatus('✗ ' + (data.reason || '不存在'), 'err');
-                addEntryVerified = false;
-                els.addEntryConfirm.disabled = true;
-            }
+            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/scan-manual', {
+                className: input.className,
+                methodName: input.methodName || '',
+                profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined)
+            });
+            const candidates = resp.candidates || [];
+            const existed = resp.existed || 0;
+            currentScanCandidates = candidates;
+            renderScanResults(candidates, existed);
+            setVerifyStatus('扫描完成', candidates.length > 0 ? 'ok' : 'warn');
+            addEntryVerified = true;
         } catch (e) {
-            setVerifyStatus('检测失败: ' + e.message, 'err');
+            els.addEntryScanWrap.hidden = true;
+            setVerifyStatus('扫描失败: ' + e.message, 'err');
+            addEntryVerified = false;
         } finally {
             els.addEntryVerify.disabled = false;
         }
     });
 
-    // 输入变动 → 重置检测状态
+    // 全选 / 取消全选
+    els.addEntryScanAll.addEventListener('change', () => {
+        const checked = els.addEntryScanAll.checked;
+        els.addEntryScanList.querySelectorAll('.scan-item-cb').forEach(cb => cb.checked = checked);
+        updateScanStats();
+    });
+
+    // 扫描结果列表内 checkbox 变更 → 更新统计 + 确认按钮
+    els.addEntryScanList.addEventListener('change', (e) => {
+        if (e.target.classList.contains('scan-item-cb')) {
+            updateScanStats();
+        }
+    });
+
+    // 输入变动 → 重置扫描状态
     els.addEntryClass.addEventListener('input', resetVerify);
     els.addEntryMethodText.addEventListener('input', resetVerify);
     els.addEntryMethod.addEventListener('change', resetVerify);
     els.addEntryPaste.addEventListener('input', resetVerify);
 
-    // 加入清单 —— 必须已检测通过
+    // 确定加入：收集勾选的方法 → 批量提交
     els.addEntryConfirm.addEventListener('click', async () => {
         if (!currentProjectId) { showError('请先进入项目'); closeAddEntryModal(); return; }
-        let className = '';
-        let methodName = '';
-        let descriptor = '';
-
-        // 优先从快捷粘贴解析
-        const pasteRaw = els.addEntryPaste.value.trim();
-        if (pasteRaw) {
-            const p = parseEntryString(pasteRaw);
-            className = p.className;
-            methodName = p.methodName || '';
-            descriptor = p.descriptor || '';
-        } else {
-            className = els.addEntryClass.value.trim();
-            // 方法名：input 优先，下拉其次
-            methodName = els.addEntryMethodText.value.trim()
-                || els.addEntryMethod.value.trim();
-            if (els.addEntryMethod.value) {
-                const opt = els.addEntryMethod.querySelector(`option[value="${els.addEntryMethod.value}"]`);
-                if (opt && opt.dataset.desc) descriptor = opt.dataset.desc;
-            }
-        }
-
-        if (!className) {
-            showError('请先填类名');
-            els.addEntryClass.focus();
+        const checkedItems = [];
+        els.addEntryScanList.querySelectorAll('.scan-item-cb:checked').forEach(cb => {
+            const key = cb.dataset.key;
+            const item = currentScanCandidates.find(c => entryKey(c) === key);
+            if (item) checkedItems.push(item);
+        });
+        if (checkedItems.length === 0) {
+            showError('请至少勾选一个方法');
             return;
         }
-
         try {
-            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/add', {
-                className, methodName, descriptor
-            });
+            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/add-batch', checkedItems);
             closeAddEntryModal();
             await autoLoadEntryList(currentProjectId);
-            const label = className.split('.').pop() + (methodName ? '#' + methodName : '');
-            showError(resp.added ? '✓ 已加入清单: ' + label : label + ' 已存在于清单', true);
+            let msg = '✓ ' + resp.added + ' 个添加成功';
+            if (resp.existed > 0) msg += '，' + resp.existed + ' 个已存在（自动跳过）';
+            showError(msg, true);
         } catch (e) {
             showError('添加失败: ' + e.message);
         }
     });
 
-    // 排除（confirmed → excluded）
+    // 排除（confirmed → excluded）：单条入口也走统一弹窗，便于选原因
     window.excludeEntry = function (key) {
         if (!currentProjectId) return;
-        const reason = prompt('排除原因（可选，默认"用户排除"）:', '用户排除');
-        if (reason === null) return;
-        postJson('/api/projects/' + currentProjectId + '/entries/exclude', {
-            key: key, reason: reason
-        }).then(() => autoLoadEntryList(currentProjectId))
-          .catch(e => showError('排除失败: ' + e.message));
+        const items = ((currentEntryList && currentEntryList.confirmed) || [])
+            .filter(it => entryKey(it) === key);
+        if (items.length === 0) return;
+        openExcludeModal(items);
     };
 
     // 恢复（excluded → confirmed）
@@ -2671,6 +4214,127 @@
             .then(() => autoLoadEntryList(currentProjectId))
             .catch(e => showError('恢复失败: ' + e.message));
     };
+
+    // ==================================================================
+    // 批量排除：清单勾选 + 统一/逐个原因弹窗
+    // ==================================================================
+    const EXCLUDE_REASON_PRESETS = ['非业务入口', '已废弃 / 不再使用', '测试 / 演示代码', '重复入口'];
+
+    /** 清单勾选变更（事件委托） */
+    els.entryConfirmedList.addEventListener('change', (e) => {
+        if (!e.target.classList.contains('entry-cb')) return;
+        const row = e.target.closest('.entry-row');
+        if (!row) return;
+        const key = row.dataset.key;
+        if (e.target.checked) entrySelKeys.add(key); else entrySelKeys.delete(key);
+        row.classList.toggle('selected', e.target.checked);
+        updateEntryToolbar();
+    });
+
+    /** 全选 / 全不选 */
+    els.entryCheckAll.addEventListener('change', () => {
+        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const checked = els.entryCheckAll.checked;
+        confirmed.forEach(it => {
+            if (checked) entrySelKeys.add(entryKey(it)); else entrySelKeys.delete(entryKey(it));
+        });
+        els.entryConfirmedList.querySelectorAll('.entry-row').forEach(row => {
+            const cb = row.querySelector('.entry-cb');
+            if (cb) { cb.checked = checked; row.classList.toggle('selected', checked); }
+        });
+        updateEntryToolbar();
+    });
+
+    /** 打开批量排除弹窗 */
+    els.btnBatchExclude.addEventListener('click', () => {
+        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const items = confirmed.filter(it => entrySelKeys.has(entryKey(it)));
+        if (items.length === 0) return;
+        openExcludeModal(items);
+    });
+
+    function openExcludeModal(items) {
+        excludeModalItems = items.slice();
+        els.excludeModalCount.textContent = items.length;
+        els.excludeModalList.innerHTML = items.map((item) => {
+            const sig = readableFullSig(item.className, item.methodName, item.descriptor) || entryKey(item);
+            return `<div class="ex-item"><span class="ex-item-sig" title="${escapeHtml(sig)}">${sigHtmlFromString(sig)}</span></div>`;
+        }).join('');
+        els.excludeReasonPresets.innerHTML = EXCLUDE_REASON_PRESETS.map((r, i) =>
+            `<button type="button" class="ex-preset${i === 0 ? ' active' : ''}" data-reason="${escapeHtml(r)}">${escapeHtml(r)}</button>`
+        ).join('');
+        els.excludeReasonText.value = EXCLUDE_REASON_PRESETS[0];
+        els.excludeReasonUnified.checked = true;
+        els.excludePerItemReasons.hidden = true;
+        renderExcludePerItemReasons();
+        els.excludeModalOverlay.hidden = false;
+        els.excludeModal.hidden = false;
+    }
+
+    function closeExcludeModal() {
+        els.excludeModalOverlay.hidden = true;
+        els.excludeModal.hidden = true;
+        excludeModalItems = [];
+    }
+
+    function renderExcludePerItemReasons() {
+        els.excludePerItemReasons.innerHTML = excludeModalItems.map((item) => {
+            const sig = readableFullSig(item.className, item.methodName, item.descriptor) || entryKey(item);
+            return `<div class="ex-reason-item">
+                <span class="ex-reason-sig" title="${escapeHtml(sig)}">${sigHtmlFromString(sig)}</span>
+                <input type="text" placeholder="该入口的排除原因（留空默认「用户排除」）">
+            </div>`;
+        }).join('');
+    }
+
+    // 预设原因点选
+    els.excludeReasonPresets.addEventListener('click', (e) => {
+        const btn = e.target.closest('.ex-preset');
+        if (!btn) return;
+        els.excludeReasonPresets.querySelectorAll('.ex-preset')
+            .forEach(b => b.classList.toggle('active', b === btn));
+        els.excludeReasonText.value = btn.dataset.reason;
+    });
+    // 手动编辑原因 → 取消预设高亮
+    els.excludeReasonText.addEventListener('input', () => {
+        els.excludeReasonPresets.querySelectorAll('.ex-preset')
+            .forEach(b => b.classList.remove('active'));
+    });
+    // 统一 / 逐个原因切换
+    els.excludeReasonUnified.addEventListener('change', () => {
+        els.excludePerItemReasons.hidden = els.excludeReasonUnified.checked;
+    });
+
+    els.excludeModalClose.addEventListener('click', closeExcludeModal);
+    els.excludeModalCancel.addEventListener('click', closeExcludeModal);
+    els.excludeModalOverlay.addEventListener('click', closeExcludeModal);
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !els.excludeModal.hidden) closeExcludeModal();
+    });
+
+    // 确认排除（批量提交）
+    els.excludeModalConfirm.addEventListener('click', async () => {
+        if (!currentProjectId || excludeModalItems.length === 0) return;
+        const unified = els.excludeReasonUnified.checked;
+        const perItemInputs = els.excludePerItemReasons.querySelectorAll('.ex-reason-item input');
+        const payload = excludeModalItems.map((item, idx) => {
+            const raw = unified ? els.excludeReasonText.value : (perItemInputs[idx] ? perItemInputs[idx].value : '');
+            return { key: entryKey(item), reason: (raw || '').trim() || '用户排除' };
+        });
+        els.excludeModalConfirm.disabled = true;
+        try {
+            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/exclude/batch', payload);
+            closeExcludeModal();
+            entrySelKeys.clear();
+            await autoLoadEntryList(currentProjectId);
+            const n = resp && resp.excluded != null ? resp.excluded : payload.length;
+            showError('✓ 已排除 ' + n + ' 个入口，可在「已排除的入口」中恢复', true);
+        } catch (e) {
+            showError('批量排除失败: ' + e.message);
+        } finally {
+            els.excludeModalConfirm.disabled = false;
+        }
+    });
 
     // ==================================================================
     // Step 3: 批量分析 —— 拿 confirmed 清单逐个 analyze

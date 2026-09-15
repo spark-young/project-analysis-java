@@ -100,56 +100,111 @@ public class EntryListService {
     // ------------------------------------------------------------------
 
     /**
-     * 把自动扫描结果与已保存清单对比，返回"新增候选"（已经在 confirmed/excluded 里的跳过）。
-     * 不修改持久化数据——候选由前端展示让用户决定是否合并。
-     *
-     * @return 新增候选列表（EntryItem 形式），已按 group 分组
+     * 扫描 diff 结果。
+     * candidates —— 不在清单中的新增候选；
+     * existed   —— 已在清单（confirmed + excluded）中的数量，用于"新增 X 个 / 已存在 Y 个"提示。
      */
-    public List<EntryItem> diffScanCandidates(String projectPath, EntryScanResult scanResult) {
-        EntryList saved = load(projectPath);
+    public static class ScanDiffResult {
+        public final List<EntryItem> candidates;
+        public final int existed;
 
-        // 已存在 key 集合
+        public ScanDiffResult(List<EntryItem> candidates, int existed) {
+            this.candidates = candidates;
+            this.existed = existed;
+        }
+    }
+
+    /**
+     * 把自动扫描结果与已保存清单对比，返回新增候选与已存在数。
+     * 不修改持久化数据——候选由前端展示让用户决定是否合并。
+     */
+    public ScanDiffResult diffScanCandidates(String projectPath, EntryScanResult scanResult) {
+        List<EntryItem> all = new ArrayList<>();
+        if (scanResult != null && scanResult.getGroups() != null) {
+            for (EntryScanResult.Group g : scanResult.getGroups()) {
+                if (g.getEntries() == null) continue;
+                for (EntryDto dto : g.getEntries()) {
+                    all.add(fromDto(dto, g.getType()));
+                }
+            }
+        }
+        ScanDiffResult diff = diffItems(projectPath, all);
+        log.info("[入口清单] 扫描 diff：新增候选 {} 条（已存在 {} 条）",
+                diff.candidates.size(), diff.existed);
+        return diff;
+    }
+
+    /**
+     * 从全量扫描结果中提取类名匹配的入口方法（精确匹配优先，其次包含匹配），
+     * 用于"手动扫描"场景：source 统一标记为 MANUAL，group 保留原始类型（REST/DUBBO/RULE...）。
+     */
+    public List<EntryItem> extractByClass(EntryScanResult scanResult, String className) {
+        List<EntryItem> matched = new ArrayList<>();
+        if (scanResult == null || scanResult.getGroups() == null
+                || className == null || className.trim().isEmpty()) return matched;
+        String needle = className.trim();
+        for (EntryScanResult.Group g : scanResult.getGroups()) {
+            if (g.getEntries() == null) continue;
+            for (EntryDto dto : g.getEntries()) {
+                String cn = dto.getClassName() == null ? "" : dto.getClassName();
+                if (cn.equals(needle) || cn.contains(needle)) {
+                    EntryItem item = fromDto(dto, g.getType());
+                    item.setSource("MANUAL");
+                    matched.add(item);
+                }
+            }
+        }
+        return matched;
+    }
+
+    /** 通用 diff：items 与已保存清单对比，返回新增候选与已存在数 */
+    public ScanDiffResult diffItems(String projectPath, List<EntryItem> items) {
+        EntryList saved = load(projectPath);
         Set<String> existingKeys = new HashSet<>();
         for (EntryItem e : saved.getConfirmed()) existingKeys.add(e.key());
         for (EntryItem e : saved.getExcluded()) existingKeys.add(e.key());
 
         List<EntryItem> candidates = new ArrayList<>();
-        if (scanResult == null || scanResult.getGroups() == null) return candidates;
-
-        for (EntryScanResult.Group g : scanResult.getGroups()) {
-            if (g.getEntries() == null) continue;
-            for (EntryDto dto : g.getEntries()) {
-                EntryItem item = fromDto(dto, g.getType());
-                if (!existingKeys.contains(item.key())) {
+        int existed = 0;
+        if (items != null) {
+            for (EntryItem item : items) {
+                if (existingKeys.contains(item.key())) {
+                    existed++;
+                } else {
                     candidates.add(item);
                 }
             }
         }
-        log.info("[入口清单] 扫描 diff：新增候选 {} 条（已存在 {} 条）",
-                candidates.size(), existingKeys.size());
-        return candidates;
+        return new ScanDiffResult(candidates, existed);
     }
 
     // ------------------------------------------------------------------
     // 变更操作（都 load → 修改 → save）
     // ------------------------------------------------------------------
 
-    /** 把候选合并进 confirmed（按 key 去重） */
-    public int mergeCandidates(String projectPath, List<EntryItem> candidates) {
-        if (candidates == null || candidates.isEmpty()) return 0;
+    /** 把候选合并进 confirmed（按 key 去重），返回 {added, existed} */
+    public Map<String, Integer> mergeCandidates(String projectPath, List<EntryItem> candidates) {
+        Map<String, Integer> result = new HashMap<>();
+        result.put("added", 0);
+        result.put("existed", 0);
+        if (candidates == null || candidates.isEmpty()) return result;
         EntryList list = load(projectPath);
         Set<String> keys = new HashSet<>();
         for (EntryItem e : list.getConfirmed()) keys.add(e.key());
-        int added = 0;
+        int added = 0, existed = 0;
         for (EntryItem c : candidates) {
             if (!keys.contains(c.key())) {
                 list.getConfirmed().add(c);
                 keys.add(c.key());
                 added++;
+            } else {
+                existed++;
             }
         }
         save(projectPath, list);
-        return added;
+        result.put("added", added);
+        result.put("existed", existed);
+        return result;
     }
 
     /** 手动添加一个入口（直接进 confirmed），返回 true 表示新增，false 表示已存在 */
@@ -169,6 +224,46 @@ public class EntryListService {
         return true;
     }
 
+    /** 批量手动添加（直接进 confirmed），返回 {added, existed}。
+     *  confirmed 中已存在 → 记为 existed；
+     *  excluded 中已存在 → 移回 confirmed 记为 added（用户主动捞回） */
+    public Map<String, Integer> addManualBatch(String projectPath, List<EntryItem> items) {
+        Map<String, Integer> result = new HashMap<>();
+        result.put("added", 0);
+        result.put("existed", 0);
+        if (items == null || items.isEmpty()) return result;
+        EntryList list = load(projectPath);
+        Set<String> confirmedKeys = new HashSet<>();
+        for (EntryItem e : list.getConfirmed()) confirmedKeys.add(e.key());
+        Set<String> excludedKeys = new HashSet<>();
+        for (EntryItem e : list.getExcluded()) excludedKeys.add(e.key());
+
+        int added = 0, existed = 0;
+        for (EntryItem item : items) {
+            if (item.getClassName() == null || item.getMethodName() == null) continue;
+            if (item.getSource() == null) item.setSource("MANUAL");
+            if (item.getGroup() == null) item.setGroup("MANUAL");
+            String key = item.key();
+            if (confirmedKeys.contains(key)) {
+                existed++;
+            } else if (excludedKeys.contains(key)) {
+                list.getExcluded().removeIf(ex -> ex.key().equals(key));
+                list.getConfirmed().add(item);
+                confirmedKeys.add(key);
+                excludedKeys.remove(key);
+                added++;
+            } else {
+                list.getConfirmed().add(item);
+                confirmedKeys.add(key);
+                added++;
+            }
+        }
+        save(projectPath, list);
+        result.put("added", added);
+        result.put("existed", existed);
+        return result;
+    }
+
     /** 排除一个入口：从 confirmed 移到 excluded */
     public boolean exclude(String projectPath, String key, String reason) {
         EntryList list = load(projectPath);
@@ -182,6 +277,28 @@ public class EntryListService {
         list.getExcluded().add(target);
         save(projectPath, list);
         return true;
+    }
+
+    /** 批量排除：从 confirmed 移到 excluded，逐条写入原因，返回实际排除条数 */
+    public int excludeBatch(String projectPath, List<Map<String, String>> items) {
+        if (items == null || items.isEmpty()) return 0;
+        EntryList list = load(projectPath);
+        int count = 0;
+        for (Map<String, String> item : items) {
+            String key = item == null ? null : item.get("key");
+            if (key == null || key.isEmpty()) continue;
+            EntryItem target = null;
+            for (EntryItem e : list.getConfirmed()) {
+                if (e.key().equals(key)) { target = e; break; }
+            }
+            if (target == null) continue;
+            list.getConfirmed().remove(target);
+            target.setExcludeReason(item.get("reason") == null ? "用户排除" : item.get("reason"));
+            list.getExcluded().add(target);
+            count++;
+        }
+        if (count > 0) save(projectPath, list);
+        return count;
     }
 
     /** 恢复一个入口：从 excluded 移回 confirmed */

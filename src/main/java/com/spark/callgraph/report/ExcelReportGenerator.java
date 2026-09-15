@@ -9,6 +9,7 @@ import com.spark.callgraph.service.NoiseRuleService;
 import com.spark.callgraph.service.dto.AnalysisResult;
 import com.spark.callgraph.service.dto.MethodCaller;
 import com.spark.callgraph.service.dto.MethodFrequency;
+import com.spark.callgraph.service.dto.NoiseRule;
 import org.apache.poi.ss.usermodel.Cell;
 import org.apache.poi.ss.usermodel.CellStyle;
 import org.apache.poi.ss.usermodel.FillPatternType;
@@ -80,10 +81,11 @@ public class ExcelReportGenerator {
             }
 
             writeOverview(wb, result, headerStyle, sourceFilter, kept, noiseRemoved);
+            writeNoiseRulesSheet(wb, headerStyle, projectPath);
             writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
             writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
 
-            writeRootSheets(wb, result, headerStyle, rootStyle);
+            writeRootSheets(wb, result, headerStyle, rootStyle, projectPath);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -119,9 +121,10 @@ public class ExcelReportGenerator {
             }
 
             writeProjectOverview(wb, results, headerStyle, sourceFilter, kept, noiseRemoved);
+            writeNoiseRulesSheet(wb, headerStyle, projectPath);
             writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
             writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
-            writeProjectRootSheets(wb, results, headerStyle, rootStyle);
+            writeProjectRootSheets(wb, results, headerStyle, rootStyle, projectPath);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             wb.write(out);
@@ -201,6 +204,7 @@ public class ExcelReportGenerator {
         r = kv(sheet, r, "来源筛选", "ALL".equalsIgnoreCase(sourceFilter) ? "全部来源" : sourceFilter);
         r = kv(sheet, r, "保留方法数", String.valueOf(kept.size()));
         r = kv(sheet, r, "被样板规则过滤", String.valueOf(noiseRemoved.size()));
+        r = kv(sheet, r, "过滤规则", "本次导出生效的规则明细见「过滤规则」Sheet");
 
         r = titleRow(sheet, r, "入口明细", headerStyle);
         Row head = sheet.createRow(r++);
@@ -212,8 +216,7 @@ public class ExcelReportGenerator {
         int seq = 1;
         for (AnalysisResult res : results) {
             AnalysisResult.Stats s = res.getStats();
-            String method = (res.getClassName() == null ? "" : res.getClassName())
-                    + (res.getMethodName() == null ? "" : "#" + res.getMethodName());
+            String method = entrySig(res);
             Row row = sheet.createRow(r++);
             row.createCell(0).setCellValue(seq++);
             row.createCell(1).setCellValue(method);
@@ -232,7 +235,7 @@ public class ExcelReportGenerator {
 
     /** 项目级调用链 Sheet：跨入口给每个根方法写一个 Sheet（共用去重命名，避免跨入口同名冲突） */
     private void writeProjectRootSheets(SXSSFWorkbook wb, List<AnalysisResult> results,
-                                        CellStyle headerStyle, CellStyle rootStyle) {
+                                        CellStyle headerStyle, CellStyle rootStyle, String projectPath) {
         Set<String> used = new HashSet<>();
         int sheetCount = 0;
         for (AnalysisResult res : results) {
@@ -240,8 +243,12 @@ public class ExcelReportGenerator {
             if (g == null) continue;
             for (int rootId : g.getRoots()) {
                 if (sheetCount >= MAX_SHEETS) break;
-                String name = sheetName(g.getMethods().get(rootId), used);
-                writeMethodSheet(wb.createSheet(name), g, rootId, headerStyle, rootStyle);
+                GraphMethod rootM = g.getMethods().get(rootId);
+                if (rootM == null) continue;
+                // 根方法本身命中 noise → 整个入口 Sheet 跳过（剪枝）
+                if (noiseRuleService.isNoise(rootM.getDisplay(), rootM.getSource().name(), projectPath)) continue;
+                String name = sheetName(rootM, used);
+                writeMethodSheet(wb.createSheet(name), g, rootId, headerStyle, rootStyle, projectPath);
                 sheetCount++;
             }
             if (sheetCount >= MAX_SHEETS) break;
@@ -261,6 +268,18 @@ public class ExcelReportGenerator {
         SourceType source;
     }
 
+    /** 入口方法的统一可读签名：全限定类名#方法名(参数类型短名列表)；缺 descriptor 时回退 className#methodName */
+    private String entrySig(AnalysisResult res) {
+        CallGraph g = res.getGraph();
+        String name = res.getMethodName();
+        if (g != null && name != null && !g.getRoots().isEmpty()) {
+            GraphMethod root = g.getMethods().get(g.getRoots().get(0));
+            if (root != null) return root.toKey().getIdentifier();
+        }
+        String c = res.getClassName() == null ? "" : res.getClassName();
+        return c + (name == null ? "" : "#" + name);
+    }
+
     // ------------------------------------------------------------------
     // 总览
     // ------------------------------------------------------------------
@@ -276,7 +295,7 @@ public class ExcelReportGenerator {
         r = kv(sheet, r, "项目布局", result.getLayoutType());
         r = kv(sheet, r, "入口类", result.getClassName());
         r = kv(sheet, r, "入口方法", result.getMethodName() == null
-                ? "（整个类，每个方法一个 Sheet）" : result.getMethodName());
+                ? "（整个类，每个方法一个 Sheet）" : entrySig(result));
         r = kv(sheet, r, "入口方法数", String.valueOf(result.getStats().getEntryCount()));
         r = kv(sheet, r, "调用链总节点数", String.valueOf(result.getStats().getTotalNodes()));
         r = kv(sheet, r, "项目方法数", String.valueOf(result.getStats().getProjectMethods()));
@@ -291,6 +310,7 @@ public class ExcelReportGenerator {
         r = kv(sheet, r, "来源筛选", "ALL".equalsIgnoreCase(sourceFilter) ? "全部来源" : sourceFilter);
         r = kv(sheet, r, "保留方法数", String.valueOf(kept.size()) + "（详见「方法调用分析」Sheet）");
         r = kv(sheet, r, "被样板规则过滤", String.valueOf(noiseRemoved.size()) + "（详见「被过滤方法」Sheet）");
+        r = kv(sheet, r, "过滤规则", "本次导出生效的规则明细见「过滤规则」Sheet");
         if (!kept.isEmpty()) {
             int totalCalls = 0;
             for (MethodFrequency mf : kept) totalCalls += mf.getCallCount();
@@ -314,6 +334,71 @@ public class ExcelReportGenerator {
         r = kv(sheet, r, "", "每个入口方法一个 Sheet；层级列表示树形调用结构；方法标识为 全限定类名#方法名(参数类型)，构造器为 #<init>；调用方式含虚调用/静态/接口/构造/lambda/接口实现分派。");
         sheet.setColumnWidth(0, 22 * 256);
         sheet.setColumnWidth(1, 110 * 256);
+    }
+
+    /**
+     * 第二个 Sheet：列出本次导出实际生效的过滤规则（全局层 + 项目层），供用户核对是否误过滤。
+     */
+    private void writeNoiseRulesSheet(SXSSFWorkbook wb, CellStyle headerStyle, String projectPath) {
+        Sheet sheet = wb.createSheet("过滤规则");
+        List<NoiseRule> global = noiseRuleService.getRules();
+        List<NoiseRule> project = noiseRuleService.getProjectRules(projectPath);
+        int enabledCount = 0;
+        for (NoiseRule nr : global) if (nr.isEnabled()) enabledCount++;
+        for (NoiseRule nr : project) if (nr.isEnabled()) enabledCount++;
+
+        int r = 0;
+        r = titleRow(sheet, r, "本次导出使用的过滤规则（共 " + (global.size() + project.size())
+                + " 条，其中启用 " + enabledCount + " 条）", headerStyle);
+        r = kv(sheet, r, "生效方式", "全局规则 + 项目级规则合并生效：任一命中即判定为噪声");
+        r = kv(sheet, r, "匹配逻辑", "方法名正则匹配 且（类名正则为空 或 类名匹配）且 来源匹配 且（参数个数未设置 或 参数个数恰好相等）");
+        r = kv(sheet, r, "影响范围", "「方法调用分析」「被过滤方法」Sheet 的方法列表，以及各「调用链」Sheet 的节点"
+                + "（命中即剪枝，该节点及其下游子链不再出现）");
+        r = kv(sheet, r, "项目路径", projectPath == null || projectPath.isEmpty() ? "（未指定）" : projectPath);
+
+        Row head = sheet.createRow(r++);
+        String[] cols = {"层级", "序号", "规则名", "方法名正则", "类名正则", "来源", "参数个数", "启用"};
+        for (int i = 0; i < cols.length; i++) {
+            head.createCell(i).setCellValue(cols[i]);
+            head.getCell(i).setCellStyle(headerStyle);
+        }
+        r = writeNoiseRuleRows(sheet, r, global, "全局");
+        r = writeNoiseRuleRows(sheet, r, project, "项目");
+
+        sheet.setColumnWidth(0, 8 * 256);
+        sheet.setColumnWidth(1, 6 * 256);
+        sheet.setColumnWidth(2, 28 * 256);
+        sheet.setColumnWidth(3, 48 * 256);
+        sheet.setColumnWidth(4, 48 * 256);
+        sheet.setColumnWidth(5, 10 * 256);
+        sheet.setColumnWidth(6, 10 * 256);
+        sheet.setColumnWidth(7, 8 * 256);
+        sheet.createFreezePane(0, 6);   // 冻结标题 + 表头（表头在第 6 行，索引 5）
+    }
+
+    /** 写某一层级（全局/项目）的规则行；无规则时写一行占位提示 */
+    private int writeNoiseRuleRows(Sheet sheet, int r, List<NoiseRule> rules, String scope) {
+        if (rules == null || rules.isEmpty()) {
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(scope);
+            row.createCell(2).setCellValue("（无规则）");
+            return r;
+        }
+        int seq = 1;
+        for (NoiseRule rule : rules) {
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(scope);
+            row.createCell(1).setCellValue(seq++);
+            setCellText(row.createCell(2), rule.getName() == null ? "" : rule.getName());
+            setCellText(row.createCell(3), rule.getMethodPattern() == null ? "" : rule.getMethodPattern());
+            setCellText(row.createCell(4), rule.getClassPattern() == null || rule.getClassPattern().isEmpty()
+                    ? "（不限）" : rule.getClassPattern());
+            row.createCell(5).setCellValue(rule.getSource() == null ? "ALL" : rule.getSource());
+            row.createCell(6).setCellValue(rule.getParamCount() == null
+                    ? "不限" : String.valueOf(rule.getParamCount()));
+            row.createCell(7).setCellValue(rule.isEnabled() ? "是" : "否");
+        }
+        return r;
     }
 
     /**
@@ -374,7 +459,7 @@ public class ExcelReportGenerator {
                     callers.append("\n… 另有 ").append(cs.size() - 20).append(" 处调用，完整列表请在页面点“下载”按钮导出");
                 }
             }
-            row.createCell(4).setCellValue(callers.toString());
+            setCellText(row.createCell(4), callers.toString());
         }
         sheet.setColumnWidth(0, 8 * 256);
         sheet.setColumnWidth(1, 90 * 256);
@@ -416,14 +501,18 @@ public class ExcelReportGenerator {
             StringBuilder callers = new StringBuilder();
             List<MethodCaller> cs = mf.getCallers();
             if (cs != null) {
-                for (int k = 0; k < cs.size(); k++) {
+                int limit = Math.min(cs.size(), 20);
+                for (int k = 0; k < limit; k++) {
                     if (k > 0) callers.append("\n");
                     callers.append(cs.get(k).getCaller());
                     int ln = cs.get(k).getLine();
                     if (ln > 0) callers.append("  L").append(ln);
                 }
+                if (cs.size() > 20) {
+                    callers.append("\n… 另有 ").append(cs.size() - 20).append(" 处调用");
+                }
             }
-            row.createCell(4).setCellValue(callers.toString());
+            setCellText(row.createCell(4), callers.toString());
             row.createCell(5).setCellValue(
                     noiseRuleService.getMatchedRule(mf.getMethod(), mf.getSource(), projectPath));
         }
@@ -441,16 +530,20 @@ public class ExcelReportGenerator {
     // ------------------------------------------------------------------
 
     private void writeRootSheets(SXSSFWorkbook wb, AnalysisResult result,
-                                 CellStyle headerStyle, CellStyle rootStyle) {
+                                 CellStyle headerStyle, CellStyle rootStyle, String projectPath) {
         CallGraph g = result.getGraph();
         List<Integer> roots = g.getRoots();
         Set<String> usedSheetNames = new HashSet<>();
         int sheetCount = 0;
         for (int rootId : roots) {
             if (sheetCount >= MAX_SHEETS) break;
-            String name = sheetName(g.getMethods().get(rootId), usedSheetNames);
+            GraphMethod rootM = g.getMethods().get(rootId);
+            if (rootM == null) continue;
+            // 根方法本身命中 noise → 整个入口 Sheet 跳过（剪枝）
+            if (noiseRuleService.isNoise(rootM.getDisplay(), rootM.getSource().name(), projectPath)) continue;
+            String name = sheetName(rootM, usedSheetNames);
             Sheet sheet = wb.createSheet(name);
-            writeMethodSheet(sheet, g, rootId, headerStyle, rootStyle);
+            writeMethodSheet(sheet, g, rootId, headerStyle, rootStyle, projectPath);
             sheetCount++;
         }
         if (roots.size() > MAX_SHEETS) {
@@ -462,7 +555,7 @@ public class ExcelReportGenerator {
     }
 
     private void writeMethodSheet(Sheet sheet, CallGraph graph, int rootId,
-                                  CellStyle headerStyle, CellStyle rootStyle) {
+                                  CellStyle headerStyle, CellStyle rootStyle, String projectPath) {
         Row header = sheet.createRow(0);
         for (int i = 0; i < HEADERS.length; i++) {
             Cell c = header.createCell(i);
@@ -471,7 +564,7 @@ public class ExcelReportGenerator {
         }
         int[] rowIdx = {1};
         boolean[] visited = new boolean[graph.getMethods().size()];
-        writeNode(sheet, graph, rootId, null, 0, rowIdx, rootStyle, visited);
+        writeNode(sheet, graph, rootId, null, 0, rowIdx, rootStyle, visited, projectPath);
         sheet.createFreezePane(0, 1);
         sheet.setColumnWidth(0, 6 * 256);
         sheet.setColumnWidth(1, 80 * 256);
@@ -483,10 +576,14 @@ public class ExcelReportGenerator {
     }
 
     private void writeNode(Sheet sheet, CallGraph graph, int methodId, GraphEdge parentEdge,
-                           int level, int[] rowIdx, CellStyle rootStyle, boolean[] visited) {
+                           int level, int[] rowIdx, CellStyle rootStyle, boolean[] visited,
+                           String projectPath) {
         if (visited[methodId]) return;   // 去重：每个方法仅在入口链中展开一次，避免重复/栈溢出
-        visited[methodId] = true;
         GraphMethod m = graph.getMethods().get(methodId);
+        if (m == null) return;
+        // —— 剪枝：命中 noise 规则的方法及其整棵子树不写入 Excel ——
+        if (noiseRuleService.isNoise(m.getDisplay(), m.getSource().name(), projectPath)) return;
+        visited[methodId] = true;
         Row row = sheet.createRow(rowIdx[0]++);
         List<String> remarks = new ArrayList<>();
         if (m.isCycle()) remarks.add("环：已出现在上层路径");
@@ -503,7 +600,7 @@ public class ExcelReportGenerator {
         row.createCell(5).setCellValue(String.join("；", remarks));
 
         for (GraphEdge e : graph.edgesOf(methodId)) {
-            writeNode(sheet, graph, e.getTo(), e, level + 1, rowIdx, rootStyle, visited);
+            writeNode(sheet, graph, e.getTo(), e, level + 1, rowIdx, rootStyle, visited, projectPath);
         }
     }
 
@@ -534,8 +631,23 @@ public class ExcelReportGenerator {
     private int kv(Sheet sheet, int r, String key, String value) {
         Row row = sheet.createRow(r);
         row.createCell(0).setCellValue(key);
-        row.createCell(1).setCellValue(value == null ? "" : value);
+        setCellText(row.createCell(1), value == null ? "" : value);
         return r + 1;
+    }
+
+    /** POI 单元格字符串硬上限：超过会抛 "The maximum length of cell contents (text) is 32767 characters" */
+    private static final int MAX_CELL_CHARS = 32767;
+
+    /** 写单元格文本：超长自动截断并加提示，避免导出整体失败 */
+    private static void setCellText(Cell cell, String text) {
+        if (text == null) {
+            cell.setCellValue("");
+        } else if (text.length() <= MAX_CELL_CHARS) {
+            cell.setCellValue(text);
+        } else {
+            String mark = "…（超长已截断）";
+            cell.setCellValue(text.substring(0, MAX_CELL_CHARS - mark.length()) + mark);
+        }
     }
 
     private CellStyle headerStyle(SXSSFWorkbook wb) {
