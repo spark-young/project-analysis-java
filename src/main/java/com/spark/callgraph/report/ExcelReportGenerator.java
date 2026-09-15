@@ -132,7 +132,11 @@ public class ExcelReportGenerator {
         }
     }
 
-    /** 跨入口聚合方法被调次数：key=MethodKey，被调次数=跨全部图的入边数之和 */
+    /**
+     * 跨入口聚合方法被调次数。
+     * 口径 = **不同调用位置的计数**：同一调用位置（同一调用方的同一行）即使出现在多个
+     * 交易入口的调用链里，也只计一次；也就等于各入口去重后的调用位置并集大小。
+     */
     private List<MethodFrequency> aggregateFrequency(List<AnalysisResult> results) {
         Map<MethodKey, FreqAgg> agg = new HashMap<>();
         for (AnalysisResult r : results) {
@@ -145,6 +149,8 @@ public class ExcelReportGenerator {
                 MethodKey key = target.toKey();
                 FreqAgg a = agg.computeIfAbsent(key, k -> new FreqAgg());
                 if (a.source == null) a.source = target.getSource();
+                String site = (caller != null ? caller.toKey().getIdentifier() : "?") + "@" + edge.getLine();
+                if (!a.sites.add(site)) continue;   // 该位置已计过，不重复累加
                 a.callCount++;
                 if (caller != null) {
                     MethodCaller mc = new MethodCaller();
@@ -176,7 +182,8 @@ public class ExcelReportGenerator {
                                       List<MethodFrequency> noiseRemoved) {
         Sheet sheet = wb.createSheet("总览");
         int r = 0;
-        r = titleRow(sheet, r, "Java 调用链分析报告（项目级 · " + results.size() + " 个交易入口）", headerStyle);
+        r = titleRow(sheet, r, reportTitle(results.isEmpty() ? null : results.get(0), "调用链分析报告")
+                + "（项目级 · " + results.size() + " 个交易入口）", headerStyle);
         r = kv(sheet, r, "生成时间", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         r = kv(sheet, r, "项目路径", results.get(0).getProjectPath());
         r = kv(sheet, r, "项目名称", results.get(0).getProjectName() == null
@@ -264,6 +271,8 @@ public class ExcelReportGenerator {
     /** 跨入口频率聚合收集器 */
     private static final class FreqAgg {
         final List<MethodCaller> callers = new ArrayList<>();
+        /** 已计过的调用位置（调用方方法 @ 行号），用于跨入口去重 */
+        final Set<String> sites = new HashSet<>();
         int callCount;
         SourceType source;
     }
@@ -280,6 +289,16 @@ public class ExcelReportGenerator {
         return c + (name == null ? "" : "#" + name);
     }
 
+    /**
+     * 报告标题：<项目名>工程 + suffix。
+     * 例：项目名 kkFileView → "kkFileView工程调用链分析报告"；项目名缺失时退化为纯 suffix。
+     */
+    private static String reportTitle(AnalysisResult result, String suffix) {
+        String name = result == null ? null : result.getProjectName();
+        if (name == null || name.trim().isEmpty()) return suffix;
+        return name.trim() + "工程" + suffix;
+    }
+
     // ------------------------------------------------------------------
     // 总览
     // ------------------------------------------------------------------
@@ -288,7 +307,7 @@ public class ExcelReportGenerator {
                                String sourceFilter, List<MethodFrequency> kept, List<MethodFrequency> noiseRemoved) {
         Sheet sheet = wb.createSheet("总览");
         int r = 0;
-        r = titleRow(sheet, r, "Java 方法调用链分析报告", headerStyle);
+        r = titleRow(sheet, r, reportTitle(result, "调用链分析报告"), headerStyle);
         r = kv(sheet, r, "分析时间", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
         r = kv(sheet, r, "项目路径", result.getProjectPath());
         r = kv(sheet, r, "项目名称", result.getProjectName());

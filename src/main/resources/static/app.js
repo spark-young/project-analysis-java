@@ -1,4 +1,4 @@
-/* Java 方法调用链分析工具 - 前端逻辑（原生 JS，无外部依赖） */
+/* Java工程分析工具 - 前端逻辑（原生 JS，无外部依赖） */
 (function () {
     'use strict';
 
@@ -202,6 +202,9 @@
         btnSsProfileNew: $('#btnSsProfileNew'),
         btnSsProfileCopy: $('#btnSsProfileCopy'),
         btnSsProfileDelete: $('#btnSsProfileDelete'),
+        btnSsExport: $('#btnSsExport'),
+        btnSsImport: $('#btnSsImport'),
+        ssImportFile: $('#ssImportFile'),
         ssEditorEmpty: $('#ssEditorEmpty'),
         ssEditorBody: $('#ssEditorBody'),
         ssProfileName: $('#ssProfileName'),
@@ -235,6 +238,9 @@
         btnSsPageProfileNew: $('#btnSsPageProfileNew'),
         btnSsPageProfileCopy: $('#btnSsPageProfileCopy'),
         btnSsPageProfileDelete: $('#btnSsPageProfileDelete'),
+        btnSsPageExport: $('#btnSsPageExport'),
+        btnSsPageImport: $('#btnSsPageImport'),
+        ssPageImportFile: $('#ssPageImportFile'),
         ssPageEditorEmpty: $('#ssPageEditorEmpty'),
         ssPageEditorBody: $('#ssPageEditorBody'),
         ssPageProfileName: $('#ssPageProfileName'),
@@ -256,6 +262,24 @@
     // Step 2 入口清单状态
     let currentEntryList = null;   // EntryList DTO（confirmed + excluded）
     let currentCandidates = [];    // 本次扫描新增的候选（临时）
+
+    // ---- 新手引导只读状态（guide.js 消费，不参与业务逻辑） ----
+    let currentView = 'projects';   // 当前视图：projects | analyze | noiseRules
+    let guideProjectCount = null;   // 已导入项目数（null = 尚未拉到，引导先不渲染，避免闪烁）
+    let guideHasResult = false;     // 是否已有可用分析结果
+    let guideResultStale = false;   // 结果是否已因清单变化而过期
+
+    /** 通知引导刷新（引导未加载时静默跳过） */
+    function guideRefresh() {
+        if (window.Guide) Guide.refresh();
+    }
+
+    /** 引导用：用户是否配置过过滤规则 */
+    function guideNoiseConfigured() {
+        if (window.Guide && Guide.isSeen(Guide.NOISE_CONFIGURED)) return true;
+        if (projectRulesCache && projectRulesCache.length > 0) return true;
+        return !!(globalOverrides && Object.keys(globalOverrides).length > 0);
+    }
     let entrySelKeys = new Set();  // 清单中勾选待排除的入口 key 集合
     let excludeModalItems = [];    // 批量排除弹窗当前承载的条目
     let expandFns = [];      // 全部展开/收起用
@@ -304,23 +328,34 @@
         els.navToProjects.classList.toggle('active', showProjects);
         els.navToAnalyze.classList.toggle('active', showAnalyze);
         els.navToNoiseRules.classList.toggle('active', showNoiseRules);
+        currentView = to;
+        guideRefresh();
     }
 
     async function refreshProjectList() {
         try {
             const resp = await fetch('/api/projects');
-            if (!resp.ok) return;
+            if (!resp.ok) {
+                if (guideProjectCount == null) guideProjectCount = 0;
+                guideRefresh();
+                return;
+            }
             const list = await resp.json();
             renderProjectList(list);
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            if (guideProjectCount == null) guideProjectCount = 0;
+            guideRefresh();
+        }
     }
 
     function renderProjectList(list) {
         list = list || [];
+        guideProjectCount = list.length;
         els.projectsCount.textContent = list.length + ' 个';
         if (list.length === 0) {
             els.projectsEmpty.hidden = false;
             els.projectsList.innerHTML = '';
+            guideRefresh();
             return;
         }
         els.projectsEmpty.hidden = true;
@@ -335,6 +370,7 @@
                 deleteProject(btn.dataset.id);
             });
         });
+        guideRefresh();
     }
 
     function projectCardHtml(p) {
@@ -476,6 +512,8 @@
     /** Step3 统一状态提示：整合 清单变更 + Git 更新 + 暂无缓存 */
     function updateStep3Hint(cacheInfo) {
         // cacheInfo: { hasCache, dirty, cachedEntryCount, currentEntryCount }
+        guideHasResult = !!cacheInfo.hasCache;
+        guideResultStale = !!cacheInfo.dirty;
         // 额外检查：Git 是否有更新（由后端 changeStatus 字段决定）
         const hints = [];
         let icon = 'ℹ️';
@@ -501,6 +539,7 @@
         els.step3HintIcon.textContent = icon;
         els.step3HintText.textContent = hints.join(' · ');
         els.step3HintBar.hidden = false;
+        guideRefresh();
     }
 
     async function deleteProject(id) {
@@ -1293,13 +1332,24 @@
     };
 
     function renderResult(result) {
+        guideHasResult = true;
+        guideResultStale = false;
+        guideRefresh();
         // 批量分析结果 = 轻量清单索引（kind === 'batch'）→ 渲染入口清单视图
         if (result && result.kind === 'batch') {
             renderBatchSummary(result);
+            if (window.Guide) {
+                Guide.tipOnce('result-area', els.statsBar,
+                    '过滤规则改完会自动作用到这里；也可点右上角「⟳ 刷新过滤」手动重刷统计与调用链。');
+            }
             return;
         }
         // 单个入口的完整结果
         renderSingleEntryResult(result, null);
+        if (window.Guide) {
+            Guide.tipOnce('result-area', els.statsBar,
+                '过滤规则改完会自动作用到这里；也可点右上角「⟳ 刷新过滤」手动重刷统计与调用链。');
+        }
     }
 
     /** 批量结果清单视图：显示所有入口 + 每入口摘要，点击某行加载该入口的完整调用链 */
@@ -1716,7 +1766,11 @@
         return '(' + parts.filter(Boolean).map(readableTypeToDescriptor).join('') + ')';
     }
 
-    /** 项目级频率：跨入口按边表入度求和（口径同后端 collectGraphStats，排除根方法） */
+    /**
+     * 跨入口聚合项目级频率。
+     * 调用次数语义 = **不同调用位置的计数**：同一调用位置（同一调用方的同一行）
+     * 不论出现在多少个交易入口的调用链里，都只计一次。
+     */
     function buildProjectFreq(entries) {
         const agg = new Map();
         entries.forEach((slot) => {
@@ -1729,23 +1783,27 @@
                 const key = batchMethodKey(to);
                 let rec = agg.get(key);
                 if (!rec) {
-                    rec = { callCount: 0, source: to.source, display: to.display, callers: new Map() };
+                    // sites：跨入口去重后的"调用位置"集合（调用方方法 @ 行号）
+                    rec = { sites: new Set(), source: to.source, display: to.display, callers: new Map() };
                     agg.set(key, rec);
                 }
-                rec.callCount++;
                 const from = methods[e.from];
+                const line = e.line || 0;
+                const siteKey = (from ? batchMethodKey(from) : '?') + '@' + line;
+                if (rec.sites.has(siteKey)) continue;   // 该位置已计过，不重复累加
+                rec.sites.add(siteKey);
                 if (from && rec.callers.size < 20) {
                     const d = from.display || '?';
-                    if (!rec.callers.has(d)) rec.callers.set(d, e.line || 0);
+                    if (!rec.callers.has(d)) rec.callers.set(d, line);
                 }
             }
         });
         return Array.from(agg.values())
-            .sort((a, b) => b.callCount - a.callCount || (a.display < b.display ? -1 : 1))
+            .sort((a, b) => b.sites.size - a.sites.size || (a.display < b.display ? -1 : 1))
             .map((r) => ({
                 method: r.display,
                 source: r.source,
-                callCount: r.callCount,
+                callCount: r.sites.size,
                 callers: Array.from(r.callers.entries()).map(([caller, line]) => ({ caller, line })),
             }));
     }
@@ -2462,6 +2520,10 @@
             + '<span class="mf-count">' + item.callCount + '</span>'
             + '<span class="mf-count-unit">次</span>'
             + '</span>'
+            + '<span class="mf-acts">'
+            + '<button type="button" class="mf-act mf-export" title="导出该方法的全部调用位置（CSV）">导出</button>'
+            + '<button type="button" class="mf-act mf-filter" title="把该方法加入过滤规则并立即生效">过滤</button>'
+            + '</span>'
             + '</div>'
             + '<div class="mf-callers" style="display:none"></div>'   // 明细展开时才填充
             + '</div>'
@@ -2496,8 +2558,170 @@
         });
     }
 
+    // ------------------------------------------------------------------
+    // 频次行操作：导出调用位置 / 加入过滤规则
+    // ------------------------------------------------------------------
+
+    /** 拆分展示用签名：全限定类名#方法名(参数短名) → 各部分 */
+    function splitMethodSignature(method) {
+        const s = method || '';
+        const hashIdx = s.indexOf('#');
+        const className = hashIdx >= 0 ? s.slice(0, hashIdx) : '';
+        const rest = hashIdx >= 0 ? s.slice(hashIdx + 1) : s;
+        const parenIdx = rest.indexOf('(');
+        const methodName = parenIdx >= 0 ? rest.slice(0, parenIdx) : rest;
+        const dot = className.lastIndexOf('.');
+        return {
+            className: className,
+            simpleClass: dot >= 0 ? className.slice(dot + 1) : className,
+            methodName: methodName,
+            paramCount: parseParamCount(rest),
+        };
+    }
+
+    /** 正则元字符转义：把方法名/类名当字面量匹配 */
+    function escapeRegex(s) {
+        return String(s == null ? '' : s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    /** 当前频次视图对应的分析结果集合（项目级聚合 → 全部已加载入口） */
+    function freqTargetResults() {
+        if (freqViewMode === 'project' && batchModel && batchModel.entries) {
+            return batchModel.entries.map((s) => s && s.result).filter(Boolean);
+        }
+        return currentResult ? [currentResult] : [];
+    }
+
+    /** 图上方法的标准签名（与列表展示同口径） */
+    function graphMethodSig(m) {
+        return readableFullSig((m.owner || '').replace(/\//g, '.'), m.name, m.descriptor || '')
+            || m.display || '';
+    }
+
+    /** 收集某方法的全部调用位置：直接扫图，不受页面调用方明细展示上限影响 */
+    function collectMethodCallers(item) {
+        const wantSource = item.source || null;
+        const rows = [];
+        const seen = new Set();
+        freqTargetResults().forEach((result) => {
+            const g = result && result.graph;
+            if (!g || !g.methods || !g.edges) return;
+            const targets = new Set();
+            g.methods.forEach((m, i) => {
+                if (!m) return;
+                if (graphMethodSig(m) !== item.method && (m.display || '') !== item.method) return;
+                if (wantSource && (m.source || 'EXTERNAL') !== wantSource) return;
+                targets.add(i);
+            });
+            if (targets.size === 0) return;
+            g.edges.forEach((e) => {
+                if (!targets.has(e.to)) return;
+                const from = g.methods[e.from];
+                const caller = from ? graphMethodSig(from) : '?';
+                const line = e.line || 0;
+                // 去重键与项目级聚合口径一致：调用方方法键 @ 行号（同一调用位置只算一次）
+                const key = (from ? batchMethodKey(from) : '?') + '@' + line;
+                if (seen.has(key)) return;
+                seen.add(key);
+                rows.push({ caller: caller, line: line });
+            });
+        });
+        return rows;
+    }
+
+    /** 导出某方法全部调用位置为 CSV */
+    function exportFreqMethodCallers(item) {
+        const rows = collectMethodCallers(item);
+        if (rows.length === 0) {
+            showToast('未找到该方法的调用位置', 'warn');
+            return;
+        }
+        const esc = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+        const csv = '\uFEFF' + ['被调方法,调用方方法,行号']
+            .concat(rows.map((r) => [esc(item.method), esc(r.caller), r.line > 0 ? r.line : ''].join(',')))
+            .join('\r\n');
+        const sig = splitMethodSignature(item.method);
+        const base = ((sig.simpleClass || 'method') + '_' + (sig.methodName || 'callers'))
+            .replace(/[\\/:*?"<>|#]/g, '_');
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+        a.download = base + '_callers.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        showToast('✓ 已导出 ' + rows.length + ' 处调用位置');
+    }
+
+    /** 判断是否已有等价的过滤规则（方法/类/来源/参数数全一致） */
+    function sameNoiseRule(a, b) {
+        return (a.methodPattern || '') === (b.methodPattern || '')
+            && (a.classPattern || '') === (b.classPattern || '')
+            && (a.source || 'ALL') === (b.source || 'ALL')
+            && (a.paramCount != null ? a.paramCount : null) === (b.paramCount != null ? b.paramCount : null);
+    }
+
+    /** 保存地址：有项目 → 项目层；否则全局层 */
+    function noiseRulesSaveTarget() {
+        const pp = currentProjectPath();
+        if (currentProjectId && pp) {
+            return { url: 'api/noise-rules?projectPath=' + encodeURIComponent(pp), project: true };
+        }
+        return { url: 'api/noise-rules', project: false };
+    }
+
+    /** 把某方法加入过滤规则并立即保存生效（同时刷新调用链分析与调用次数分析） */
+    function filterFreqMethod(item) {
+        const sig = splitMethodSignature(item.method);
+        if (!sig.methodName) {
+            showToast('无法解析该方法签名，已跳过', 'error');
+            return;
+        }
+        const rule = {
+            id: 'mf-' + Date.now().toString(36),
+            name: (sig.simpleClass ? sig.simpleClass + '#' : '') + sig.methodName,
+            methodPattern: '^' + escapeRegex(sig.methodName) + '$',
+            classPattern: sig.className ? '^' + escapeRegex(sig.className) + '$' : '',
+            source: item.source || 'ALL',
+            paramCount: sig.paramCount,
+            enabled: true,
+        };
+        const target = noiseRulesSaveTarget();
+        const existing = target.project ? projectRulesCache : globalRulesCache;
+        if (existing.some((r) => sameNoiseRule(r, rule))) {
+            showToast('该方法的过滤规则已存在，无需重复添加', 'warn');
+            return;
+        }
+        const body = target.project
+            ? { globalOverrides: globalOverrides, customRules: projectRulesCache.concat([rule]) }
+            : globalRulesCache.concat([rule]);
+        fetch(target.url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        }).then((r) => r.json()).then(() => {
+            // 重新拉取两层规则（含覆盖）→ 重算剪枝与统计
+            return loadNoiseRules();
+        }).then(() => {
+            refreshAllFilteredViews();
+            markNoiseConfigured();
+            showToast('✓ 已加入过滤规则并生效：' + rule.name
+                + (target.project ? '（本项目）' : '（全局）'));
+        }).catch(() => showToast('过滤规则保存失败', 'error'));
+    }
+
     // 事件委托：整个频次列表只挂一个监听（原实现每行挂闭包 + N 次 querySelectorAll）
     els.freqList.addEventListener('click', (e) => {
+        // 行内操作按钮优先处理，且不触发展开/收起
+        const act = e.target.closest('.mf-act');
+        if (act) {
+            const actItem = act.closest('.mf-item');
+            const row = actItem && _freqRows[Number(actItem.dataset.idx)];
+            if (!row) return;
+            if (act.classList.contains('mf-export')) exportFreqMethodCallers(row);
+            else filterFreqMethod(row);
+            return;
+        }
         const row = e.target.closest('.mf-row');
         if (!row) return;
         const itemEl = row.parentElement;
@@ -2672,6 +2896,11 @@
         loadNoiseRules().then(refreshAllFilteredViews);
         els.noiseRulesPanel.hidden = false;
         els.noiseRulesOverlay.hidden = false;
+        // 首次打开给一次性的就地提示
+        if (window.Guide) {
+            Guide.tipOnce('noise-panel', els.noiseRulesPanel.querySelector('.nr-toolbar'),
+                '这里只影响本项目：可覆盖全局规则的启用/禁用，也可加本项目专属规则。规则启用后，命中它的方法会从调用链视图和 Excel 导出中过滤掉。');
+        }
     }
 
     function updateNoiseRulesScopeHint() {
@@ -2723,28 +2952,34 @@
             + '<span>规则名称</span><span>方法名正则</span><span>类名正则</span><span>来源</span><span>参数个数</span><span>启用</span>'
             + (isGlobalPanel ? '' : '<span>操作</span>')
             + '</div>'
-            + noiseRules.map((r, idx) =>
-            '<div class="nr-item' + (isGlobalPanel ? ' readonly' : '') + '" data-idx="' + idx + '" title="'
-            + escapeHtml(r.name || '未命名规则') + '">'
-            + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称"'
-                + (isGlobalPanel ? ' disabled' : '') + '>'
-            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="方法名正则，如 getInstance"'
-                + (isGlobalPanel ? ' disabled' : '') + ' title="方法名正则">'
-            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="类名正则，可选"'
-                + (isGlobalPanel ? ' disabled' : '') + ' title="类名正则">'
-            + '<select class="nr-source"' + (isGlobalPanel ? ' disabled' : '') + ' title="来源">'
-            + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
-                '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
-                + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
-                + '</option>').join('')
-            + '</select>'
-            + '<input class="nr-paramcount" type="number" min="0" value="'
-                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="参数数"'
-                + (isGlobalPanel ? ' disabled' : '') + ' title="参数个数（留空不限）">'
-            + '<label class="nr-enable" title="启用"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '></label>'
-            + (isGlobalPanel ? '' : '<button type="button" class="btn small warn nr-del">删除</button>')
-            + '</div>'
-        ).join('');
+            + noiseRules.map((r, idx) => {
+                // 内置规则（随 jar 打包）：本体只读，只有「启用」开关可改；不能删除
+                const ro = isGlobalPanel || !!r.builtin;
+                const roAttr = ro ? ' disabled' : '';
+                const actions = isGlobalPanel
+                    ? ''
+                    : (r.builtin
+                        ? '<span class="nr-builtin-tag" title="工具自带的内置规则，本体不可修改；可切换启用状态">内置</span>'
+                        : '<button type="button" class="btn small warn nr-del">删除</button>');
+                return '<div class="nr-item' + (ro ? ' readonly' : '') + '" data-idx="' + idx + '"'
+                    + ' data-id="' + escapeHtml(r.id || '') + '"'
+                    + ' data-builtin="' + (r.builtin ? '1' : '0') + '"'
+                    + ' title="' + escapeHtml(r.name || '未命名规则') + '">'
+                    + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称"' + roAttr + '>'
+                    + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="方法名正则，如 getInstance"' + roAttr + ' title="方法名正则">'
+                    + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="类名正则，可选"' + roAttr + ' title="类名正则">'
+                    + '<select class="nr-source"' + roAttr + ' title="来源">'
+                    + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
+                        '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
+                        + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
+                        + '</option>').join('')
+                    + '</select>'
+                    + '<input class="nr-paramcount" type="number" min="0" value="'
+                        + (r.paramCount != null ? r.paramCount : '') + '" placeholder="参数数"' + roAttr + ' title="参数个数（留空不限）">'
+                    + '<label class="nr-enable" title="启用"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '></label>'
+                    + actions
+                    + '</div>';
+            }).join('');
     }
 
     /** 全局规则覆盖区：完整规则信息 + 全局启用状态 + 本项目三态覆盖（规则本体只读，在系统配置页维护） */
@@ -2781,7 +3016,8 @@
 
     function renderCustomRulesSection() {
         const items = noiseRules.map((r, idx) =>
-            '<div class="nr-item" data-idx="' + idx + '" title="' + escapeHtml(r.name || '未命名规则') + '">'
+            '<div class="nr-item" data-idx="' + idx + '" data-id="' + escapeHtml(r.id || '') + '"'
+            + ' data-builtin="0" title="' + escapeHtml(r.name || '未命名规则') + '">'
             + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称">'
             + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="方法名正则，如 getInstance" title="方法名正则">'
             + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="类名正则，可选" title="类名正则">'
@@ -2813,7 +3049,10 @@
         items.forEach((item) => {
             const pcInput = item.querySelector('.nr-paramcount').value.trim();
             out.push({
-                id: 'rule-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+                // 必须沿用原有 id：项目级「全局规则覆盖」按 id 匹配，id 一变覆盖就全部失效
+                id: item.dataset.id
+                    || ('rule-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6)),
+                builtin: item.dataset.builtin === '1',
                 name: item.querySelector('.nr-name').value.trim(),
                 methodPattern: item.querySelector('.nr-method').value.trim(),
                 classPattern: item.querySelector('.nr-class').value.trim(),
@@ -2964,6 +3203,7 @@
     function addNoiseRule() {
         noiseRules.push({
             id: 'rule-' + Date.now(),
+            builtin: false,
             name: '新规则',
             methodPattern: '',
             classPattern: '',
@@ -2983,6 +3223,10 @@
             const idx = parseInt(e.target.closest('.nr-item').dataset.idx, 10);
             const rule = noiseRules[idx];
             if (!rule) return;
+            if (rule.builtin) {
+                showToast('内置规则不能删除，取消它的「启用」即可不再生效', 'warn');
+                return;
+            }
             if (rule.enabled) {
                 showToast('该规则当前为启用状态，请先取消启用再删除', 'warn');
                 return;
@@ -3041,6 +3285,7 @@
                 if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
                 renderNoiseRulesList();
                 refreshAllFilteredViews();
+                markNoiseConfigured();
                 showToast('✓ 项目级过滤规则已保存并生效');
             }).catch(() => alert('保存失败，请检查规则格式'));
             return;
@@ -3058,9 +3303,16 @@
             if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
             renderNoiseRulesList();
             refreshAllFilteredViews();
+            markNoiseConfigured();
             const scopeLabel = noiseRuleScope === 'project' ? '项目级' : '全局';
             showToast('✓ ' + scopeLabel + '过滤规则已保存并生效');
         }).catch(() => alert('保存失败，请检查规则格式'));
+    }
+
+    /** 引导用：记下"用户已经动过过滤规则"，并刷新引导 */
+    function markNoiseConfigured() {
+        if (window.Guide) Guide.markSeen(Guide.NOISE_CONFIGURED);
+        guideRefresh();
     }
     els.btnNoiseRuleSave.addEventListener('click', saveNoiseRules);
     els.btnNrPageSave.addEventListener('click', saveNoiseRules);
@@ -3509,6 +3761,12 @@
             els.entryExcludedDetails.hidden = true;
         }
         updateEntryToolbar();
+        // 清单为空时给一次性的就地提示（只出现一次）
+        if (confirmed.length === 0 && currentProjectId && window.Guide) {
+            Guide.tipOnce('empty-entries', els.entryConfirmedList,
+                '清单是分析的输入：「🔍 自动扫描加入清单」会按扫描策略自动识别 Controller / Job 等入口，识别不准的可以「➕ 手动添加」。');
+        }
+        guideRefresh();
     }
 
     /** 渲染清单行；num 为纯展示序号（1、2、3…），不与方法绑定 */
@@ -4079,6 +4337,102 @@
     }
     els.btnSsProfileDelete.addEventListener('click', deleteSsProfile);
     els.btnSsPageProfileDelete.addEventListener('click', deleteSsProfile);
+
+    // ---- 方案导入 / 导出（跨用户分享自定义扫描方案） ----
+
+    /** 分享文件标识：与过滤规则的 JSON 区分开，便于导入时校验 */
+    const SS_SHARE_TYPE = 'callgraph-scan-strategy';
+    const SS_SHARE_VERSION = 1;
+
+    /** 导出当前层的自定义方案（内置方案随 jar 走，不参与分享） */
+    function exportSsProfiles() {
+        const ctx = __ss();
+        const profiles = (ctx.strategy && ctx.strategy.profiles) || [];
+        const customs = profiles.filter((p) => p && !p.builtin);
+        if (customs.length === 0) {
+            showToast('当前没有自定义方案，内置方案无需分享', 'warn');
+            return;
+        }
+        const payload = {
+            type: SS_SHARE_TYPE,
+            version: SS_SHARE_VERSION,
+            exportedAt: new Date().toISOString(),
+            activeProfileId: ctx.strategy.activeProfileId || '',
+            profiles: customs,
+        };
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob(
+            [JSON.stringify(payload, null, 2)],
+            { type: 'application/json;charset=utf-8' }));
+        a.download = 'scan-strategy-' + new Date().toISOString().slice(0, 10) + '.json';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(a.href);
+        showToast('✓ 已导出 ' + customs.length + ' 个自定义方案', 'success');
+    }
+
+    /** 导入他人分享的方案：按 id 合并（同 id 覆盖），内置方案忽略，导入后仍需点「保存生效」 */
+    async function importSsProfiles(fileInput) {
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
+        let payload;
+        try {
+            payload = JSON.parse(await file.text());
+        } catch (e) {
+            showToast('导入失败：不是合法的 JSON 文件', 'error');
+            return;
+        }
+        if (!payload || payload.type !== SS_SHARE_TYPE || !Array.isArray(payload.profiles)) {
+            showToast('导入失败：请选择本工具「导出」生成的扫描方案文件', 'error');
+            return;
+        }
+        const incoming = payload.profiles.filter((p) => p && !p.builtin && p.id && p.name);
+        if (incoming.length === 0) {
+            showToast('文件里没有可导入的自定义方案', 'warn');
+            return;
+        }
+        const ctx = __ss();
+        if (!ctx.strategy.profiles) ctx.strategy.profiles = [];
+        const existing = ctx.strategy.profiles;
+        const dupCount = incoming.filter((p) => existing.some((e) => e.id === p.id)).length;
+        const ok = await showConfirm(
+            '将导入 ' + incoming.length + ' 个方案'
+            + (dupCount > 0 ? '（其中 ' + dupCount + ' 个与现有方案 ID 相同，会被覆盖）' : '')
+            + '；导入后需点「保存生效」才会写入。确定继续？',
+            '导入扫描方案');
+        if (!ok) return;
+        let added = 0;
+        let replaced = 0;
+        incoming.forEach((p) => {
+            const copy = JSON.parse(JSON.stringify(p));
+            copy.builtin = false;   // 防止伪造内置标记绕过「不可编辑」
+            const idx = existing.findIndex((e) => e.id === copy.id);
+            if (idx >= 0) { existing[idx] = copy; replaced++; }
+            else { existing.push(copy); added++; }
+        });
+        ctx.setEditingId(incoming[incoming.length - 1].id);
+        renderSsProfileList();
+        renderSsEditor();
+        if (dsContext === 'modal') renderScanProfileSelect();
+        showToast('✓ 导入完成：新增 ' + added + ' 个'
+            + (replaced > 0 ? '、覆盖 ' + replaced + ' 个' : '')
+            + '，点「保存生效」写入', 'success');
+    }
+
+    els.btnSsExport.addEventListener('click', exportSsProfiles);
+    els.btnSsPageExport.addEventListener('click', exportSsProfiles);
+    els.btnSsImport.addEventListener('click', () => {
+        els.ssImportFile.value = '';
+        els.ssImportFile.click();
+    });
+    els.ssImportFile.addEventListener('change', () => importSsProfiles(els.ssImportFile));
+    els.btnSsPageImport.addEventListener('click', () => {
+        els.ssPageImportFile.value = '';
+        els.ssPageImportFile.click();
+    });
+    els.ssPageImportFile.addEventListener('change', () => importSsProfiles(els.ssPageImportFile));
 
     /** 新增规则 */
     function addSsRule() {
@@ -4683,6 +5037,69 @@
             els.btnBatchAnalyze.disabled = false;
         }
     });
+
+    // ------------------------------------------------------------------
+    // 新手引导：app.js 只提供只读状态 + 导航动作，渲染全在 guide.js
+    // ------------------------------------------------------------------
+    function guideState() {
+        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        return {
+            view: currentView,
+            projectCount: guideProjectCount,
+            currentProjectId: currentProjectId,
+            entryCount: confirmed.length,
+            hasResult: guideHasResult,
+            resultStale: guideResultStale,
+            noiseConfigured: guideNoiseConfigured(),
+        };
+    }
+
+    /** 引导条按钮：只把用户带到该去的地方，不代执行有代价的操作（分析/导入仍需本人确认） */
+    function guideAction(action) {
+        const scrollTo = (node) => {
+            if (node && node.scrollIntoView) node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        };
+        switch (action) {
+            case 'import':
+                switchView('projects');
+                scrollTo(document.getElementById('projectPath'));
+                break;
+            case 'openProject':
+                switchView('projects');
+                scrollTo(els.projectsList);
+                break;
+            case 'fixEntries':
+                if (!currentProjectId) { switchView('projects'); break; }
+                switchView('analyze');
+                scrollTo(els.btnEntryScan);
+                break;
+            case 'analyze':
+            case 'reanalyze':
+                if (!currentProjectId) { switchView('projects'); break; }
+                switchView('analyze');
+                scrollTo(els.btnBatchAnalyze);
+                break;
+            case 'noiseRules':
+                if (currentProjectId) openNoiseRulesPanel();
+                else switchView('noiseRules');
+                break;
+        }
+    }
+
+    if (window.Guide) {
+        Guide.init({
+            getState: guideState,
+            onAction: guideAction,
+            onReplay: () => {
+                switchView('projects');
+                showToast('引导已重新打开（关掉顶部条或走完全流程后会自动隐藏）');
+            },
+        });
+    }
+
+    // 页脚版权年份
+    const footerYearEl = document.getElementById('footerYear');
+    if (footerYearEl) footerYearEl.textContent = String(new Date().getFullYear());
 
     // 页面初始化：切到项目列表视图 + 自动刷新
     switchView('projects');

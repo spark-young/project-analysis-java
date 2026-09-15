@@ -14,6 +14,12 @@ public class NoiseRule {
     private String source;          // 来源：ALL / PROJECT / DEPENDENCY / EXTERNAL
     private Integer paramCount;     // 参数个数限制（null 表示不限制；设置后方法必须恰好有这么多参数才命中）
     private boolean enabled;        // 是否启用
+    /**
+     * 是否为工具内置规则（随 jar 打包的默认规则）。
+     * 内置规则的**本体**（名称/正则/来源/参数数）以代码定义为准，磁盘与前端传回的值都会被忽略；
+     * 只有 enabled 允许用户改动。
+     */
+    private boolean builtin;
 
     public NoiseRule() {
     }
@@ -54,4 +60,7 @@ public class NoiseRule {
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    public boolean isBuiltin() { return builtin; }
+    public void setBuiltin(boolean builtin) { this.builtin = builtin; }
 }

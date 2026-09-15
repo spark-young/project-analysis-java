@@ -94,18 +94,18 @@ public class ScanStrategyService {
         return global;
     }
 
-    /** 保存全局策略（全量覆盖，文件损坏时重建内置方案） */
+    /** 保存全局策略（全量覆盖；内置方案不落盘，始终从代码取） */
     public synchronized void saveGlobal(ScanStrategy strategy) {
         if (strategy == null) return;
         normalizeBuiltins(strategy);
         global = strategy;
-        saveQuietly(globalFile(), global);
+        saveQuietly(globalFile(), stripBuiltins(global));
     }
 
     /** 恢复全局策略为默认（内置方案） */
     public synchronized void resetGlobal() {
         global = defaultStrategy();
-        saveQuietly(globalFile(), global);
+        saveQuietly(globalFile(), stripBuiltins(global));
     }
 
     // ================================================================
@@ -158,18 +158,13 @@ public class ScanStrategyService {
         if (strategy == null) return;
         Path file = projectFile(projectPath);
         if (file == null) return;
-        // 项目级只存自定义方案，内置方案跟随全局
-        ScanStrategy toSave = new ScanStrategy();
-        toSave.setActiveProfileId(strategy.getActiveProfileId());
-        List<ScanProfile> custom = new ArrayList<>();
-        for (ScanProfile p : strategy.getProfiles()) {
-            if (!p.isBuiltin()) custom.add(p);
-        }
-        toSave.setProfiles(custom);
+        // 项目级只存自定义方案，内置方案跟随全局（与全局层落盘口径一致）
+        ScanStrategy toSave = stripBuiltins(strategy);
         try {
             Files.createDirectories(file.getParent());
             mapper.writeValue(file.toFile(), toSave);
-            log.info("[扫描策略] 项目级策略已写入 {} ({} 个自定义方案)", file, custom.size());
+            log.info("[扫描策略] 项目级策略已写入 {} ({} 个自定义方案)",
+                    file, toSave.getProfiles() == null ? 0 : toSave.getProfiles().size());
         } catch (IOException e) {
             log.warn("[扫描策略] 项目级策略保存失败 {}: {}", file, e.getMessage());
         }
@@ -255,18 +250,43 @@ public class ScanStrategyService {
         return m;
     }
 
-    /** 确保内置方案始终存在（用户删文件或文件被改动时兜底） */
+    /** 确保内置方案始终存在，且**内容以代码定义为准**（用户删不掉、也改不旧） */
     private static void normalizeBuiltins(ScanStrategy s) {
         if (s.getProfiles() == null) s.setProfiles(new ArrayList<>());
-        ensureBuiltin(s, builtinStandard());
-        ensureBuiltin(s, builtinApiOnly());
-        ensureBuiltin(s, builtinJobOnly());
+        applyBuiltin(s, builtinStandard());
+        applyBuiltin(s, builtinApiOnly());
+        applyBuiltin(s, builtinJobOnly());
     }
 
-    private static void ensureBuiltin(ScanStrategy s, ScanProfile builtin) {
-        if (s.profile(builtin.getId()) == null) {
-            s.getProfiles().add(builtin);
+    /**
+     * 应用内置方案：id 已存在则**原地替换为代码里的最新定义**（保持顺序），不存在则追加。
+     * 这样升级 jar 后，内置方案（检测器组合 / 名称 / 描述）会自动刷新，不会因为磁盘上
+     * 残留同 id 的旧条目而失效；用户自定义方案不受影响。
+     */
+    private static void applyBuiltin(ScanStrategy s, ScanProfile builtin) {
+        List<ScanProfile> list = s.getProfiles();
+        for (int i = 0; i < list.size(); i++) {
+            ScanProfile p = list.get(i);
+            if (p != null && builtin.getId().equals(p.getId())) {
+                list.set(i, builtin);
+                return;
+            }
         }
+        list.add(builtin);
+    }
+
+    /** 落盘副本：只保留 activeProfileId + 用户自定义方案（内置方案永远从代码取，避免升级后不生效） */
+    private static ScanStrategy stripBuiltins(ScanStrategy src) {
+        ScanStrategy out = new ScanStrategy();
+        out.setActiveProfileId(src.getActiveProfileId());
+        List<ScanProfile> custom = new ArrayList<>();
+        if (src.getProfiles() != null) {
+            for (ScanProfile p : src.getProfiles()) {
+                if (p != null && !p.isBuiltin()) custom.add(p);
+            }
+        }
+        out.setProfiles(custom);
+        return out;
     }
 
     /** 深拷贝（避免上层误改内存全局策略） */

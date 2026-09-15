@@ -34,11 +34,19 @@ body {
 
 .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
 
+/* 页脚版权 */
+.site-footer {
+    padding: 6px 0 28px;
+    text-align: center;
+    font-size: 12px;
+    color: #94a3b8;
+}
+
 .header {
     background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
     color: #fff;
-    padding: 28px 0 22px;
-    margin-bottom: 20px;
+    padding: 16px 0 14px;
+    margin-bottom: 18px;
 }
 .header h1 { margin: 0 0 6px; font-size: 22px; font-weight: 600; }
 .subtitle { margin: 0; opacity: .85; font-size: 13px; }
@@ -51,6 +59,112 @@ body {
     margin-bottom: 20px;
     box-shadow: 0 1px 3px rgba(15, 23, 42, .06);
 }
+
+/* ================= 新手引导（三层轻引导） ================= */
+
+/* 常驻「下一步」条：状态驱动，走通全流程后自动隐藏 */
+.guide-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    padding: 9px 12px;
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: var(--radius);
+    font-size: 13px;
+}
+.guide-ico { flex: 0 0 auto; font-size: 15px; }
+.guide-text { flex: 1 1 auto; color: #0c4a6e; line-height: 1.5; }
+.guide-bar .btn { flex: 0 0 auto; }
+.guide-close {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #7dd3fc;
+    font-size: 12px;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.guide-close:hover { background: #e0f2fe; color: #0369a1; }
+
+/* 首次上手清单：自动打勾，完成即隐藏 */
+.guide-checklist {
+    border-left: 3px solid #0ea5e9;
+    padding: 14px 16px;
+}
+.gc-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 9px;
+}
+.gc-title { font-size: 13px; font-weight: 600; color: #0f172a; }
+.gc-sub { flex: 1 1 auto; font-size: 12px; color: #94a3b8; }
+.gc-close {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #cbd5e1;
+    font-size: 12px;
+    line-height: 1;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.gc-close:hover { background: #f1f5f9; color: #64748b; }
+.gc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.gc-item { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.gc-dot { flex: 0 0 auto; width: 16px; text-align: center; font-size: 12px; }
+.gc-item.done .gc-dot { color: #16a34a; }
+.gc-item.done .gc-text { color: #94a3b8; }
+.gc-item.current { font-weight: 600; }
+.gc-item.current .gc-dot { color: #0284c7; }
+.gc-item.current .gc-text { color: #0c4a6e; }
+.gc-item.todo .gc-text { color: #64748b; }
+
+/* 一次性就地微提示：同一 key 全局只出现一次 */
+.guide-tip {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 8px 0 2px;
+    padding: 7px 10px;
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #92400e;
+}
+.guide-tip-text { flex: 1 1 auto; }
+.guide-tip-close {
+    flex: 0 0 auto;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: #d97706;
+    font-size: 11px;
+    line-height: 1;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.guide-tip-close:hover { background: #fef3c7; }
 
 /* ---------- 表单 ---------- */
 .form-grid {
@@ -358,6 +472,29 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     font-variant-numeric: tabular-nums;
 }
 .mf-count-unit { font-size: 12px; color: #64748b; }
+
+/* 频次行操作按钮：轻量文字按钮（导出 / 过滤） */
+.mf-acts {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.mf-act {
+    padding: 2px 7px;
+    font-size: 11px;
+    line-height: 1.6;
+    font-family: inherit;
+    color: #94a3b8;
+    background: #fff;
+    border: 1px solid #e8edf3;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: color .12s, border-color .12s, background .12s;
+}
+.mf-export:hover { color: #0369a1; border-color: #bae6fd; background: #f0f9ff; }
+.mf-filter:hover { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
 
 /* 展开的调用方列表 */
 .mf-callers {
@@ -795,6 +932,19 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 }
 .nr-item.readonly .nr-del {
     display: none !important;
+}
+/* 内置规则标记：本体只读，此处替代「删除」按钮位置 */
+.nr-builtin-tag {
+    align-self: center;
+    justify-self: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #0284c7;
+    background: #e0f2fe;
+    border: 1px solid #bae6fd;
+    border-radius: 4px;
+    padding: 2px 6px;
+    user-select: none;
 }
 
 /* 项目级 Tab 两段式布局 */
@@ -2130,6 +2280,12 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     border-top: 1px solid var(--border);
 }
 .ss-sidebar-actions .btn { flex: 1 1 auto; padding: 4px 2px; font-size: 11.5px; }
+/* 方案分享行：与上面的增删操作区分隔，避免出现两条分隔线 */
+.ss-share-actions {
+    padding-top: 0;
+    margin-top: 4px;
+    border-top: none;
+}
 /* 右侧编辑区 */
 .ss-editor {
     flex: 1 1 auto;

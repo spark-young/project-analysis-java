@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Java 方法调用链分析工具</title>
-    <link rel="stylesheet" href="style.css?v=20260914g">
+    <title>Java工程分析工具</title>
+    <link rel="stylesheet" href="style.css?v=20260915a">
 </head>
 <body>
 <header class="header">
     <div class="container header-row">
         <div class="header-left">
-            <h1>Java 方法调用链分析工具</h1>
+            <h1>Java工程分析工具</h1>
             <p class="subtitle">静态分析 · 全链路 · 项目持久化</p>
         </div>
         <div class="header-right">
@@ -23,16 +23,30 @@
             <button id="navToNoiseRules" type="button" class="nav-btn" title="系统配置（过滤规则 & 扫描策略）">
                 <span class="nav-ico">⚙</span><span class="nav-label">系统配置</span>
             </button>
+            <button id="btnGuideHelp" type="button" class="nav-btn" title="使用引导与说明（重新打开新手引导）">
+                <span class="nav-ico">❓</span><span class="nav-label">引导</span>
+            </button>
         </div>
     </div>
 </header>
 
 <main class="container">
 
+    <!-- 新手引导：常驻「下一步」条（状态驱动，走通全流程后自动退场） -->
+    <div id="guideBar" class="guide-bar" hidden>
+        <span id="guideIco" class="guide-ico">💡</span>
+        <span id="guideText" class="guide-text"></span>
+        <button id="guideAction" type="button" class="btn small primary">下一步</button>
+        <button id="guideClose" type="button" class="guide-close" title="不再提示（可从右上角 ? 重新打开）">✕</button>
+    </div>
+
     <!-- ============================================================= -->
     <!-- 视图 1：项目列表                                               -->
     <!-- ============================================================= -->
     <section id="viewProjects">
+
+        <!-- 新手引导：首次上手清单（自动打勾，可收起，全部完成自动隐藏） -->
+        <div id="guideChecklist" class="card guide-checklist" hidden></div>
 
         <!-- 导入新项目 -->
         <div class="card">
@@ -402,6 +416,11 @@
                             <button id="btnSsPageProfileCopy" type="button" class="btn small">复制</button>
                             <button id="btnSsPageProfileDelete" type="button" class="btn small warn">删除</button>
                         </div>
+                        <div class="ss-sidebar-actions ss-share-actions">
+                            <button id="btnSsPageExport" type="button" class="btn small" title="把当前的自定义方案导出为 JSON，可分享给其他用户">导出</button>
+                            <button id="btnSsPageImport" type="button" class="btn small" title="导入他人分享的扫描方案 JSON">导入</button>
+                            <input id="ssPageImportFile" type="file" accept=".json,application/json" hidden>
+                        </div>
                     </div>
                     <!-- 右：方案编辑 -->
                     <div class="ss-editor">
@@ -578,6 +597,11 @@
                     <button id="btnSsProfileCopy" type="button" class="btn small">复制</button>
                     <button id="btnSsProfileDelete" type="button" class="btn small warn">删除</button>
                 </div>
+                <div class="ss-sidebar-actions ss-share-actions">
+                    <button id="btnSsExport" type="button" class="btn small" title="把当前的自定义方案导出为 JSON，可分享给其他用户">导出</button>
+                    <button id="btnSsImport" type="button" class="btn small" title="导入他人分享的扫描方案 JSON">导入</button>
+                    <input id="ssImportFile" type="file" accept=".json,application/json" hidden>
+                </div>
             </div>
             <!-- 右：方案编辑 -->
             <div class="ss-editor">
@@ -646,6 +670,13 @@
     </div>
 </main>
 
+<!-- 页脚版权 -->
+<footer class="site-footer">
+    <div class="container">
+        © <span id="footerYear"></span> SparkYoung · Java工程分析工具
+    </div>
+</footer>
+
 <div id="loading" class="loading-overlay" hidden>
     <div class="loading-box">
         <div class="spinner"></div>
@@ -687,6 +718,7 @@
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="app.js?v=20260914g"></script>
+<script src="guide.js?v=20260915a"></script>
+<script src="app.js?v=20260915a"></script>
 </body>
 </html>

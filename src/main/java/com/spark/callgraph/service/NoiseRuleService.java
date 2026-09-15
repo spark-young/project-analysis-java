@@ -2,6 +2,7 @@ package com.spark.callgraph.service;
 
 import com.spark.callgraph.config.CallgraphPaths;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spark.callgraph.service.dto.NoiseRule;
@@ -42,31 +43,44 @@ import java.util.regex.PatternSyntaxException;
 public class NoiseRuleService {
 
     private static final Logger log = LoggerFactory.getLogger(NoiseRuleService.class);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     /** 全局规则文件路径 */
     private static final Path GLOBAL_RULES_FILE = CallgraphPaths.noiseRulesFile();
 
-    /** 默认规则集 */
+    /** 默认（内置）规则集：随 jar 打包，本体以代码定义为准，只有 enabled 允许用户改动 */
     private static final List<NoiseRule> DEFAULT_RULES = Arrays.asList(
-            new NoiseRule("factory", "单例/工厂",
+            builtin("factory", "单例/工厂",
                     "getInstance|getBean|getBeanFactory|getInstance.*", "", "ALL", true),
-            new NoiseRule("constructor", "构造器",
+            builtin("constructor", "构造器",
                     "<init>", "", "ALL", true),
-            new NoiseRule("object-method", "Object 方法",
+            builtin("object-method", "Object 方法",
                     "toString|equals|hashCode|getClass|clone|finalize", "", "ALL", true),
-            new NoiseRule("logging", "日志",
+            builtin("logging", "日志",
                     "(info|debug|error|warn|trace|fatal)", ".*(Logger|Log|Slf4j).*", "ALL", true),
-            new NoiseRule("lifecycle", "Spring 生命周期",
+            builtin("lifecycle", "Spring 生命周期",
                     "afterPropertiesSet|initMethod|destroy|initialize|dispose|onApplicationEvent|postProcess.*",
                     "", "ALL", true),
             // getter：仅匹配 0 个参数的 getXxx/isXxx，避免误杀 getUserById 等带参业务方法
-            new NoiseRule("simple-getter", "简单 getter（0 参数，getXxx/isXxx）",
+            builtin("simple-getter", "简单 getter（0 参数，getXxx/isXxx）",
                     "^(get|is)[A-Z]", "", "PROJECT", 0, true),
             // setter：仅匹配 1 个参数的 setXxx
-            new NoiseRule("simple-setter", "简单 setter（1 参数，setXxx）",
+            builtin("simple-setter", "简单 setter（1 参数，setXxx）",
                     "^set[A-Z]", "", "PROJECT", 1, true)
     );
+
+    private static NoiseRule builtin(String id, String name, String methodPattern,
+                                     String classPattern, String source, boolean enabled) {
+        return builtin(id, name, methodPattern, classPattern, source, null, enabled);
+    }
+
+    private static NoiseRule builtin(String id, String name, String methodPattern,
+                                    String classPattern, String source, Integer paramCount, boolean enabled) {
+        NoiseRule r = new NoiseRule(id, name, methodPattern, classPattern, source, paramCount, enabled);
+        r.setBuiltin(true);
+        return r;
+    }
 
     /** 内存中的全局规则（从文件加载或默认） */
     private volatile List<NoiseRule> globalRules = new ArrayList<>(DEFAULT_RULES);
@@ -109,23 +123,21 @@ public class NoiseRuleService {
     // 全局规则 API（向后兼容，不传 projectPath 的地方都用这个）
     // ================================================================
 
-    /** 从文件加载全局规则；文件不存在则用默认规则并保存 */
+    /** 从文件加载全局规则并与内置规则合并；文件不存在/损坏则用内置默认 */
     public synchronized void loadGlobal() {
-        try {
-            if (Files.exists(GLOBAL_RULES_FILE)) {
-                List<NoiseRule> loaded = MAPPER.readValue(GLOBAL_RULES_FILE.toFile(),
-                        new TypeReference<List<NoiseRule>>() {});
-                if (loaded != null && !loaded.isEmpty()) {
-                    globalRules = new ArrayList<>(loaded);
-                    projectRuleCache.clear();
-                    return;
-                }
+        Path file = GLOBAL_RULES_FILE;
+        List<NoiseRule> loaded = null;
+        if (Files.exists(file)) {
+            try {
+                loaded = MAPPER.readValue(file.toFile(), new TypeReference<List<NoiseRule>>() {});
+            } catch (IOException e) {
+                log.warn("[噪声规则] 全局规则文件损坏，重建默认: {}", e.getMessage());
             }
-        } catch (IOException e) {
-            // 文件损坏时回退到默认规则
         }
-        globalRules = new ArrayList<>(DEFAULT_RULES);
-        saveQuietly(GLOBAL_RULES_FILE, globalRules);
+        globalRules = mergeWithBuiltins(loaded);
+        // 归一化后回写：文件里始终是「当前版本的内置定义 + 用户启用状态 + 自定义规则」，
+        // 这样升级 jar 后内置规则会自动刷新，用户改动也只体现在 enabled 上
+        saveQuietly(file, globalRules);
         projectRuleCache.clear();
     }
 
@@ -134,18 +146,93 @@ public class NoiseRuleService {
         return new ArrayList<>(globalRules);
     }
 
-    /** 保存全局规则（全量覆盖） */
+    /** 保存全局规则（全量覆盖）；内置规则的**本体仍以代码为准**，只有启用状态会被采纳 */
     public synchronized void save(List<NoiseRule> newRules) {
-        globalRules = newRules != null ? new ArrayList<>(newRules) : new ArrayList<>();
+        globalRules = mergeWithBuiltins(newRules);
         saveQuietly(GLOBAL_RULES_FILE, globalRules);
         projectRuleCache.clear();
     }
 
-    /** 恢复默认全局规则 */
+    /** 恢复默认全局规则（回到内置定义） */
     public synchronized void reset() {
-        globalRules = new ArrayList<>(DEFAULT_RULES);
+        globalRules = mergeWithBuiltins(null);
         saveQuietly(GLOBAL_RULES_FILE, globalRules);
         projectRuleCache.clear();
+    }
+
+    // ================================================================
+    // 内置规则归一化（本体以代码为准）
+    // ================================================================
+
+    /**
+     * 把外部（磁盘文件 / 前端传回 / 导入文件）的规则列表与代码内置规则合并，产出新的全局规则集。
+     *
+     * 规则：
+     *   1) 代码内置规则始终存在，且**本体以代码为准**（名称/正则/来源/参数数不接受外部值）；
+     *      只有 enabled 采用外部给的值，缺省用代码默认。
+     *   2) 外部标记 builtin、但 id 已不在代码里的条目（历史版本下线的内置规则）直接丢弃。
+     *   3) 未标记 builtin、但内容与某条内置规则完全一致的条目（老版本保存时丢了 id 的内置副本）
+     *      被吸收为该内置规则的启用状态，不再作为自定义规则保留 —— 避免升级后出现重复规则。
+     *   4) 其余条目作为用户自定义规则原样保留。
+     */
+    private static List<NoiseRule> mergeWithBuiltins(List<NoiseRule> fromStore) {
+        Map<String, Boolean> enabledByBuiltinId = new HashMap<>();
+        List<NoiseRule> customs = new ArrayList<>();
+        if (fromStore != null) {
+            for (NoiseRule r : fromStore) {
+                if (r == null || r.getId() == null || r.getId().isEmpty()) continue;
+                if (isBuiltinId(r.getId())) {
+                    enabledByBuiltinId.put(r.getId(), r.isEnabled());
+                    continue;
+                }
+                if (r.isBuiltin()) continue;
+                String matched = matchBuiltinId(r);
+                if (matched != null) {
+                    enabledByBuiltinId.putIfAbsent(matched, r.isEnabled());
+                    continue;
+                }
+                customs.add(r);
+            }
+        }
+        List<NoiseRule> out = new ArrayList<>(DEFAULT_RULES.size() + customs.size());
+        for (NoiseRule b : DEFAULT_RULES) {
+            NoiseRule copy = new NoiseRule(b.getId(), b.getName(), b.getMethodPattern(),
+                    b.getClassPattern(), b.getSource(), b.getParamCount(), b.isEnabled());
+            copy.setBuiltin(true);
+            Boolean ov = enabledByBuiltinId.get(b.getId());
+            if (ov != null) copy.setEnabled(ov);
+            out.add(copy);
+        }
+        out.addAll(customs);
+        return out;
+    }
+
+    private static boolean isBuiltinId(String id) {
+        if (id == null) return false;
+        for (NoiseRule b : DEFAULT_RULES) {
+            if (id.equals(b.getId())) return true;
+        }
+        return false;
+    }
+
+    /** 按「名称 + 方法名正则 + 类名正则 + 来源 + 参数数」全等匹配内置规则，返回其 id */
+    private static String matchBuiltinId(NoiseRule r) {
+        for (NoiseRule b : DEFAULT_RULES) {
+            if (eq(b.getName(), r.getName())
+                    && eq(b.getMethodPattern(), r.getMethodPattern())
+                    && eq(b.getClassPattern(), r.getClassPattern())
+                    && eq(b.getSource(), r.getSource())
+                    && (b.getParamCount() == null
+                        ? r.getParamCount() == null
+                        : b.getParamCount().equals(r.getParamCount()))) {
+                return b.getId();
+            }
+        }
+        return null;
+    }
+
+    private static boolean eq(String a, String b) {
+        return (a == null ? "" : a).equals(b == null ? "" : b);
     }
 
     // ================================================================
@@ -288,9 +375,15 @@ public class NoiseRuleService {
         }
     }
 
-    /** 保存项目级规则（全量覆盖，仅写自定义规则、保留既有覆盖配置） */
+    /** 保存项目级规则（全量覆盖，仅写自定义规则、保留既有覆盖配置）；内置规则不入项目层 */
     public synchronized void saveProjectRules(String projectPath, List<NoiseRule> newRules) {
-        saveProjectDetail(projectPath, getGlobalOverrides(projectPath), newRules);
+        List<NoiseRule> customs = new ArrayList<>();
+        if (newRules != null) {
+            for (NoiseRule r : newRules) {
+                if (r != null && !r.isBuiltin()) customs.add(r);
+            }
+        }
+        saveProjectDetail(projectPath, getGlobalOverrides(projectPath), customs);
     }
 
     /** 清空项目级规则（删文件） */
@@ -312,8 +405,10 @@ public class NoiseRuleService {
         for (NoiseRule r : globalRules) {
             Boolean ov = r.getId() != null ? overrides.get(r.getId()) : null;
             if (ov != null) {
-                effective.add(new NoiseRule(r.getId(), r.getName(), r.getMethodPattern(),
-                        r.getClassPattern(), r.getSource(), r.getParamCount(), ov));
+                NoiseRule c = new NoiseRule(r.getId(), r.getName(), r.getMethodPattern(),
+                        r.getClassPattern(), r.getSource(), r.getParamCount(), ov);
+                c.setBuiltin(r.isBuiltin());
+                effective.add(c);
             } else {
                 effective.add(r);
             }
