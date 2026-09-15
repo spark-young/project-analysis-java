@@ -253,14 +253,72 @@ public class AnalysisCacheService {
 
     /** 按具体文件名加载（用于下拉切换） */
     public Optional<AnalysisResult> loadByFileName(String projectPath, String fileName) {
+        Path file;
         try {
-            Path file = cacheDir(projectPath).resolve(fileName);
+            file = cacheDir(projectPath).resolve(fileName);
             if (!Files.isRegularFile(file)) {
                 log.warn("[缓存] 文件不存在: {}", file);
                 return Optional.empty();
             }
+        } catch (Exception e) {
+            log.warn("[缓存] 按名称加载失败 {}: {}", fileName, e.getMessage());
+            return Optional.empty();
+        }
+        return loadCached(file, fileName);
+    }
+
+    // ------------------------------------------------------------------
+    // 结果内存缓存：反复展开/刷新入口时避免重复读盘 + 反序列化大 JSON
+    // ------------------------------------------------------------------
+
+    /** 缓存条目上限（按最近使用淘汰）；单文件超过体积上限则不缓存，避免占用过多内存 */
+    private static final int RESULT_CACHE_MAX = 12;
+    private static final long RESULT_CACHE_MAX_BYTES = 8L * 1024 * 1024;
+
+    private static final class CachedResult {
+        final long mtime;
+        final long size;
+        final AnalysisResult result;
+
+        CachedResult(long mtime, long size, AnalysisResult result) {
+            this.mtime = mtime;
+            this.size = size;
+            this.result = result;
+        }
+    }
+
+    private final java.util.Map<String, CachedResult> resultCache =
+            new java.util.LinkedHashMap<String, CachedResult>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<String, CachedResult> eldest) {
+                    return size() > RESULT_CACHE_MAX;
+                }
+            };
+
+    /** 带内存缓存的读取：文件 mtime/size 未变则直接返回内存结果 */
+    private Optional<AnalysisResult> loadCached(Path file, String fileName) {
+        String key = file.toAbsolutePath().toString();
+        long mtime = -1L, size = -1L;
+        try {
+            mtime = Files.getLastModifiedTime(file).toMillis();
+            size = Files.size(file);
+        } catch (IOException ignored) {
+        }
+        synchronized (resultCache) {
+            CachedResult c = resultCache.get(key);
+            if (c != null && c.mtime == mtime && c.size == size) {
+                return Optional.of(c.result);
+            }
+        }
+        try {
+            AnalysisResult parsed = mapper.readValue(file.toFile(), AnalysisResult.class);
+            if (size >= 0 && size <= RESULT_CACHE_MAX_BYTES) {
+                synchronized (resultCache) {
+                    resultCache.put(key, new CachedResult(mtime, size, parsed));
+                }
+            }
             log.info("[缓存] 按名称加载 {}", fileName);
-            return Optional.of(mapper.readValue(file.toFile(), AnalysisResult.class));
+            return Optional.of(parsed);
         } catch (Exception e) {
             log.warn("[缓存] 按名称加载失败 {}: {}", fileName, e.getMessage());
             return Optional.empty();

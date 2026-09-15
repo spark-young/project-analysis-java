@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
@@ -70,6 +71,36 @@ public class NoiseRuleService {
     /** 内存中的全局规则（从文件加载或默认） */
     private volatile List<NoiseRule> globalRules = new ArrayList<>(DEFAULT_RULES);
 
+    /**
+     * 项目级规则集内存缓存：key = projectPath（null/空 → ""）。
+     * 目的：isNoise/getMatchedRule 是导出热路径，原来每次调用都要读盘 + JSON 解析（×2），
+     * 这里改为内存命中，仅在文件变化或写入后重建。
+     */
+    private final Map<String, ProjectRuleSet> projectRuleCache = new ConcurrentHashMap<>();
+
+    /** 文件元信息复查间隔（毫秒）：窗口内直接走内存，避免热路径反复 stat 磁盘 */
+    private static final long META_RECHECK_INTERVAL_MS = 2000L;
+
+    /** 某项目的规则集快照：解析结果 + 预先把覆盖套到全局规则上的"生效全局规则" */
+    private static final class ProjectRuleSet {
+        final long mtime;
+        final long size;
+        volatile long checkedAtMs;
+        final Map<String, Boolean> overrides;
+        final List<NoiseRule> customRules;
+        final List<NoiseRule> effectiveGlobal;
+
+        ProjectRuleSet(long mtime, long size, Map<String, Boolean> overrides,
+                       List<NoiseRule> customRules, List<NoiseRule> effectiveGlobal) {
+            this.mtime = mtime;
+            this.size = size;
+            this.checkedAtMs = System.currentTimeMillis();
+            this.overrides = overrides;
+            this.customRules = customRules;
+            this.effectiveGlobal = effectiveGlobal;
+        }
+    }
+
     public NoiseRuleService() {
         loadGlobal();
     }
@@ -86,6 +117,7 @@ public class NoiseRuleService {
                         new TypeReference<List<NoiseRule>>() {});
                 if (loaded != null && !loaded.isEmpty()) {
                     globalRules = new ArrayList<>(loaded);
+                    projectRuleCache.clear();
                     return;
                 }
             }
@@ -94,6 +126,7 @@ public class NoiseRuleService {
         }
         globalRules = new ArrayList<>(DEFAULT_RULES);
         saveQuietly(GLOBAL_RULES_FILE, globalRules);
+        projectRuleCache.clear();
     }
 
     /** 获取全局规则 */
@@ -105,12 +138,14 @@ public class NoiseRuleService {
     public synchronized void save(List<NoiseRule> newRules) {
         globalRules = newRules != null ? new ArrayList<>(newRules) : new ArrayList<>();
         saveQuietly(GLOBAL_RULES_FILE, globalRules);
+        projectRuleCache.clear();
     }
 
     /** 恢复默认全局规则 */
     public synchronized void reset() {
         globalRules = new ArrayList<>(DEFAULT_RULES);
         saveQuietly(GLOBAL_RULES_FILE, globalRules);
+        projectRuleCache.clear();
     }
 
     // ================================================================
@@ -124,32 +159,90 @@ public class NoiseRuleService {
     }
 
     /**
-     * 读取项目文件。
-     * 兼容两种格式：
+     * 取项目级规则集（带内存缓存）。
+     * 命中窗口内直接返回内存值；否则比对文件 mtime/size，未变则只刷新复查时间，变了才重新读盘解析。
+     */
+    private ProjectRuleSet projectRuleSet(String projectPath) {
+        String key = (projectPath == null || projectPath.isEmpty()) ? "" : projectPath;
+        ProjectRuleSet cached = projectRuleCache.get(key);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.checkedAtMs < META_RECHECK_INTERVAL_MS) {
+            return cached;
+        }
+        boolean hasProject = !key.isEmpty();
+        Path file = hasProject ? projectRulesFile(key) : null;
+        long mtime = -1L, size = -1L;
+        if (hasProject) {
+            try {
+                if (Files.isRegularFile(file)) {
+                    mtime = Files.getLastModifiedTime(file).toMillis();
+                    size = Files.size(file);
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        if (cached != null && cached.mtime == mtime && cached.size == size) {
+            cached.checkedAtMs = now;
+            return cached;
+        }
+        ProjectRuleSet fresh = loadProjectRuleSet(file, mtime, size);
+        projectRuleCache.put(key, fresh);
+        return fresh;
+    }
+
+    /**
+     * 解析项目规则文件（单次读盘）。兼容两种格式：
      *   - 旧版：JSON 数组 [NoiseRule, ...]  → 视为纯自定义规则，无覆盖配置
      *   - 新版：JSON 对象 {globalOverrides:{}, customRules:[...]}
-     * 返回 null 表示文件不存在或不可读。
      */
-    private JsonNode readProjectNode(String projectPath) {
-        Path file = projectRulesFile(projectPath);
+    private ProjectRuleSet loadProjectRuleSet(Path file, long mtime, long size) {
+        Map<String, Boolean> overrides = new HashMap<>();
+        List<NoiseRule> custom;
+        if (file == null) {
+            custom = new ArrayList<>();
+        } else {
+            JsonNode node = readNode(file);
+            if (node != null && node.isArray()) {
+                custom = convertRules(node);
+            } else if (node != null && node.isObject() && node.has("customRules")) {
+                if (node.has("globalOverrides")) {
+                    node.get("globalOverrides").fields().forEachRemaining(e ->
+                            overrides.put(e.getKey(), e.getValue().asBoolean(false)));
+                }
+                custom = convertRules(node.get("customRules"));
+            } else {
+                custom = new ArrayList<>();
+            }
+        }
+        return new ProjectRuleSet(mtime, size, overrides, custom, applyOverrides(overrides));
+    }
+
+    /** 读取 JSON 文件；不存在或不可读返回 null */
+    private JsonNode readNode(Path file) {
         try {
             if (Files.exists(file)) {
                 return MAPPER.readTree(file.toFile());
             }
         } catch (IOException e) {
-            log.warn("[噪声规则] 项目级规则读取失败 {}: {}", file, e.getMessage());
+            log.warn("[噪声规则] 规则读取失败 {}: {}", file, e.getMessage());
         }
         return null;
     }
 
+    /** JsonNode → List<NoiseRule>，解析失败返回空列表 */
+    private static List<NoiseRule> convertRules(JsonNode node) {
+        try {
+            List<NoiseRule> loaded = MAPPER.convertValue(node, new TypeReference<List<NoiseRule>>() {});
+            return loaded != null ? loaded : new ArrayList<>();
+        } catch (Exception e) {
+            log.warn("[噪声规则] 规则解析失败: {}", e.getMessage());
+            return new ArrayList<>();
+        }
+    }
+
     /** 项目级"全局规则覆盖配置"（ruleId → 是否启用），文件不存在/旧版格式返回空 Map */
     public Map<String, Boolean> getGlobalOverrides(String projectPath) {
-        JsonNode node = readProjectNode(projectPath);
-        if (node == null || !node.isObject() || !node.has("globalOverrides")) return new HashMap<>();
-        Map<String, Boolean> overrides = new HashMap<>();
-        node.get("globalOverrides").fields().forEachRemaining(e ->
-                overrides.put(e.getKey(), e.getValue().asBoolean(false)));
-        return overrides;
+        return new HashMap<>(projectRuleSet(projectPath).overrides);
     }
 
     /**
@@ -157,23 +250,7 @@ public class NoiseRuleService {
      * 文件不存在返回空列表，不 fallback。
      */
     public List<NoiseRule> getProjectRules(String projectPath) {
-        JsonNode node = readProjectNode(projectPath);
-        if (node == null) return new ArrayList<>();
-        try {
-            if (node.isArray()) {
-                List<NoiseRule> loaded = MAPPER.convertValue(node,
-                        new TypeReference<List<NoiseRule>>() {});
-                return loaded != null ? loaded : new ArrayList<>();
-            }
-            if (node.isObject() && node.has("customRules")) {
-                List<NoiseRule> loaded = MAPPER.convertValue(node.get("customRules"),
-                        new TypeReference<List<NoiseRule>>() {});
-                return loaded != null ? loaded : new ArrayList<>();
-            }
-        } catch (Exception e) {
-            log.warn("[噪声规则] 项目级规则解析失败 {}: {}", projectRulesFile(projectPath), e.getMessage());
-        }
-        return new ArrayList<>();
+        return new ArrayList<>(projectRuleSet(projectPath).customRules);
     }
 
     /**
@@ -181,10 +258,11 @@ public class NoiseRuleService {
      * 前端"项目级 Tab"用它同时渲染"全局规则覆盖区"和"自定义规则区"。
      */
     public Map<String, Object> getProjectDetail(String projectPath) {
+        ProjectRuleSet rs = projectRuleSet(projectPath);
         Map<String, Object> detail = new LinkedHashMap<>();
         detail.put("globalRules", getRules());
-        detail.put("globalOverrides", getGlobalOverrides(projectPath));
-        detail.put("customRules", getProjectRules(projectPath));
+        detail.put("globalOverrides", new LinkedHashMap<>(rs.overrides));
+        detail.put("customRules", new ArrayList<>(rs.customRules));
         return detail;
     }
 
@@ -204,6 +282,7 @@ public class NoiseRuleService {
             log.info("[噪声规则] 项目级配置已写入 {} (覆盖 {} 条, 自定义 {} 条)",
                     file, ((Map<?, ?>) data.get("globalOverrides")).size(),
                     ((List<?>) data.get("customRules")).size());
+            projectRuleCache.remove(projectPath == null ? "" : projectPath);
         } catch (IOException e) {
             log.warn("[噪声规则] 项目级配置保存失败 {}: {}", file, e.getMessage());
         }
@@ -220,15 +299,15 @@ public class NoiseRuleService {
         try {
             Files.deleteIfExists(file);
             log.info("[噪声规则] 项目级规则已删除 {}", file);
+            projectRuleCache.remove(projectPath == null ? "" : projectPath);
         } catch (IOException e) {
             log.warn("[噪声规则] 项目级规则删除失败 {}: {}", file, e.getMessage());
         }
     }
 
     /** 将全局规则套用项目覆盖配置，得到"该项目视角下实际生效的全局规则" */
-    private List<NoiseRule> getEffectiveGlobalRules(String projectPath) {
-        Map<String, Boolean> overrides = getGlobalOverrides(projectPath);
-        if (overrides.isEmpty()) return globalRules;
+    private List<NoiseRule> applyOverrides(Map<String, Boolean> overrides) {
+        if (overrides == null || overrides.isEmpty()) return globalRules;
         List<NoiseRule> effective = new ArrayList<>();
         for (NoiseRule r : globalRules) {
             Boolean ov = r.getId() != null ? overrides.get(r.getId()) : null;
@@ -261,9 +340,9 @@ public class NoiseRuleService {
      * @param projectPath 项目路径（可为 null，null 时只查全局）
      */
     public boolean isNoise(String methodIdentifier, String source, String projectPath) {
-        if (isNoiseOnRules(getEffectiveGlobalRules(projectPath), methodIdentifier, source)) return true;
-        List<NoiseRule> project = getProjectRules(projectPath);
-        return isNoiseOnRules(project, methodIdentifier, source);
+        ProjectRuleSet rs = projectRuleSet(projectPath);
+        if (isNoiseOnRules(rs.effectiveGlobal, methodIdentifier, source)) return true;
+        return isNoiseOnRules(rs.customRules, methodIdentifier, source);
     }
 
     /** 仅全局 getMatchedRule（向后兼容） */
@@ -273,11 +352,11 @@ public class NoiseRuleService {
 
     /** 合并两层 getMatchedRule，命中规则名用逗号分隔（标注来源 G/P） */
     public String getMatchedRule(String methodIdentifier, String source, String projectPath) {
+        ProjectRuleSet rs = projectRuleSet(projectPath);
         List<String> names = new ArrayList<>();
-        String g = getMatchedRuleOnRules(getEffectiveGlobalRules(projectPath), methodIdentifier, source);
+        String g = getMatchedRuleOnRules(rs.effectiveGlobal, methodIdentifier, source);
         if (g != null) names.add("[G] " + g);
-        List<NoiseRule> project = getProjectRules(projectPath);
-        String p = getMatchedRuleOnRules(project, methodIdentifier, source);
+        String p = getMatchedRuleOnRules(rs.customRules, methodIdentifier, source);
         if (p != null) names.add("[P] " + p);
         return names.isEmpty() ? null : String.join(", ", names);
     }

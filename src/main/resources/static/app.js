@@ -274,6 +274,8 @@
     let projectRulesCache = [];      // 项目层自定义规则缓存（参与合并过滤）
     let globalOverrides = {};        // 项目级全局规则覆盖：{ ruleId: true/false }
     let activeNoiseRules = [];       // 实际生效的过滤规则集 = 全局层（套覆盖）+ 项目自定义层
+    let compiledActiveRules = [];    // 启用中规则的预编译结果（正则只编译一次，判定只做 test）
+    let activeNoiseHash = '';        // 生效规则集指纹（规则变更时算一次，后续直接比对）
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
     let noiseRuleMode = 'panel';     // 当前编辑模式：'panel'（弹窗）| 'page'（独立页面）
     let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
@@ -1836,12 +1838,7 @@
             if (targets.length === 0) return;
             const hit = new Set(targets);
             const hasHit = new Set();
-            const parents = new Map();
-            (g.edges || []).forEach((e) => {
-                const arr = parents.get(e.to) || [];
-                arr.push(e.from);
-                parents.set(e.to, arr);
-            });
+            const parents = graphIndex(slot.result).parents;
             const stack = targets.slice();
             while (stack.length) {
                 const cur = stack.pop();
@@ -1961,12 +1958,7 @@
         const g = st.result && st.result.graph;
         if (!g) return null;
         // 命中 → 根：沿父边回溯出一条路径（取第一个父即可）
-        const parents = new Map();
-        (g.edges || []).forEach((e) => {
-            const arr = parents.get(e.to) || [];
-            arr.push(e.from);
-            parents.set(e.to, arr);
-        });
+        const parents = graphIndex(st.result).parents;
         const chain = [gid];
         let cur = gid;
         for (let guard = 0; guard < 10000; guard++) {
@@ -2052,31 +2044,24 @@
     // 结果对象 → 其惰性根节点缓存的映射（保证渲染与全局搜索共用同一对象身份，命中 nodeRegistry）
     // 额外按 noise 规则哈希失效：规则变更时自动重建
     let _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
+    // noise 判定记忆：同一对象只判定一次（规则变更时由 compileActiveNoiseRules 整体丢弃）
+    let noiseMemo = new WeakMap();       // graph.methods 原始方法对象 → 是否噪声
+    let freqNoiseMemo = new WeakMap();   // methodFrequency 条目对象 → 是否噪声
 
-    /** 启用中的 noise 规则哈希：用于 cache 失效 + 剪枝 */
+    /** 启用中的 noise 规则哈希：用于 cache 失效 + 剪枝（值已在规则变更时算好） */
     function noiseRulesHash() {
-        return JSON.stringify((activeNoiseRules || []).filter((r) => r.enabled)
-            .map((r) => ({ s: r.source, m: r.methodPattern, c: r.classPattern, p: r.paramCount })));
+        return activeNoiseHash;
     }
 
     /** 基于原始 GraphMethod 字段（owner/name/descriptor/source）判断 noise，避免字符串解析开销 */
     function isNoiseGraphMethod(gm) {
         if (!gm) return false;
-        const src = gm.source || 'EXTERNAL';
-        const className = (gm.owner || '').replace(/\//g, '.');
-        const methodName = gm.name || '';
-        const paramCount = descriptorParamCount(gm.descriptor);
-        for (const r of activeNoiseRules || []) {
-            if (!r.enabled) continue;
-            if (r.source && r.source !== 'ALL' && r.source !== src) continue;
-            if (!regexMatch(r.methodPattern, methodName)) continue;
-            if (r.classPattern && r.classPattern.trim() !== '') {
-                if (!regexMatch(r.classPattern, className)) continue;
-            }
-            if (r.paramCount != null && r.paramCount !== paramCount) continue;
-            return true;
-        }
-        return false;
+        const hit = noiseMemo.get(gm);
+        if (hit !== undefined) return hit;
+        const v = matchCompiledRules(gm.source || 'EXTERNAL',
+            (gm.owner || '').replace(/\//g, '.'), gm.name || '', descriptorParamCount(gm.descriptor));
+        noiseMemo.set(gm, v);
+        return v;
     }
 
     /** 从 JVM 描述符里取参数个数（不依赖方法名后缀） */
@@ -2106,6 +2091,27 @@
     /** 清 adapter cache（规则变更/项目切换时调用） */
     function invalidateAdapterCache() {
         _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
+    }
+
+    // 图索引缓存：同一 result 的邻接表/父表只建一次（原实现每次重算都重建）
+    let _graphIndexCache = new WeakMap();
+
+    /** 取（并缓存）某 result 的图索引：{adj: 出边表, parents: 父节点表} */
+    function graphIndex(result) {
+        let cached = _graphIndexCache.get(result);
+        if (cached) return cached;
+        const g = (result && result.graph) || {};
+        const adj = {};
+        const parents = new Map();
+        (g.edges || []).forEach((e) => {
+            (adj[e.from] = adj[e.from] || []).push(e);
+            const arr = parents.get(e.to) || [];
+            arr.push(e.from);
+            parents.set(e.to, arr);
+        });
+        cached = { adj: adj, parents: parents };
+        _graphIndexCache.set(result, cached);
+        return cached;
     }
 
     /** 规则变更后自动重绘所有已展开的调用链（剪枝即时生效） */
@@ -2148,10 +2154,7 @@
             return legacy;
         }
         const g = result.graph;
-        const adj = {};
-        (g.edges || []).forEach((e) => {
-            (adj[e.from] = adj[e.from] || []).push(e);
-        });
+        const adj = graphIndex(result).adj;
         function methodView(m) {
             const owner = m.owner || '';
             const cn = owner.replace(/\//g, '.');
@@ -2292,10 +2295,7 @@
             return out;
         }
         const g = result.graph;
-        const adj = {};
-        (g.edges || []).forEach((e) => {
-            (adj[e.from] = adj[e.from] || []).push(e);
-        });
+        const adj = graphIndex(result).adj;
         const seen = new Set();
         const stack = (g.roots || []).slice();
         while (stack.length) {
@@ -2366,8 +2366,17 @@
         renderStats(computeFilteredStats(currentResult));
     }
 
-    /** 规则变更后的统一刷新：频次列表 + 调用链剪枝 + 统计条 */
+    /** 上次已整体刷新所依据的规则指纹（用于跳过无变化的重算） */
+    let _lastAppliedRulesHash = null;
+
+    /**
+     * 规则变更后的统一刷新：频次列表 + 调用链剪枝 + 统计条。
+     * 规则指纹未变化时直接跳过——打开弹窗、点「刷新过滤」这类常见操作不再触发全量重算。
+     */
     function refreshAllFilteredViews() {
+        const curHash = noiseRulesHash();
+        if (curHash === _lastAppliedRulesHash) return;
+        _lastAppliedRulesHash = curHash;
         refreshFreqView();
         reapplyFilterToTree();
         updateFilteredStats();
@@ -2401,6 +2410,9 @@
         });
     }
 
+    // 频次列表当前数据快照：调用方明细改为展开时才生成（首屏不再拼巨量 HTML）
+    let _freqRows = [];
+
     /** 按当前 freqFilter + 启用的样板规则过滤并渲染方法列表 */
     function renderFreqList(all) {
         // 第一步：按样板规则过滤（跨所有来源），用于更新统计和来源标签
@@ -2430,44 +2442,86 @@
                 + '<span class="stat-chip">已过滤 <b>' + noiseRemoved + ' 个</b></span>';
         }
         if (list.length === 0) {
+            _freqRows = [];
             els.freqList.innerHTML =
                 '<div class="mf-empty">该来源下暂无可统计的方法调用数据</div>';
-            bindFreqRowEvents();
             return;
         }
-        els.freqList.innerHTML = list.map((item, idx) => {
-            const callerRows = (item.callers || [])
-                .map((c) => '<div class="mf-caller">'
-                    + '<span class="mf-caller-mark">↳</span>'
-                    + '<span class="mf-caller-name">' + sigHtmlFromString(c.caller) + '</span>'
-                    + (c.line && c.line > 0 ? '<span class="line-no">L' + c.line + '</span>' : '')
-                    + '</div>')
-                .join('');
-            return '<div class="mf-item" data-idx="' + idx + '">'
-                + '<div class="mf-row">'
-                + '<span class="mf-toggle">▸</span>'
-                + '<span class="mf-rank">' + (idx + 1) + '</span>'
-                + '<span class="mf-body">'
-                + '<span class="mf-method">' + sigHtmlFromString(item.method) + '</span>'
-                + badgeHtml('source-' + (item.source || '').toLowerCase(),
-                    SOURCE_LABEL[item.source] || item.source)
-                + '</span>'
-                + '<span class="mf-hot">'
-                + '<span class="mf-count">' + item.callCount + '</span>'
-                + '<span class="mf-count-unit">次</span>'
-                + '</span>'
-                + '</div>'
-                + '<div class="mf-callers" style="display:none">'
-                + (callerRows || '<div class="mf-empty-sub">暂无调用方信息</div>')
-                + '</div>'
-                + '</div>';
-        }).join('');
-        bindFreqRowEvents();
+        _freqRows = list;
+        els.freqList.innerHTML = list.map((item, idx) =>
+            '<div class="mf-item" data-idx="' + idx + '">'
+            + '<div class="mf-row">'
+            + '<span class="mf-toggle">▸</span>'
+            + '<span class="mf-rank">' + (idx + 1) + '</span>'
+            + '<span class="mf-body">'
+            + '<span class="mf-method">' + sigHtmlFromString(item.method) + '</span>'
+            + badgeHtml('source-' + (item.source || '').toLowerCase(),
+                SOURCE_LABEL[item.source] || item.source)
+            + '</span>'
+            + '<span class="mf-hot">'
+            + '<span class="mf-count">' + item.callCount + '</span>'
+            + '<span class="mf-count-unit">次</span>'
+            + '</span>'
+            + '</div>'
+            + '<div class="mf-callers" style="display:none"></div>'   // 明细展开时才填充
+            + '</div>'
+        ).join('');
     }
 
-    /** 判断方法是否命中任一启用的样板规则 */
+    /** 懒渲染某行的调用方明细（首次展开时才生成 DOM，避免首屏拼巨量 HTML） */
+    function fillFreqCallers(itemEl) {
+        const callers = itemEl.querySelector('.mf-callers');
+        if (!callers || callers.dataset.filled === '1') return;
+        const item = _freqRows[Number(itemEl.dataset.idx)];
+        const rows = ((item && item.callers) || [])
+            .map((c) => '<div class="mf-caller">'
+                + '<span class="mf-caller-mark">↳</span>'
+                + '<span class="mf-caller-name">' + sigHtmlFromString(c.caller) + '</span>'
+                + (c.line && c.line > 0 ? '<span class="line-no">L' + c.line + '</span>' : '')
+                + '</div>')
+            .join('');
+        callers.innerHTML = rows || '<div class="mf-empty-sub">暂无调用方信息</div>';
+        callers.dataset.filled = '1';
+    }
+
+    /** 批量展开/收起：展开时按需填充明细 */
+    function setAllFreqCallers(open) {
+        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
+            const c = item.querySelector('.mf-callers');
+            const t = item.querySelector('.mf-toggle');
+            if (!c) return;
+            if (open) fillFreqCallers(item);
+            c.style.display = open ? 'block' : 'none';
+            if (t) t.textContent = open ? '▾' : '▸';
+        });
+    }
+
+    // 事件委托：整个频次列表只挂一个监听（原实现每行挂闭包 + N 次 querySelectorAll）
+    els.freqList.addEventListener('click', (e) => {
+        const row = e.target.closest('.mf-row');
+        if (!row) return;
+        const itemEl = row.parentElement;
+        const callers = itemEl.querySelector('.mf-callers');
+        const toggle = row.querySelector('.mf-toggle');
+        if (!callers) return;
+        if (callers.style.display === 'block') {
+            callers.style.display = 'none';
+            if (toggle) toggle.textContent = '▸';
+            return;
+        }
+        fillFreqCallers(itemEl);
+        callers.style.display = 'block';
+        if (toggle) toggle.textContent = '▾';
+    });
+
+    els.btnFreqExpandAll.addEventListener('click', () => setAllFreqCallers(true));
+    els.btnFreqCollapseAll.addEventListener('click', () => setAllFreqCallers(false));
+
+    /** 判断方法是否命中任一启用的样板规则（按条目对象记忆化，避免重复解析签名） */
     function isNoiseMethod(m) {
         if (!m || !m.method) return false;
+        const hit = freqNoiseMemo.get(m);
+        if (hit !== undefined) return hit;
         const src = m.source || 'EXTERNAL';
         const hashIdx = m.method.indexOf('#');
         const className = hashIdx >= 0 ? m.method.slice(0, hashIdx) : '';
@@ -2475,22 +2529,9 @@
         const parenIdx = methodWithArgs.indexOf('(');
         const methodName = parenIdx >= 0 ? methodWithArgs.slice(0, parenIdx) : methodWithArgs;
         const paramCount = parseParamCount(methodWithArgs);
-
-        for (const r of activeNoiseRules) {
-            if (!r.enabled) continue;
-            // 来源匹配
-            if (r.source && r.source !== 'ALL' && r.source !== src) continue;
-            // 方法名匹配
-            if (!regexMatch(r.methodPattern, methodName)) continue;
-            // 类名匹配（规则未配置则跳过）
-            if (r.classPattern && r.classPattern.trim() !== '') {
-                if (!regexMatch(r.classPattern, className)) continue;
-            }
-            // 参数个数匹配（规则未配置则跳过）
-            if (r.paramCount != null && r.paramCount !== paramCount) continue;
-            return true;
-        }
-        return false;
+        const v = matchCompiledRules(src, className, methodName, paramCount);
+        freqNoiseMemo.set(m, v);
+        return v;
     }
 
     /** 从方法签名解析参数个数，正确处理泛型中的逗号，如 Map<String, Integer> */
@@ -2512,55 +2553,6 @@
         }
         return count;
     }
-
-    /** 正则匹配（find 语义，匹配到即可） */
-    function regexMatch(pattern, input) {
-        // 空正则 = 匹配所有（与后端一致）
-        if (!pattern || pattern.trim() === '') return true;
-        if (!input) return false;
-        try {
-            return new RegExp(pattern).test(input);
-        } catch (e) {
-            return false;
-        }
-    }
-
-    /** 绑定方法行的展开/收起事件 */
-    function bindFreqRowEvents() {
-        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
-            const row = item.querySelector('.mf-row');
-            const callers = item.querySelector('.mf-callers');
-            const toggle = item.querySelector('.mf-toggle');
-            if (!row || !callers) return;
-            row.onclick = () => {
-                const isOpen = callers.style.display === 'block';
-                if (isOpen) {
-                    callers.style.display = 'none';
-                    toggle.textContent = '▸';
-                } else {
-                    callers.style.display = 'block';
-                    toggle.textContent = '▾';
-                }
-            };
-        });
-    }
-
-    els.btnFreqExpandAll.addEventListener('click', () => {
-        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
-            const c = item.querySelector('.mf-callers');
-            const t = item.querySelector('.mf-toggle');
-            if (c) c.style.display = 'block';
-            if (t) t.textContent = '▾';
-        });
-    });
-    els.btnFreqCollapseAll.addEventListener('click', () => {
-        els.freqList.querySelectorAll('.mf-item').forEach((item) => {
-            const c = item.querySelector('.mf-callers');
-            const t = item.querySelector('.mf-toggle');
-            if (c) c.style.display = 'none';
-            if (t) t.textContent = '▸';
-        });
-    });
 
     // 来源筛选：全部/项目/依赖/外部
     els.freqFilterBar.querySelectorAll('.filter-chip').forEach((chip) => {
@@ -2600,6 +2592,50 @@
         } else {
             activeNoiseRules = globalRulesCache.slice();
         }
+        compileActiveNoiseRules();
+    }
+
+    /**
+     * 预编译生效规则 + 预计算指纹。
+     * 性能关键：正则只在这里编译一次，判定热路径只做 test()；指纹只算一次，避免反复 JSON.stringify。
+     */
+    function compileActiveNoiseRules() {
+        const enabled = (activeNoiseRules || []).filter((r) => r && r.enabled);
+        compiledActiveRules = enabled.map((r) => ({
+            source: r.source || 'ALL',
+            paramCount: r.paramCount != null ? r.paramCount : null,
+            methodRe: compileRegex(r.methodPattern),
+            classRe: compileRegex(r.classPattern),
+        }));
+        activeNoiseHash = enabled.map((r) => (r.source || 'ALL') + '~' + (r.methodPattern || '')
+            + '~' + (r.classPattern || '') + '~' + (r.paramCount != null ? r.paramCount : '')).join('|');
+        // 规则已变，丢弃旧的判定记忆
+        noiseMemo = new WeakMap();
+        freqNoiseMemo = new WeakMap();
+    }
+
+    /** 编译正则：空/未填 → null（匹配全部）；非法 → false（永不匹配） */
+    function compileRegex(pattern) {
+        if (!pattern || pattern.trim() === '') return null;
+        try {
+            return new RegExp(pattern);
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /** 按预编译规则判定噪声（gm 字段通道与签名通道共用同一套语义） */
+    function matchCompiledRules(src, className, methodName, paramCount) {
+        for (const cr of compiledActiveRules) {
+            if (cr.source !== 'ALL' && cr.source !== src) continue;
+            if (cr.methodRe === false) continue;                    // 非法正则 → 永不匹配
+            if (cr.methodRe && !cr.methodRe.test(methodName)) continue;
+            if (cr.classRe === false) continue;
+            if (cr.classRe && !cr.classRe.test(className)) continue;
+            if (cr.paramCount != null && cr.paramCount !== paramCount) continue;
+            return true;
+        }
+        return false;
     }
 
     /** 从磁盘同步两层规则：更新两层缓存 + 编辑缓冲区指向当前 scope 层，并重绘规则列表 */
@@ -2631,9 +2667,9 @@
         noiseRuleMode = 'panel';
         noiseRuleScope = 'project';
         updateNoiseRulesUI();
-        loadNoiseRules().then(refreshAllFilteredViews);
         updateNoiseRulesScopeHint();
-        renderNoiseRulesList();
+        // loadNoiseRules 内部已重绘规则列表，这里不再重复调用
+        loadNoiseRules().then(refreshAllFilteredViews);
         els.noiseRulesPanel.hidden = false;
         els.noiseRulesOverlay.hidden = false;
     }
