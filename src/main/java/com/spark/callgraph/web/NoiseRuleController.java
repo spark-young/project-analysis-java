@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 样板方法过滤规则管理接口（两层结构）：
@@ -58,14 +59,35 @@ public class NoiseRuleController {
         return all;
     }
 
-    /** 保存规则（全量覆盖）。 */
+    /**
+     * 获取项目级配置详情（新版结构）。
+     * 返回 { globalRules, globalOverrides, customRules }。
+     */
+    @GetMapping("/project-detail")
+    public Map<String, Object> projectDetail(@RequestParam("projectPath") String projectPath) {
+        return noiseRuleService.getProjectDetail(projectPath);
+    }
+
+    /**
+     * 保存规则（全量覆盖）。
+     *   全局 → body: [NoiseRule, ...]
+     *   项目级 → body: { globalOverrides: {}, customRules: [...] }
+     */
     @PutMapping
-    public List<NoiseRule> save(@RequestBody List<NoiseRule> rules,
-                                @RequestParam(value = "projectPath", required = false) String projectPath) {
+    public Object save(@RequestBody Object body,
+                       @RequestParam(value = "projectPath", required = false) String projectPath) {
         if (projectPath != null && !projectPath.isEmpty()) {
-            noiseRuleService.saveProjectRules(projectPath, rules);
-            return noiseRuleService.getProjectRules(projectPath);
+            Map<String, Object> detail = (Map<String, Object>) body;
+            Map<String, Boolean> overrides = detail.get("globalOverrides") != null
+                    ? (Map<String, Boolean>) detail.get("globalOverrides")
+                    : null;
+            List<NoiseRule> customRules = objectMapper.convertValue(detail.get("customRules"),
+                    new TypeReference<List<NoiseRule>>() {});
+            noiseRuleService.saveProjectDetail(projectPath, overrides, customRules);
+            return noiseRuleService.getProjectDetail(projectPath);
         }
+        List<NoiseRule> rules = objectMapper.convertValue(body,
+                new TypeReference<List<NoiseRule>>() {});
         noiseRuleService.save(rules);
         return noiseRuleService.getRules();
     }

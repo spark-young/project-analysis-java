@@ -103,6 +103,7 @@
         tree: $('#tree'),
         btnExpandAll: $('#btnExpandAll'),
         btnCollapseAll: $('#btnCollapseAll'),
+        btnResultRefresh: $('#btnResultRefresh'),
         freqSection: $('#freqSection'),
         freqStatsBar: $('#freqStatsBar'),
         freqFilterBar: $('#freqFilterBar'),
@@ -150,6 +151,8 @@
         addEntryScanStats: $('#addEntryScanStats'),
         addEntryScanAll: $('#addEntryScanAll'),
         addEntryScanList: $('#addEntryScanList'),
+        addEntryModalTitle: $('#addEntryModalTitle'),
+        addEntryInputArea: $('#addEntryInputArea'),
 
         confirmOverlay: $('#confirmOverlay'),
         confirmModal: $('#confirmModal'),
@@ -268,8 +271,9 @@
     let projSearchCursor = -1;       // 当前定位到第几个命中（-1 = 未开始）
     let noiseRules = [];             // 过滤规则编辑缓冲区（弹窗/页面正在展示的那一层）
     let globalRulesCache = [];       // 全局层规则缓存（参与合并过滤）
-    let projectRulesCache = [];      // 项目层规则缓存（参与合并过滤）
-    let activeNoiseRules = [];       // 实际生效的过滤规则集 = 全局层 + 当前项目层（合并）
+    let projectRulesCache = [];      // 项目层自定义规则缓存（参与合并过滤）
+    let globalOverrides = {};        // 项目级全局规则覆盖：{ ruleId: true/false }
+    let activeNoiseRules = [];       // 实际生效的过滤规则集 = 全局层（套覆盖）+ 项目自定义层
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
     let noiseRuleMode = 'panel';     // 当前编辑模式：'panel'（弹窗）| 'page'（独立页面）
     let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
@@ -1307,7 +1311,7 @@
             '<span class="result-title-text">交易链路分析结果</span>'
             + '<span class="entry-count-inline">（共 ' + entries.length + ' 个入口，成功 ' + done + ' 个'
             + (failedCount > 0 ? '，失败 ' + failedCount + ' 个' : '）') + '）</span>';
-        renderStats(batch.stats || {});
+        renderStats(computeBatchFilteredStats(batch));
         renderWarnings({ warnings: batch.warnings || [] });
         hideBatchEntryHeader();
 
@@ -1425,6 +1429,7 @@
         st.roots = rootsOf(result, st.idx);
         st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
         st.rendered = true;
+        updateBatchRowStats(st);   // 行内统计 chips 按生效规则重算
         return result;
     }
 
@@ -2204,7 +2209,7 @@
                 ? '<span class="entry-count-inline"> · ' + escapeHtml(result.className || '')
                     + (result.methodName ? '#' + escapeHtml(result.methodName) : '') + '</span>'
                 : '');
-        renderStats(result.stats);
+        renderStats(computeFilteredStats(result));
         renderWarnings(result);
         renderFreqAnalysis(result);
         expandFns = [];
@@ -2257,6 +2262,115 @@
             + (stats.truncated
                 ? '<span class="stat-chip" style="color:#b91c1c;border-color:#fecaca">结果已截断（深度/节点上限）</span>'
                 : '');
+    }
+
+    /** 按当前生效过滤规则重算统计（口径同后端 fillStats：图内去重方法数；noise 方法及其子树不计入） */
+    function computeFilteredStats(result) {
+        const base = (result && result.stats) || {};
+        const out = {
+            entryCount: base.entryCount || 0,
+            totalNodes: 0,
+            projectMethods: 0,
+            dependencyMethods: 0,
+            externalMethods: 0,
+            truncated: !!base.truncated,
+            durationMs: base.durationMs || 0,
+        };
+        if (!result) return out;
+        if (!result.graph || !result.graph.methods) {
+            // 兼容退路：旧结果无图结构，按展示树迭代统计
+            const stack = (result.roots || []).slice();
+            while (stack.length) {
+                const n = stack.pop();
+                out.totalNodes++;
+                const s = n.source || 'EXTERNAL';
+                if (s === 'PROJECT') out.projectMethods++;
+                else if (s === 'DEPENDENCY') out.dependencyMethods++;
+                else out.externalMethods++;
+                (n.children || []).forEach((c) => stack.push(c));
+            }
+            return out;
+        }
+        const g = result.graph;
+        const adj = {};
+        (g.edges || []).forEach((e) => {
+            (adj[e.from] = adj[e.from] || []).push(e);
+        });
+        const seen = new Set();
+        const stack = (g.roots || []).slice();
+        while (stack.length) {
+            const id = stack.pop();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const m = g.methods[id];
+            // 剪枝口径与 rootsOf/makeNode 一致：noise 方法及其整棵子树不可见，不计数
+            if (!m || isNoiseGraphMethod(m)) continue;
+            out.totalNodes++;
+            const s = m.source || 'EXTERNAL';
+            if (s === 'PROJECT') out.projectMethods++;
+            else if (s === 'DEPENDENCY') out.dependencyMethods++;
+            else out.externalMethods++;
+            if (m.cycle) continue;   // 环方法同树视图：展示但不展开
+            const edges = adj[id] || [];
+            for (let i = 0; i < edges.length; i++) stack.push(edges[i].to);
+        }
+        return out;
+    }
+
+    /** 批量清单某行：按生效规则重算该行的行内统计 chips（格式同 renderBatchSummary） */
+    function updateBatchRowStats(st) {
+        if (!st || !st.result || !st.rowEl) return;
+        const fs = computeFilteredStats(st.result);
+        const st0 = st.result.stats || {};
+        const chips = [
+            '节点 ' + fs.totalNodes,
+            '项目 ' + fs.projectMethods,
+            '依赖 ' + fs.dependencyMethods,
+            '外部 ' + fs.externalMethods,
+            st0.durationMs != null ? st0.durationMs + 'ms' : null,
+            st0.truncated ? '截断' : null,
+        ].filter(Boolean).join(' · ');
+        const span = st.rowEl.querySelector('.bt-stats');
+        if (span) span.textContent = chips;
+    }
+
+    /** 批量清单聚合统计：全量加载完成时按生效规则重算，否则退回后端统计 */
+    function computeBatchFilteredStats(batch) {
+        if (!(batchModel && batchModel.loaded && batchModel.entries)) return batch.stats || {};
+        const agg = { entryCount: 0, totalNodes: 0, projectMethods: 0, dependencyMethods: 0, externalMethods: 0, truncated: false, durationMs: 0 };
+        let counted = 0;
+        batchModel.entries.forEach((slot) => {
+            if (!slot || !slot.result) return;
+            const fs = computeFilteredStats(slot.result);
+            agg.entryCount += 1;
+            agg.totalNodes += fs.totalNodes;
+            agg.projectMethods += fs.projectMethods;
+            agg.dependencyMethods += fs.dependencyMethods;
+            agg.externalMethods += fs.externalMethods;
+            if (fs.truncated) agg.truncated = true;
+            agg.durationMs += fs.durationMs || 0;
+            counted++;
+        });
+        return counted > 0 ? agg : (batch.stats || {});
+    }
+
+    /** 依据当前生效规则刷新统计条：单入口重算；批量清单重算聚合 + 已展开行的行内统计 */
+    function updateFilteredStats() {
+        if (!currentResult) return;
+        if (els.tree && els.tree.querySelector('.bt-row')) {
+            batchRowStates.forEach((st) => {
+                if (st && st.rendered && st.result) updateBatchRowStats(st);
+            });
+            return;
+        }
+        renderStats(computeFilteredStats(currentResult));
+    }
+
+    /** 规则变更后的统一刷新：频次列表 + 调用链剪枝 + 统计条 */
+    function refreshAllFilteredViews() {
+        refreshFreqView();
+        reapplyFilterToTree();
+        updateFilteredStats();
     }
 
     // ------------------------------------------------------------------
@@ -2473,11 +2587,19 @@
         return url;
     }
 
-    /** 实际生效的过滤规则集 = 全局层 + 当前项目层（未选项目时仅全局层） */
+    /** 实际生效的过滤规则集 = 全局层（套用项目覆盖）+ 项目自定义层（未选项目时仅全局） */
     function recomputeActiveNoiseRules() {
-        activeNoiseRules = (currentProjectId && currentProjectPath())
-            ? globalRulesCache.concat(projectRulesCache)
-            : globalRulesCache.slice();
+        if (currentProjectId && currentProjectPath()) {
+            const overriddenGlobal = globalRulesCache.map(r => {
+                if (r.id && globalOverrides.hasOwnProperty(r.id)) {
+                    return Object.assign({}, r, { enabled: globalOverrides[r.id] });
+                }
+                return r;
+            });
+            activeNoiseRules = overriddenGlobal.concat(projectRulesCache);
+        } else {
+            activeNoiseRules = globalRulesCache.slice();
+        }
     }
 
     /** 从磁盘同步两层规则：更新两层缓存 + 编辑缓冲区指向当前 scope 层，并重绘规则列表 */
@@ -2485,11 +2607,18 @@
         const pp = currentProjectPath();
         const gReq = fetch('api/noise-rules').then((r) => r.json()).catch(() => []);
         const pReq = (currentProjectId && pp)
-            ? fetch('api/noise-rules?projectPath=' + encodeURIComponent(pp)).then((r) => r.json()).catch(() => [])
-            : Promise.resolve([]);
-        return Promise.all([gReq, pReq]).then(([g, p]) => {
+            ? fetch('api/noise-rules/project-detail?projectPath=' + encodeURIComponent(pp))
+                .then((r) => r.json()).catch(() => null)
+            : Promise.resolve(null);
+        return Promise.all([gReq, pReq]).then(([g, detail]) => {
             globalRulesCache = g || [];
-            projectRulesCache = p || [];
+            if (detail) {
+                globalOverrides = detail.globalOverrides || {};
+                projectRulesCache = detail.customRules || [];
+            } else {
+                globalOverrides = {};
+                projectRulesCache = [];
+            }
             recomputeActiveNoiseRules();
             noiseRules = (noiseRuleScope === 'project' ? projectRulesCache : globalRulesCache).slice();
             renderNoiseRulesList();
@@ -2497,13 +2626,12 @@
         });
     }
 
-    function openNoiseRulesPanel(defaultScope) {
+    /** 弹窗固定为项目级视图（全局规则本体在系统配置页维护） */
+    function openNoiseRulesPanel() {
         noiseRuleMode = 'panel';
-        noiseRuleScope = defaultScope || 'global';
-        document.querySelectorAll('.nr-scope-tab').forEach(t =>
-            t.classList.toggle('active', t.dataset.scope === noiseRuleScope));
+        noiseRuleScope = 'project';
         updateNoiseRulesUI();
-        loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
+        loadNoiseRules().then(refreshAllFilteredViews);
         updateNoiseRulesScopeHint();
         renderNoiseRulesList();
         els.noiseRulesPanel.hidden = false;
@@ -2544,47 +2672,107 @@
     function renderNoiseRulesList() {
         const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
         const isGlobalPanel = noiseRuleMode === 'panel' && noiseRuleScope === 'global';
+
+        if (noiseRuleScope === 'project') {
+            container.innerHTML = renderGlobalOverridesSection() + renderCustomRulesSection();
+            return;
+        }
+
         if (noiseRules.length === 0) {
             container.innerHTML = '<div class="mf-empty">暂无规则，点击"新增规则"添加</div>';
             return;
         }
-        container.innerHTML = noiseRules.map((r, idx) =>
-            '<div class="nr-item' + (isGlobalPanel ? ' readonly' : '') + '" data-idx="' + idx + '">'
-            + '<div class="nr-row1">'
+        container.innerHTML =
+            '<div class="nr-head-row">'
+            + '<span>规则名称</span><span>方法名正则</span><span>类名正则</span><span>来源</span><span>参数个数</span><span>启用</span>'
+            + (isGlobalPanel ? '' : '<span>操作</span>')
+            + '</div>'
+            + noiseRules.map((r, idx) =>
+            '<div class="nr-item' + (isGlobalPanel ? ' readonly' : '') + '" data-idx="' + idx + '" title="'
+            + escapeHtml(r.name || '未命名规则') + '">'
             + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称"'
                 + (isGlobalPanel ? ' disabled' : '') + '>'
-            + '<label class="nr-enable"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '> 启用</label>'
-            + (isGlobalPanel ? '' : '<button type="button" class="btn small warn nr-del">删除</button>')
-            + '</div>'
-            + '<div class="nr-row2">'
-            + '<span class="nr-label">方法名正则</span>'
-            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="如 getInstance"'
-                + (isGlobalPanel ? ' disabled' : '') + '>'
-            + '<span class="nr-label">类名正则</span>'
-            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="可选，如 .*Factory"'
-                + (isGlobalPanel ? ' disabled' : '') + '>'
-            + '</div>'
-            + '<div class="nr-row3">'
-            + '<span class="nr-label">来源</span>'
-            + '<select class="nr-source"' + (isGlobalPanel ? ' disabled' : '') + '>'
+            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="方法名正则，如 getInstance"'
+                + (isGlobalPanel ? ' disabled' : '') + ' title="方法名正则">'
+            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="类名正则，可选"'
+                + (isGlobalPanel ? ' disabled' : '') + ' title="类名正则">'
+            + '<select class="nr-source"' + (isGlobalPanel ? ' disabled' : '') + ' title="来源">'
             + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
                 '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
                 + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
                 + '</option>').join('')
             + '</select>'
-            + '<span class="nr-label">参数个数</span>'
             + '<input class="nr-paramcount" type="number" min="0" value="'
-                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="不限"'
-                + (isGlobalPanel ? ' disabled' : '') + '>'
-            + '</div>'
+                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="参数数"'
+                + (isGlobalPanel ? ' disabled' : '') + ' title="参数个数（留空不限）">'
+            + '<label class="nr-enable" title="启用"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '></label>'
+            + (isGlobalPanel ? '' : '<button type="button" class="btn small warn nr-del">删除</button>')
             + '</div>'
         ).join('');
     }
 
-    /** 从弹窗 / 页面输入收集规则 */
+    /** 全局规则覆盖区：完整规则信息 + 全局启用状态 + 本项目三态覆盖（规则本体只读，在系统配置页维护） */
+    function renderGlobalOverridesSection() {
+        const rules = globalRulesCache;
+        const srcLabel = { ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' };
+        if (!rules || rules.length === 0) {
+            return '<div class="nr-overrides-section"><div class="nr-section-title">全局规则覆盖（仅对本项目生效）</div><div class="mf-empty">暂无全局规则，可在「系统配置 → 过滤规则」中维护</div></div>';
+        }
+        const items = rules.map(r => {
+            const ov = r.id && globalOverrides.hasOwnProperty(r.id)
+                ? (globalOverrides[r.id] ? 'enabled' : 'disabled')
+                : 'inherit';
+            return '<div class="nr-item nr-override-item" data-rule-id="' + escapeHtml(r.id || '') + '" title="' + escapeHtml(r.name || '未命名规则') + '">'
+                + '<input class="nr-name" readonly value="' + escapeHtml(r.name || '') + '" title="规则名称">'
+                + '<input class="nr-method" readonly value="' + escapeHtml(r.methodPattern || '') + '" title="方法名正则">'
+                + '<input class="nr-class" readonly value="' + escapeHtml(r.classPattern || '') + '" title="类名正则">'
+                + '<input class="nr-source" readonly value="' + escapeHtml(srcLabel[r.source || 'ALL'] || '全部') + '" title="来源">'
+                + '<input class="nr-paramcount" readonly value="' + (r.paramCount != null ? r.paramCount : '') + '" title="参数个数（留空不限）">'
+                + '<span class="nr-global-state ' + (r.enabled ? 'on' : 'off') + '">' + (r.enabled ? '启用' : '禁用') + '</span>'
+                + '<select class="nr-override-select" title="本项目覆盖">'
+                + '<option value="inherit"' + (ov === 'inherit' ? ' selected' : '') + '>继承全局</option>'
+                + '<option value="enabled"' + (ov === 'enabled' ? ' selected' : '') + '>启用</option>'
+                + '<option value="disabled"' + (ov === 'disabled' ? ' selected' : '') + '>禁用</option>'
+                + '</select></div>';
+        }).join('');
+        return '<div class="nr-overrides-section">'
+            + '<div class="nr-section-title">全局规则覆盖（仅对本项目生效；规则本体在「系统配置 → 过滤规则」维护）</div>'
+            + '<div class="nr-head-row nr-override-head">'
+            + '<span>规则名称</span><span>方法名正则</span><span>类名正则</span><span>来源</span><span>参数个数</span><span>全局</span><span>本项目覆盖</span></div>'
+            + '<div class="nr-override-list">' + items + '</div></div>'
+            + '<div class="nr-section-sep"></div>';
+    }
+
+    function renderCustomRulesSection() {
+        const items = noiseRules.map((r, idx) =>
+            '<div class="nr-item" data-idx="' + idx + '" title="' + escapeHtml(r.name || '未命名规则') + '">'
+            + '<input class="nr-name" value="' + escapeHtml(r.name || '') + '" placeholder="规则名称">'
+            + '<input class="nr-method" value="' + escapeHtml(r.methodPattern || '') + '" placeholder="方法名正则，如 getInstance" title="方法名正则">'
+            + '<input class="nr-class" value="' + escapeHtml(r.classPattern || '') + '" placeholder="类名正则，可选" title="类名正则">'
+            + '<select class="nr-source" title="来源">'
+            + ['ALL', 'PROJECT', 'DEPENDENCY', 'EXTERNAL'].map((s) =>
+                '<option value="' + s + '"' + ((r.source || 'ALL') === s ? ' selected' : '') + '>'
+                + ({ ALL: '全部', PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' })[s]
+                + '</option>').join('')
+            + '</select>'
+            + '<input class="nr-paramcount" type="number" min="0" value="'
+                + (r.paramCount != null ? r.paramCount : '') + '" placeholder="参数数" title="参数个数（留空不限）">'
+            + '<label class="nr-enable" title="启用"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + '></label>'
+            + '<button type="button" class="btn small warn nr-del">删除</button>'
+            + '</div>'
+        ).join('');
+        const headRow = '<div class="nr-head-row"><span>规则名称</span><span>方法名正则</span><span>类名正则</span><span>来源</span><span>参数个数</span><span>启用</span><span>操作</span></div>';
+        return '<div class="nr-custom-section">'
+            + '<div class="nr-section-title">自定义规则（仅本项目）</div>'
+            + headRow
+            + (items || '<div class="mf-empty">暂无自定义规则，点击"新增规则"添加</div>')
+            + '</div>';
+    }
+
+    /** 从弹窗 / 页面输入收集规则（排除覆盖区项目） */
     function collectNoiseRulesFromPanel() {
         const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
-        const items = container.querySelectorAll('.nr-item');
+        const items = container.querySelectorAll('.nr-item:not(.nr-override-item)');
         const out = [];
         items.forEach((item) => {
             const pcInput = item.querySelector('.nr-paramcount').value.trim();
@@ -2601,20 +2789,36 @@
         return out;
     }
 
+    /** 从面板收集全局规则覆盖配置 */
+    function collectOverridesFromPanel() {
+        const overrides = {};
+        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        container.querySelectorAll('.nr-override-item').forEach((item) => {
+            const ruleId = item.dataset.ruleId;
+            const val = item.querySelector('.nr-override-select').value;
+            if (val === 'enabled') overrides[ruleId] = true;
+            else if (val === 'disabled') overrides[ruleId] = false;
+        });
+        return overrides;
+    }
+
     /** 将弹窗/页面当前输入同步到内存并实时刷新频次列表 + 调用链剪枝预览。
-     *  全局只读态（Step3 弹窗的全局 Tab）不实时生效：点「保存生效」后才应用 */
+     *  全局只读态（Step3 弹窗的全局 Tab）不实时生效：点「保存生效」后应用 */
     function applyNoiseRulesFromPanel() {
         if (noiseRuleMode === 'panel' && noiseRuleScope === 'global') return;
         noiseRules = collectNoiseRulesFromPanel();
-        if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
-        else globalRulesCache = noiseRules.slice();
+        if (noiseRuleScope === 'project') {
+            projectRulesCache = noiseRules.slice();
+            globalOverrides = collectOverridesFromPanel();
+        } else {
+            globalRulesCache = noiseRules.slice();
+        }
         recomputeActiveNoiseRules();
-        refreshFreqView();
-        reapplyFilterToTree();
+        refreshAllFilteredViews();
     }
 
     // Step3 入口：打开弹窗，默认切到「当前项目」Tab（全局 Tab 只读）
-    els.btnNoiseRulesProject.addEventListener('click', () => openNoiseRulesPanel('project'));
+    els.btnNoiseRulesProject.addEventListener('click', () => openNoiseRulesPanel());
     els.btnNoiseRulesClose.addEventListener('click', closeNoiseRulesPanel);
     els.noiseRulesOverlay.addEventListener('click', closeNoiseRulesPanel);
     // 刷新过滤：弹窗/页面打开时同步未保存的编辑；关闭时从磁盘重新拉取两层规则并重新过滤
@@ -2622,7 +2826,7 @@
         if (!els.noiseRulesPanel.hidden || !els.viewNoiseRules.hidden) {
             applyNoiseRulesFromPanel();
         } else {
-            loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
+            loadNoiseRules().then(refreshAllFilteredViews);
         }
     });
     document.addEventListener('keydown', (e) => {
@@ -2705,8 +2909,7 @@
                 else globalRulesCache = noiseRules.slice();
                 recomputeActiveNoiseRules();
                 renderNoiseRulesList();
-                refreshFreqView();
-                reapplyFilterToTree();
+                refreshAllFilteredViews();
             })
             .catch((err) => alert('导入失败：' + err.message + '（请确认是合法的 noise-rules.json 文件）'));
     }
@@ -2742,6 +2945,12 @@
     function handleNoiseRuleDelete(e) {
         if (e.target.classList.contains('nr-del')) {
             const idx = parseInt(e.target.closest('.nr-item').dataset.idx, 10);
+            const rule = noiseRules[idx];
+            if (!rule) return;
+            if (rule.enabled) {
+                showToast('该规则当前为启用状态，请先取消启用再删除', 'warn');
+                return;
+            }
             noiseRules.splice(idx, 1);
             renderNoiseRulesList();
             applyNoiseRulesFromPanel();
@@ -2767,17 +2976,39 @@
         fetch(url, { method: 'POST' })
             .then((r) => r.json()).then((data) => {
                 noiseRules = data || [];
-                if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
-                else globalRulesCache = noiseRules.slice();
+                if (noiseRuleScope === 'project') {
+                    projectRulesCache = noiseRules.slice();
+                    globalOverrides = {};
+                } else {
+                    globalRulesCache = noiseRules.slice();
+                }
                 recomputeActiveNoiseRules();
                 renderNoiseRulesList();
-                refreshFreqView();
-                reapplyFilterToTree();
+                refreshAllFilteredViews();
             });
     }
 
     // 保存生效（弹窗模式保存后关闭；页面模式保持打开）
     function saveNoiseRules() {
+        if (noiseRuleScope === 'project') {
+            const overrides = collectOverridesFromPanel();
+            const customRules = collectNoiseRulesFromPanel();
+            fetch(noiseRulesApiUrl(), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ globalOverrides: overrides, customRules: customRules }),
+            }).then((r) => r.json()).then((data) => {
+                globalOverrides = data.globalOverrides || {};
+                projectRulesCache = data.customRules || [];
+                noiseRules = projectRulesCache.slice();
+                recomputeActiveNoiseRules();
+                if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
+                renderNoiseRulesList();
+                refreshAllFilteredViews();
+                showToast('✓ 项目级过滤规则已保存并生效');
+            }).catch(() => alert('保存失败，请检查规则格式'));
+            return;
+        }
         const rules = collectNoiseRulesFromPanel();
         fetch(noiseRulesApiUrl(), {
             method: 'PUT',
@@ -2790,31 +3021,13 @@
             recomputeActiveNoiseRules();
             if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
             renderNoiseRulesList();
-            refreshFreqView();
-            reapplyFilterToTree();
+            refreshAllFilteredViews();
             const scopeLabel = noiseRuleScope === 'project' ? '项目级' : '全局';
             showToast('✓ ' + scopeLabel + '过滤规则已保存并生效');
         }).catch(() => alert('保存失败，请检查规则格式'));
     }
     els.btnNoiseRuleSave.addEventListener('click', saveNoiseRules);
     els.btnNrPageSave.addEventListener('click', saveNoiseRules);
-
-    // Tab 切换（全局 ↔ 项目级）
-    document.querySelectorAll('.nr-scope-tab').forEach((tab) => {
-        tab.addEventListener('click', () => {
-            if (tab.dataset.scope === noiseRuleScope) return; // 已激活
-            if (noiseRuleScope === 'project' && !currentProjectPath()) {
-                alert('⚠ 未选择项目，无法切换到项目级规则。请先在项目列表中进入一个项目。');
-                return;
-            }
-            noiseRuleScope = tab.dataset.scope;
-            document.querySelectorAll('.nr-scope-tab').forEach(t =>
-                t.classList.toggle('active', t === tab));
-            updateNoiseRulesUI();
-            loadNoiseRules().then(() => { refreshFreqView(); reapplyFilterToTree(); });
-            updateNoiseRulesScopeHint();
-        });
-    });
 
     function renderWarnings(result) {
         const items = [];
@@ -3165,6 +3378,15 @@
         expandFns.forEach((f) => f(false));
     });
 
+    // 结果区「刷新过滤」：重新拉取两层规则（含项目覆盖）→ 重算调用链剪枝 + 统计 + 频率
+    els.btnResultRefresh.addEventListener('click', () => {
+        if (!els.noiseRulesPanel.hidden || !els.viewNoiseRules.hidden) {
+            applyNoiseRulesFromPanel();
+        } else {
+            loadNoiseRules().then(refreshAllFilteredViews);
+        }
+    });
+
     els.btnBackToList.addEventListener('click', () => {
         backToBatchList();
     });
@@ -3239,21 +3461,22 @@
             els.entryConfirmedList.innerHTML =
                 '<div class="entry-empty">还没有已确认的入口 → 点上面的「🔍 补充扫描」或「➕ 手动添加」来建清单</div>';
         } else {
-            els.entryConfirmedList.innerHTML = confirmed.map(item => renderEntryRow(item, 'confirmed')).join('');
+            els.entryConfirmedList.innerHTML = confirmed.map((item, i) => renderEntryRow(item, 'confirmed', i + 1)).join('');
         }
 
         // excluded 折叠区
         if (excluded.length > 0) {
             els.entryExcludedDetails.hidden = false;
             els.entryExcludedCount.textContent = '(' + excluded.length + ')';
-            els.entryExcludedList.innerHTML = excluded.map(item => renderEntryRow(item, 'excluded')).join('');
+            els.entryExcludedList.innerHTML = excluded.map((item, i) => renderEntryRow(item, 'excluded', i + 1)).join('');
         } else {
             els.entryExcludedDetails.hidden = true;
         }
         updateEntryToolbar();
     }
 
-    function renderEntryRow(item, mode) {
+    /** 渲染清单行；num 为纯展示序号（1、2、3…），不与方法绑定 */
+    function renderEntryRow(item, mode, num) {
         const fullCls = item.className || '';
         const method = item.methodName || '';
         const desc = item.descriptor || '';
@@ -3269,6 +3492,7 @@
             const reason = item.excludeReason;
             return `<div class="entry-ex-row">
                 <div class="entry-row" data-key="${entryKey(item)}">
+                    <span class="entry-idx" title="序号">${num}</span>
                     ${sourceBadge}${groupBadge}
                     <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
                     <button class="entry-restore-btn" onclick="restoreEntry('${entryKey(item).replace(/'/g, "\\'")}')">恢复</button>
@@ -3278,6 +3502,7 @@
         }
         const checked = entrySelKeys.has(entryKey(item)) ? ' checked' : '';
         return `<div class="entry-row${checked ? ' selected' : ''}" data-key="${entryKey(item)}">
+            <span class="entry-idx" title="序号">${num}</span>
             <input type="checkbox" class="entry-cb"${checked}>
             ${sourceBadge}${groupBadge}
             <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
@@ -3805,6 +4030,12 @@
             ctx.strategy.activeProfileId = 'builtin-standard';
         }
         ctx.setEditingId(ctx.strategy.activeProfileId || 'builtin-standard');
+        try {
+            await putJson(ctx.saveUrl, ctx.strategy);
+        } catch (e) {
+            showToast('删除失败: ' + e.message, 'error');
+            return;
+        }
         renderSsProfileList();
         renderSsEditor();
         if (dsContext === 'modal') renderScanProfileSelect();
@@ -3898,7 +4129,7 @@
 
     // ---- Step 2 按钮事件 ----
 
-    // 🔍 自动扫描 → diff → 直接合并进清单 → 刷新
+    // 🔍 自动扫描 → diff → 弹窗展示候选（可勾选）→ 用户确认后批量加入
     els.btnEntryScan.addEventListener('click', async () => {
         if (!currentProjectId) { showError('请先进入项目'); return; }
         clearError();
@@ -3911,22 +4142,20 @@
             const resp = await postJson(
                 '/api/projects/' + currentProjectId + '/entries/scan',
                 { profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined) });
+            hideLoading();
             const candidates = resp.candidates || [];
             const scanExisted = resp.existed || 0;
-            let mergeResp = null;
-            if (candidates.length > 0) {
-                mergeResp = await postJson(
-                    '/api/projects/' + currentProjectId + '/entries/merge', candidates);
+            openAddEntryModal('auto');
+            if (candidates.length === 0) {
+                els.addEntryScanWrap.hidden = false;
+                els.addEntryScanList.innerHTML = '<div class="scan-result-empty">未扫描到可加入的新方法（当前清单已是最新）</div>';
+                els.addEntryScanStats.textContent = '扫描到 0 个可加入的方法' + (scanExisted > 0 ? '；' + scanExisted + ' 个已在清单中' : '');
+                setVerifyStatus('扫描完成', 'warn');
+            } else {
+                currentScanCandidates = candidates;
+                renderScanResults(candidates, scanExisted);
+                setVerifyStatus('扫描完成，请选择要加入的方法', 'ok');
             }
-            await autoLoadEntryList(currentProjectId);
-            hideLoading();
-            const total = (currentEntryList && currentEntryList.confirmed) ? currentEntryList.confirmed.length : 0;
-            const added = mergeResp ? (mergeResp.added || 0) : 0;
-            const existed = mergeResp ? (mergeResp.existed || 0) : scanExisted;
-            let msg = '✓ 扫描完成，新增 ' + added + ' 个';
-            if (existed > 0) msg += '，已存在 ' + existed + ' 个';
-            msg += '，清单共 ' + total + ' 个';
-            showError(msg, true);
         } catch (e) {
             hideLoading();
             showError('扫描失败: ' + e.message);
@@ -3937,12 +4166,24 @@
     let addEntryVerified = false;       // 扫描是否已完成
     let currentScanCandidates = [];     // 当前扫描出的候选方法（add-batch 提交用）
     let currentScanExisted = 0;         // 当前扫描结果中已在清单中的数量
-    function openAddEntryModal() {
-        els.addEntryClass.value = '';
-        els.addEntryMethod.innerHTML = '<option value="">留空（扫描该类下所有命中规则的方法）</option>';
-        els.addEntryMethodText.value = '';
-        els.addEntryPaste.value = '';
-        setVerifyStatus('未扫描', '');
+    let addEntryModalMode = 'manual';   // 'manual' | 'auto'，控制 modal 输入区显示
+    function openAddEntryModal(mode) {
+        mode = mode || 'manual';
+        addEntryModalMode = mode;
+        if (mode === 'auto') {
+            els.addEntryModalTitle.textContent = '📋 自动扫描结果';
+            els.addEntryInputArea.hidden = true;
+            els.addEntryVerify.hidden = true;
+        } else {
+            els.addEntryModalTitle.textContent = '➕ 手动添加交易入口';
+            els.addEntryInputArea.hidden = false;
+            els.addEntryVerify.hidden = false;
+            els.addEntryClass.value = '';
+            els.addEntryMethod.innerHTML = '<option value="">留空（扫描该类下所有命中规则的方法）</option>';
+            els.addEntryMethodText.value = '';
+            els.addEntryPaste.value = '';
+        }
+        setVerifyStatus(mode === 'auto' ? '扫描完成，请选择要加入的方法' : '未扫描', '');
         addEntryVerified = false;
         currentScanCandidates = [];
         currentScanExisted = 0;
@@ -3953,7 +4194,7 @@
         els.addEntryConfirm.textContent = '确定加入（0）';
         els.addEntryOverlay.hidden = false;
         els.addEntryModal.hidden = false;
-        els.addEntryClass.focus();
+        if (mode === 'manual') els.addEntryClass.focus();
     }
     function closeAddEntryModal() {
         els.addEntryOverlay.hidden = true;
@@ -3980,6 +4221,7 @@
     }
     // 渲染扫描结果列表 + 更新统计/确认按钮
     function renderScanResults(candidates, existed) {
+        els.addEntryScanWrap.hidden = false;
         const listEl = els.addEntryScanList;
         listEl.innerHTML = '';
         currentScanExisted = existed || 0;

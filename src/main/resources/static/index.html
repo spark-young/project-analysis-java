@@ -265,6 +265,7 @@
                     <button id="btnBackToList" type="button" class="btn small" hidden>← 返回清单</button>
                     <button id="btnExpandAll" type="button" class="btn small">全部展开</button>
                     <button id="btnCollapseAll" type="button" class="btn small">全部收起</button>
+                    <button id="btnResultRefresh" type="button" class="btn small" title="重新拉取过滤规则并刷新调用链、统计与频率">⟳ 刷新过滤</button>
                 </div>
             </div>
 
@@ -433,42 +434,45 @@
         </div>
     </section>
 
-    <!-- 手动添加交易入口 Modal -->
+    <!-- 手动添加 / 自动扫描结果 交易入口 Modal -->
     <div id="addEntryOverlay" class="overlay" hidden></div>
     <div id="addEntryModal" class="card add-entry-modal" hidden>
         <div class="modal-header">
-            <span class="modal-title">➕ 手动添加交易入口</span>
+            <span class="modal-title" id="addEntryModalTitle">➕ 手动添加交易入口</span>
             <button type="button" class="modal-close" id="addEntryClose">╳</button>
         </div>
         <div class="modal-body">
-            <!-- 类名 -->
-            <div class="modal-field">
-                <label class="modal-label">类名 <span class="required">*</span></label>
-                <input id="addEntryClass" type="text" list="addEntryClassList"
-                       placeholder="支持简名 OrderController，同名类需填全限定名">
-                <datalist id="addEntryClassList"></datalist>
-                <div class="modal-hint">示例：com.demo.OrderController 或 OrderController</div>
-            </div>
-            <!-- 方法名 -->
-            <div class="modal-field">
-                <label class="modal-label">方法名 <span class="modal-hint">（可选，扫描时可缩小范围）</span></label>
-                <select id="addEntryMethod" class="modal-select">
-                    <option value="">留空（扫描该类下所有命中规则的方法）</option>
-                </select>
-                <input id="addEntryMethodText" type="text"
-                       placeholder="也可以直接输入方法名（覆盖上面的下拉）"
-                       style="margin-top:6px;">
-                <div class="modal-hint">类名填好后，下拉会自动列出该类的方法；扫描时按此范围过滤</div>
-            </div>
-            <!-- 快捷粘贴 -->
-            <div class="modal-field">
-                <label class="modal-label">快捷粘贴（可选，自动填充上面两项）</label>
-                <textarea id="addEntryPaste" rows="2"
-                          placeholder="com.demo.OrderController#createOrder(Order)"></textarea>
-                <div class="modal-hint">支持 3 种格式：<br>
-                    ① com.demo.OrderController（扫描整个类）<br>
-                    ② com.demo.OrderController#createOrder（扫描指定方法）<br>
-                    ③ com.demo.OrderController#createOrder(Order)（精确重载，类型名可简化）</div>
+            <!-- 输入区（自动扫描模式下隐藏） -->
+            <div id="addEntryInputArea">
+                <!-- 类名 -->
+                <div class="modal-field">
+                    <label class="modal-label">类名 <span class="required">*</span></label>
+                    <input id="addEntryClass" type="text" list="addEntryClassList"
+                           placeholder="支持简名 OrderController，同名类需填全限定名">
+                    <datalist id="addEntryClassList"></datalist>
+                    <div class="modal-hint">示例：com.demo.OrderController 或 OrderController</div>
+                </div>
+                <!-- 方法名 -->
+                <div class="modal-field">
+                    <label class="modal-label">方法名 <span class="modal-hint">（可选，扫描时可缩小范围）</span></label>
+                    <select id="addEntryMethod" class="modal-select">
+                        <option value="">留空（扫描该类下所有命中规则的方法）</option>
+                    </select>
+                    <input id="addEntryMethodText" type="text"
+                           placeholder="也可以直接输入方法名（覆盖上面的下拉）"
+                           style="margin-top:6px;">
+                    <div class="modal-hint">类名填好后，下拉会自动列出该类的方法；扫描时按此范围过滤</div>
+                </div>
+                <!-- 快捷粘贴 -->
+                <div class="modal-field">
+                    <label class="modal-label">快捷粘贴（可选，自动填充上面两项）</label>
+                    <textarea id="addEntryPaste" rows="2"
+                              placeholder="com.demo.OrderController#createOrder(Order)"></textarea>
+                    <div class="modal-hint">支持 3 种格式：<br>
+                        ① com.demo.OrderController（扫描整个类）<br>
+                        ② com.demo.OrderController#createOrder（扫描指定方法）<br>
+                        ③ com.demo.OrderController#createOrder(Order)（精确重载，类型名可简化）</div>
+                </div>
             </div>
 
             <!-- 扫描状态行 -->
@@ -526,8 +530,8 @@
     <div id="noiseRulesPanel" class="card noise-rules-panel" hidden>
         <div class="nr-header">
             <div class="nr-header-text">
-                <span class="panel-title">样板方法过滤规则</span>
-                <span class="hint">命中规则的方法将从列表和 Excel 导出中过滤掉</span>
+                <span class="panel-title">样板方法过滤规则（项目级）</span>
+                <span class="hint">覆盖全局规则的启用状态（仅本项目生效）+ 本项目自定义规则；全局规则本体在「系统配置 → 过滤规则」维护</span>
             </div>
             <div class="nr-header-actions">
                 <button id="btnNoiseRuleAdd" type="button" class="btn small">+ 新增规则</button>
@@ -536,12 +540,7 @@
                 <button id="btnNoiseRulesClose" type="button" class="btn-close-corner" aria-label="关闭">✕</button>
             </div>
         </div>
-        <!-- 全局 / 项目级 Tab 切换 -->
-        <div class="nr-scope-tabs">
-            <button type="button" class="nr-scope-tab active" data-scope="global">🌐 全局默认（所有项目通用）</button>
-            <button type="button" class="nr-scope-tab" data-scope="project">📦 当前项目（仅影响本项目）</button>
-            <span id="nrScopeHint" class="nr-scope-hint hint"></span>
-        </div>
+        <!-- 项目级固定视图：全局规则覆盖 + 项目自定义规则 -->
         <div class="nr-toolbar">
             <button id="btnNoiseRuleSelectAll" type="button" class="btn small">全选启用</button>
             <button id="btnNoiseRuleSelectNone" type="button" class="btn small">全不选</button>
@@ -550,6 +549,7 @@
             <button id="btnNoiseRuleExport" type="button" class="btn small">导出</button>
             <button id="btnNoiseRuleImport" type="button" class="btn small">导入</button>
             <input id="noiseRuleImportFile" type="file" accept=".json,application/json" hidden>
+            <span id="nrScopeHint" class="nr-scope-hint hint"></span>
         </div>
         <div id="noiseRulesList" class="nr-list"></div>
     </div>

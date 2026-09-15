@@ -549,6 +549,7 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     border-top: 1px solid #e2e8f0;
     background: #f8fafc;
 }
+.modal-footer .btn[hidden] { display: none; }
 .modal-verify-status {
     font-size: 12px;
     color: #94a3b8;
@@ -699,34 +700,48 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 4px;
     padding-right: 4px;
 }
 .nr-item {
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 6px 10px;
+    padding: 4px 8px;
     background: #f8fafc;
 }
-.nr-row1, .nr-row2, .nr-row3 {
-    display: flex;
-    align-items: center;
+.nr-item:hover { border-color: #c7d2fe; }
+/* 单行网格 + 共享表头：每条规则压成一行，列头吸附在滚动区顶部 */
+.nr-head-row,
+.nr-item {
+    display: grid;
+    grid-template-columns: minmax(96px, 1.1fr) minmax(130px, 1.5fr) minmax(110px, 1.2fr) 72px 62px 40px 56px;
     gap: 6px;
-    margin-bottom: 4px;
-    flex-wrap: wrap;
+    align-items: center;
 }
-.nr-row1:last-child, .nr-row2:last-child, .nr-row3:last-child { margin-bottom: 0; }
+.nr-head-row {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 5px 10px;
+    background: #eef2f7;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+    user-select: none;
+}
+.nr-head-row span:nth-child(6),
+.nr-head-row span:last-child { text-align: center; }
 .nr-name {
-    flex: 1 1 140px;
-    min-width: 100px;
+    width: 100%;
     padding: 3px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 12px;
 }
 .nr-method, .nr-class {
-    flex: 1 1 120px;
-    min-width: 80px;
+    width: 100%;
     padding: 3px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -734,20 +749,20 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     font-family: ui-monospace, Consolas, monospace;
 }
 .nr-source {
-    padding: 3px 6px;
+    width: 100%;
+    padding: 3px 4px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 11px;
 }
 .nr-paramcount {
-    width: 60px;
+    width: 100%;
     padding: 3px 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
     font-size: 11px;
 }
-.nr-label { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
-.nr-enable { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+.nr-enable { display: flex; align-items: center; justify-content: center; margin: 0; cursor: pointer; }
 
 /* 全局规则独立页面视图 — 复用弹窗的 nr-* 类名，但改为内联卡片布局 */
 .noise-rules-page {
@@ -780,6 +795,80 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 }
 .nr-item.readonly .nr-del {
     display: none !important;
+}
+
+/* 项目级 Tab 两段式布局 */
+/* 覆盖区：固定最大高度，溢出滚动，避免撑爆弹窗 */
+.nr-overrides-section {
+    flex: 0 0 auto;
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px;
+    margin-bottom: 4px;
+    background: #fafbfc;
+}
+.nr-section-title {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 2px 0 6px;
+    user-select: none;
+}
+/* 覆盖区列表容器 */
+.nr-override-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+/* 覆盖区每行：复用 nr-item 7 列网格，底色弱化标识只读；全局状态徽章 + 三态覆盖下拉 */
+.nr-override-item {
+    background: #f4f6f9;
+}
+.nr-override-item input {
+    color: #64748b;
+    background: #eef1f5;
+    cursor: default;
+}
+.nr-global-state {
+    font-size: 11px;
+    text-align: center;
+    border-radius: 4px;
+    padding: 2px 0;
+    user-select: none;
+}
+.nr-global-state.on {
+    color: #15803d;
+    background: #dcfce7;
+}
+.nr-global-state.off {
+    color: #b91c1c;
+    background: #fee2e2;
+}
+.nr-override-select {
+    width: 100%;
+    padding: 2px 4px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 11px;
+    background: #fff;
+}
+/* 自定义规则区 */
+.nr-custom-section {
+    flex: 1 1 auto;
+    min-height: 60px;
+}
+.nr-custom-section .nr-head-row {
+    position: static;
+    margin-bottom: 4px;
+}
+/* 两段之间的分隔线 */
+.nr-section-sep {
+    height: 1px;
+    background: var(--border);
+    margin: 2px 0 6px;
+    flex: 0 0 auto;
 }
 
 .node-row {
@@ -1046,6 +1135,15 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 }
 .entry-row:hover { background: #f1f5f9; }
 .entry-row input[type="checkbox"] { flex-shrink: 0; }
+/* 清单行序号：纯展示编号，不与方法绑定 */
+.entry-idx {
+    flex-shrink: 0;
+    min-width: 22px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--text-dim);
+    user-select: none;
+}
 .entry-display {
     font-family: Consolas, "Microsoft YaHei", monospace;
     font-size: 13px;
@@ -1654,38 +1752,7 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 .step3-hint-icon { font-size: 16px; }
 .step3-hint-text { color: #0369a1; }
 
-/* ===== 批次2: 噪声规则全局/项目 Tab 切换 ===== */
-.nr-scope-tabs {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 8px 10px;
-    margin: 8px 12px;
-    background: #f8fafc;
-    border-radius: 6px;
-    border: 1px solid #e2e8f0;
-}
-.nr-scope-tab {
-    padding: 5px 12px;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    background: transparent;
-    font-size: 13px;
-    color: #64748b;
-    cursor: pointer;
-    transition: all .15s;
-    white-space: nowrap;
-    flex-shrink: 0;
-}
-.nr-scope-tab:hover {
-    color: #1e293b;
-    background: #e2e8f0;
-}
-.nr-scope-tab.active {
-    background: #0284c7;
-    color: white;
-    border-color: #0284c7;
-}
+/* ===== 项目级过滤规则弹窗 ===== */
 .nr-scope-hint {
     margin-left: auto;
     font-size: 12px;
@@ -1779,6 +1846,9 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
 
 /* ============ 通用确认弹窗 ============ */
 .confirm-modal { width: 420px; }
+/* 确认弹窗必须高于所有普通弹窗（add-entry-modal z-index:1001 / scan-strategy-panel z-index:1002） */
+#confirmOverlay { z-index: 2000; }
+#confirmModal { z-index: 2001; }
 .confirm-message {
     font-size: 13.5px;
     color: #334155;
