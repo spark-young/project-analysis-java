@@ -111,6 +111,6 @@ private void collectStats(CallNode node, MethodKey caller, Stats stats, Map<Meth
 
 1. `mvn -B test` → 全量 82+ 新增用例绿。
 2. `mvn -B package -DskipTests` 打包。
-3. `java -jar target\call-graph-analyzer.jar` 启动，本地路径/自分析。
+3. `java -jar target\project-analysis-java.jar` 启动，本地路径/自分析。
 4. 页面核对：6 指标中"项目方法"改为独立去重数（≤ 原重复值）；右上角"高频方法"按钮可点，面板展示 top 20 排行，点击某项展开调用方 + 行号。
 5. Excel 导出：总览 sheet 的方法计数已是去重口径。

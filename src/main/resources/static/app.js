@@ -3679,18 +3679,7 @@
         backToBatchList();
     });
 
-    // ------------------------------------------------------------------
-    // 默认演示值：预填本工具自身，开箱即可点击"开始分析"
-    // ------------------------------------------------------------------
-
-    (async function loadDefaults() {
-        try {
-            const resp = await fetch('/api/defaults');
-            if (!resp.ok) return;
-            const d = await resp.json();
-            if (!els.projectPath.value) els.projectPath.value = d.projectPath || '';
-        } catch (e) { /* 静默失败，用户手填 */ }
-    })();
+    // 项目路径不预填：输入框留空由用户自行填写，示例写法见其 placeholder 提示
 
     // 页面加载时拉取样板方法过滤规则
     loadNoiseRules();

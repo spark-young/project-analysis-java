@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
+<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.spark</groupId>
-    <artifactId>call-graph-analyzer</artifactId>
+    <artifactId>project-analysis-java</artifactId>
     <version>1.0.0</version>
-    <name>call-graph-analyzer</name>
+    <name>project-analysis-java</name>
     <description>Java 方法调用链静态分析工具（内网安全合规：纯源码工程、零出站网络、只读分析）</description>
 
     <properties>
@@ -64,7 +64,7 @@
     </dependencies>
 
     <build>
-        <finalName>call-graph-analyzer</finalName>
+        <finalName>project-analysis-java</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
