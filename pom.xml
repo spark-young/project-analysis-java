@@ -12,16 +12,16 @@
     </parent>
 
     <groupId>com.spark</groupId>
-    <artifactId>call-graph-analyzer</artifactId>
+    <artifactId>project-analysis-java</artifactId>
     <version>1.0.0</version>
-    <name>call-graph-analyzer</name>
+    <name>project-analysis-java</name>
     <description>Java 方法调用链静态分析工具（内网安全合规：纯源码工程、零出站网络、只读分析）</description>
 
     <properties>
-        <java.version>8</java.version>
-        <maven.compiler.source>8</maven.compiler.source>
-        <maven.compiler.target>8</maven.compiler.target>
-        <maven.compiler.release>8</maven.compiler.release>
+        <java.version>11</java.version>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <maven.compiler.release>11</maven.compiler.release>
         <asm.version>9.7</asm.version>
         <poi.version>5.2.5</poi.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -64,7 +64,7 @@
     </dependencies>
 
     <build>
-        <finalName>call-graph-analyzer</finalName>
+        <finalName>project-analysis-java</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
@@ -73,3 +73,4 @@
         </plugins>
     </build>
 </project>
+
