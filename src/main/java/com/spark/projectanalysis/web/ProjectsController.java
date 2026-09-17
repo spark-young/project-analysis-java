@@ -4,6 +4,7 @@ import com.spark.projectanalysis.engine.ClasspathResolver;
 import com.spark.projectanalysis.service.AnalysisException;
 import com.spark.projectanalysis.service.AnalysisCacheService;
 import com.spark.projectanalysis.service.AnalysisService;
+import com.spark.projectanalysis.service.CompileOrchestrationService;
 import com.spark.projectanalysis.service.EntryListService;
 import com.spark.projectanalysis.service.GitCloneService;
 import com.spark.projectanalysis.service.GitRefService;
@@ -57,16 +58,19 @@ public class ProjectsController {
     private final EntryListService entryListService;
     private final GitCloneService gitCloneService;
     private final GitRefService gitRefService;
+    private final CompileOrchestrationService compileOrchestrationService;
 
     public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
                               AnalysisCacheService cacheService, EntryListService entryListService,
-                              GitCloneService gitCloneService, GitRefService gitRefService) {
+                              GitCloneService gitCloneService, GitRefService gitRefService,
+                              CompileOrchestrationService compileOrchestrationService) {
         this.registry = registry;
         this.analysisService = analysisService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
         this.gitCloneService = gitCloneService;
         this.gitRefService = gitRefService;
+        this.compileOrchestrationService = compileOrchestrationService;
     }
 
     /** 列出所有项目，并附加实时检测的状态 */
@@ -157,7 +161,7 @@ public class ProjectsController {
             }
 
             // 检查是否有编译产物
-            Path artifact = findArtifactDir(root);
+            Path artifact = compileOrchestrationService.findExistingArtifacts(root);
             p.compiled = (artifact != null);
 
             log.info("[状态] {}: artifactDir={}, compiled={}, analyzed={}",
@@ -202,47 +206,6 @@ public class ProjectsController {
         } catch (Exception e) {
             p.changeStatus = "ERROR";
             p.changeHint = "状态检测失败: " + e.getMessage();
-        }
-    }
-
-    /** 查找编译产物目录：目录存在且内部有 .class 文件才认为有效 */
-    private Path findArtifactDir(Path root) {
-        // 优先顺序：标准 Maven/Gradle 目录 → Eclipse bin/ → 嵌套查找
-        Path[] candidates = new Path[] {
-                root.resolve("target").resolve("classes"),
-                root.resolve("build").resolve("classes"),
-                root.resolve("bin"),                           // Eclipse 默认输出
-                root.resolve("build")                          // javac 输出根目录
-        };
-        for (Path c : candidates) {
-            if (Files.isDirectory(c) && hasClassFiles(c)) {
-                return c;
-            }
-        }
-        // 嵌套一层兜底
-        try (Stream<Path> walk = Files.walk(root, 3)) {
-            return walk.filter(Files::isDirectory)
-                    .filter(p -> {
-                        String s = p.toString().replace('\\', '/');
-                        return s.endsWith("/target/classes") || s.endsWith("/build/classes")
-                                || s.endsWith("/out/production");
-                    })
-                    .filter(this::hasClassFiles)
-                    .findFirst().orElse(null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 目录或子目录下是否有 .class 文件 */
-    private boolean hasClassFiles(Path dir) {
-        try (Stream<Path> walk = Files.walk(dir, 50)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName() != null
-                            && p.getFileName().toString().endsWith(".class"))
-                    .findFirst().isPresent();
-        } catch (Exception e) {
-            return false;
         }
     }
 

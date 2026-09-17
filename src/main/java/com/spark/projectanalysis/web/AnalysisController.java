@@ -48,20 +48,15 @@ public class AnalysisController {
     private final AnalysisService analysisService;
     private final ExcelReportGenerator excelReportGenerator;
     private final GitPrepareService gitPrepareService;
-    private final MavenCompileService mavenCompileService;
-    private final JavacCompileService javacCompileService;
     private final BatchAnalyzeService batchAnalyzeService;
     private final AnalysisCacheService cacheService;
 
     public AnalysisController(AnalysisService analysisService, ExcelReportGenerator excelReportGenerator,
                               GitPrepareService gitPrepareService,
-                              MavenCompileService mavenCompileService, JavacCompileService javacCompileService,
                               BatchAnalyzeService batchAnalyzeService, AnalysisCacheService cacheService) {
         this.analysisService = analysisService;
         this.excelReportGenerator = excelReportGenerator;
         this.gitPrepareService = gitPrepareService;
-        this.mavenCompileService = mavenCompileService;
-        this.javacCompileService = javacCompileService;
         this.batchAnalyzeService = batchAnalyzeService;
         this.cacheService = cacheService;
     }
@@ -113,95 +108,6 @@ public class AnalysisController {
             throw new AnalysisException(HttpStatus.NOT_FOUND, "任务不存在或已过期: " + jobId);
         }
         return status;
-    }
-
-    /**
-     * 自动探测项目类型并按需编译（Maven / javac / 已有产物）。
-     * force=true 时强制 clean compile（用于"重新分析"场景）。
-     */
-    private void compileIfNeeded(Path root, boolean force) {
-        // 路径不存在是调用方传错（400），不能落到下面的通用 catch 变成"编译探测失败"的 500
-        if (!Files.exists(root)) {
-            throw new AnalysisException(HttpStatus.BAD_REQUEST, "项目路径不存在: " + root);
-        }
-        try {
-            if (!force) {
-                // 非强制：已有产物就跳过
-                if (findExistingArtifacts(root) != null) {
-                    return;
-                }
-            }
-            // Maven 项目
-            if (Files.exists(root.resolve("pom.xml"))) {
-                MavenCompileService.CompileResult r = force
-                        ? mavenCompileService.compileClean(root)
-                        : mavenCompileService.compile(root);
-                if (!r.isSuccess()) {
-                    throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
-                            (force ? "clean compile" : "Maven 编译") + "失败：\n" + r.getOutputTail());
-                }
-                return;
-            }
-            // 普通 Java 源码 → javac（没有 clean 概念，强制时直接覆盖 build/）
-            boolean hasJava;
-            try (Stream<Path> walk = Files.walk(root, 100)) {
-                hasJava = walk.anyMatch(p ->
-                        Files.isRegularFile(p) && p.getFileName().toString().endsWith(".java"));
-            }
-            if (hasJava) {
-                Path buildRoot = root.resolve("build");
-                Files.createDirectories(buildRoot);
-                JavacCompileService.CompileResult r = javacCompileService.compile(root, buildRoot);
-                if (!r.isSuccess()) {
-                    throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
-                            "javac 编译失败：\n" + r.getOutputTail());
-                }
-            }
-            // Gradle 等其他构建工具 → 静默跳过（用户应手动编译）
-        } catch (AnalysisException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new AnalysisException(org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
-                    "编译探测失败：" + e.getMessage());
-        }
-    }
-
-    /** 查找已有的编译产物目录：存在且有 .class 文件才认为有效 */
-    private Path findExistingArtifacts(Path root) {
-        Path[] candidates = new Path[] {
-                root.resolve("target").resolve("classes"),
-                root.resolve("build").resolve("classes"),
-                root.resolve("bin"),
-                root.resolve("build")
-        };
-        for (Path c : candidates) {
-            if (Files.isDirectory(c) && hasClassFiles(c)) return c;
-        }
-        try (Stream<Path> walk = Files.walk(root, 3)) {
-            return walk.filter(Files::isDirectory)
-                    .filter(p -> {
-                        String s = p.toString().replace('\\', '/');
-                        return s.endsWith("/target/classes")
-                                || s.endsWith("/build/classes")
-                                || s.endsWith("/out/production");
-                    })
-                    .filter(this::hasClassFiles)
-                    .findFirst().orElse(null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 目录或子目录下是否有 .class 文件 */
-    private boolean hasClassFiles(Path dir) {
-        try (Stream<Path> walk = Files.walk(dir, 50)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName() != null
-                            && p.getFileName().toString().endsWith(".class"))
-                    .findFirst().isPresent();
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     @PostMapping("/git/prepare")
