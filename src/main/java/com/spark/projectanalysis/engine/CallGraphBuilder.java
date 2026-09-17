@@ -32,6 +32,8 @@ public final class CallGraphBuilder {
     private final ClassMetadataRegistry registry;
     /** 同级去重表：from → 已挂载的 to 集合（单次构建生命周期内共享） */
     private final Map<Integer, Set<Integer>> seenEdgesPerParent = new HashMap<>();
+    /** 方法节点索引：MethodKey → 节点 id，避免 indexOfMethod/markCycle 的 O(N) 线性扫描（OPT-12） */
+    private final Map<MethodKey, Integer> nodeIndex = new HashMap<>();
 
     public CallGraphBuilder(ClassMetadataRegistry registry) {
         this.registry = registry;
@@ -179,6 +181,7 @@ public final class CallGraphBuilder {
 
     private void resetSharedState() {
         seenEdgesPerParent.clear();
+        nodeIndex.clear();
     }
 
     /** 图版 expand：语义与 {@link #expand} 完全一致，但把"挂子节点建树"改为"建边+去重节点"。 */
@@ -250,15 +253,11 @@ public final class CallGraphBuilder {
         }
     }
 
-    /** 将方法标记为环（若节点已注册）。不强制新节点。 */
+    /** 将方法标记为环（若节点已注册）。不强制新节点。O(1) 查 index（OPT-12）。 */
     private void markCycle(CallGraph g, MethodKey key) {
-        for (int i = 0; i < g.getMethods().size(); i++) {
-            GraphMethod m = g.getMethods().get(i);
-            if (m.getOwner().equals(key.getOwner()) && m.getName().equals(key.getName())
-                    && m.getDescriptor().equals(key.getDescriptor())) {
-                m.setCycle(true);
-                return;
-            }
+        Integer id = nodeIndex.get(key);
+        if (id != null) {
+            g.getMethods().get(id).setCycle(true);
         }
     }
 
@@ -267,22 +266,19 @@ public final class CallGraphBuilder {
      * 去重命中不耗预算；新增节点时递减 budget（根节点已在 buildGraph 提前占用 1）。
      */
     private int ensureMethod(CallGraph g, MethodKey key, SourceType source, int[] budget) {
-        int existing = indexOfMethod(g, key);
-        if (existing >= 0) return existing;                         // 去重命中：不耗预算
-        if (budget[0] <= 0) return -1;                              // 预算耗尽
+        Integer existing = nodeIndex.get(key);
+        if (existing != null) return existing;                     // 去重命中：不耗预算（O(1)）
+        if (budget[0] <= 0) return -1;                             // 预算耗尽
         budget[0]--;
         int id = g.getMethods().size();
         g.getMethods().add(GraphMethod.of(key, source));
+        nodeIndex.put(key, id);                                    // 维持索引一致
         return id;
     }
 
     private int indexOfMethod(CallGraph g, MethodKey key) {
-        for (int i = 0; i < g.getMethods().size(); i++) {
-            GraphMethod m = g.getMethods().get(i);
-            if (m.getOwner().equals(key.getOwner()) && m.getName().equals(key.getName())
-                    && m.getDescriptor().equals(key.getDescriptor())) return i;
-        }
-        return -1;
+        Integer id = nodeIndex.get(key);
+        return id != null ? id : -1;
     }
 
     /** 同级去重后挂边。同父→同被调只建一次。返回是否真正挂载。 */
