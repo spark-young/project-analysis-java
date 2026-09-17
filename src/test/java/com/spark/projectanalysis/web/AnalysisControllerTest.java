@@ -230,4 +230,23 @@ class AnalysisControllerTest {
         assertEquals('K', body[1]);
         assertTrue(body.length > 1000, "Excel 应有实际内容");
     }
+
+    // ------------------------------------------------------------------
+    // 全局异常处理（OPT-11）
+    // ------------------------------------------------------------------
+
+    @Test
+    void test_malformedJson_returns400() throws Exception {
+        mvc.perform(post("/api/analyze").contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"bad\": json }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
+    void test_unsupportedMethod_returns405() throws Exception {
+        // /api/analyze 仅接受 POST；发 GET 应返回 405
+        mvc.perform(get("/api/analyze"))
+                .andExpect(status().isMethodNotAllowed());
+    }
 }
