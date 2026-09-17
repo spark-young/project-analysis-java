@@ -602,46 +602,6 @@ public class AnalysisService {
         return MavenRepoLocator.detect();
     }
 
-    /**
-     * 页面默认演示值：默认分析本工具自身。
-     * projectPath 取运行时 classpath 位置——fat jar 运行即分析该 jar（自带依赖，随处可用）；
-     * classes 目录运行（IDE/mvn）则回退到项目根目录。
-     */
-    public AnalyzeRequest demoDefaults() {
-        AnalyzeRequest req = new AnalyzeRequest();
-        req.setClassName("com.spark.projectanalysis.service.AnalysisService");
-        req.setMethodName("analyze");
-        req.setProjectPath(selfLocation());
-        return req;
-    }
-
-    private String selfLocation() {
-        try {
-            java.net.URL url = AnalysisService.class.getProtectionDomain()
-                    .getCodeSource().getLocation();
-            String spec = url.toString();
-            // Spring Boot fat jar：内嵌 classes 的 code source 形如
-            // jar:file:/path/project-analysis-java.jar!/BOOT-INF/classes!/ → 取外层 jar 本身
-            if (spec.startsWith("jar:file:")) {
-                int idx = spec.indexOf("!/");
-                if (idx > 0) {
-                    Path jar = Paths.get(new java.net.URI(spec.substring(4, idx)));
-                    if (Files.isRegularFile(jar)) return jar.toString();
-                }
-            }
-            Path p = Paths.get(url.toURI());
-            if (Files.isRegularFile(p)) {
-                return p.toString(); // jar：直接作为 fat jar 分析
-            }
-            Path parent = p.getParent();
-            return parent != null && parent.getParent() != null
-                    ? parent.getParent().toString() // target/classes → 项目根
-                    : p.toString();
-        } catch (Exception e) {
-            return System.getProperty("user.dir");
-        }
-    }
-
     private void closeQuietly(ProjectLayout layout) {
         try {
             layout.close();
