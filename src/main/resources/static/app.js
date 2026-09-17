@@ -3976,7 +3976,7 @@
                     <span class="entry-idx" title="序号">${num}</span>
                     ${sourceBadge}${groupBadge}
                     <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
-                    <button class="entry-restore-btn" onclick="restoreEntry('${entryKey(item).replace(/'/g, "\\'")}')">恢复</button>
+                    <button class="entry-restore-btn">恢复</button>
                 </div>
                 ${reason ? `<div class="entry-reason" title="${escapeHtml(reason)}">排除原因：${escapeHtml(reason)}</div>` : ''}
             </div>`;
@@ -3987,7 +3987,7 @@
             <input type="checkbox" class="entry-cb"${checked}>
             ${sourceBadge}${groupBadge}
             <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
-            <button class="entry-exclude-btn" onclick="excludeEntry('${entryKey(item).replace(/'/g, "\\'")}')">排除</button>
+            <button class="entry-exclude-btn">排除</button>
         </div>`;
     }
 
@@ -5012,22 +5012,39 @@
         }
     });
 
-    // 排除（confirmed → excluded）：单条入口也走统一弹窗，便于选原因
-    window.excludeEntry = function (key) {
-        if (!currentProjectId) return;
-        const items = ((currentEntryList && currentEntryList.confirmed) || [])
-            .filter(it => entryKey(it) === key);
-        if (items.length === 0) return;
-        openExcludeModal(items);
+    // 排除 / 恢复：收进 IIFE 内的局部对象持有，不再挂到 window（OPT-32）。
+    // 调用点由「生成 HTML 时的内联 onclick」改为下方事件委托，消除对全局函数的依赖。
+    const entryActions = {
+        /** 排除（confirmed → excluded）：单条入口也走统一弹窗，便于选原因 */
+        exclude(key) {
+            if (!currentProjectId) return;
+            const items = ((currentEntryList && currentEntryList.confirmed) || [])
+                .filter(it => entryKey(it) === key);
+            if (items.length === 0) return;
+            openExcludeModal(items);
+        },
+        /** 恢复（excluded → confirmed） */
+        restore(key) {
+            if (!currentProjectId) return;
+            postJson('/api/projects/' + currentProjectId + '/entries/restore', { key: key })
+                .then(() => autoLoadEntryList(currentProjectId))
+                .catch(e => showError('恢复失败: ' + e.message));
+        },
     };
 
-    // 恢复（excluded → confirmed）
-    window.restoreEntry = function (key) {
-        if (!currentProjectId) return;
-        postJson('/api/projects/' + currentProjectId + '/entries/restore', { key: key })
-            .then(() => autoLoadEntryList(currentProjectId))
-            .catch(e => showError('恢复失败: ' + e.message));
-    };
+    /** 入口行内「排除 / 恢复」按钮：事件委托（原来依赖 window.* 内联 onclick，OPT-32） */
+    els.entryConfirmedList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.entry-exclude-btn');
+        if (!btn) return;
+        const row = btn.closest('.entry-row');
+        if (row && row.dataset.key) entryActions.exclude(row.dataset.key);
+    });
+    els.entryExcludedList.addEventListener('click', (e) => {
+        const btn = e.target.closest('.entry-restore-btn');
+        if (!btn) return;
+        const row = btn.closest('.entry-row');
+        if (row && row.dataset.key) entryActions.restore(row.dataset.key);
+    });
 
     // ==================================================================
     // 批量排除：清单勾选 + 统一/逐个原因弹窗
