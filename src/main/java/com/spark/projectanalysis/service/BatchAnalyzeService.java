@@ -14,8 +14,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PreDestroy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 按交易入口清单的批量分析（异步 Job 模式，前端轮询进度）。
@@ -46,6 +49,9 @@ public class BatchAnalyzeService {
 
     /** Job TTL（毫秒）：完成/失败后保留 5 分钟 */
     private static final long JOB_TTL_MS = 5 * 60 * 1000L;
+
+    /** Job 表硬上限：即使未到 TTL，超过上限也优先淘汰最旧的已结束 Job，避免无上限增长 */
+    private static final int MAX_JOBS = 200;
 
     private final AnalysisService analysisService;
     private final AnalysisCacheService cacheService;
@@ -211,6 +217,8 @@ public class BatchAnalyzeService {
             job.update(BatchAnalyzeStatus.State.DONE, 100,
                     "✓ 完成！成功 " + (entries.size() - failed) + " 个，失败 " + failed + " 个",
                     entries.size(), entries.size());
+            // 成功完成的 Job 也记录结束时间：此前只有失败记 doneAt，导致成功 Job 永远不被清理
+            job.doneAt = System.currentTimeMillis();
             log.info("[批量分析] 完成 entries={}, failed={}, totalNodes={}, duration={}ms",
                     entries.size(), failed, combined.getTotalNodes(), combined.getDurationMs());
         } catch (Exception e) {
@@ -290,5 +298,28 @@ public class BatchAnalyzeService {
             if (j.doneAt == 0) return false; // 还在跑
             return now - j.doneAt > JOB_TTL_MS;
         });
+        // 上限兜底：超过 MAX_JOBS 时淘汰最旧的"已结束"任务（正在跑的保留），保证 Job 表有界
+        int overflow = jobs.size() - MAX_JOBS;
+        if (overflow > 0) {
+            jobs.entrySet().stream()
+                    .filter(e -> e.getValue().doneAt > 0)
+                    .sorted(Comparator.comparingLong(e -> e.getValue().doneAt))
+                    .limit(overflow)
+                    .forEach(e -> jobs.remove(e.getKey(), e.getValue()));
+        }
+    }
+
+    /** 应用关闭时优雅关闭异步执行器：先 shutdown，等待收尾，超时再 shutdownNow。 */
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
