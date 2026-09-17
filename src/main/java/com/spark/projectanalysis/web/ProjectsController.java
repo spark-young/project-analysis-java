@@ -52,6 +52,20 @@ public class ProjectsController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectsController.class);
 
+    // ============ 项目变更状态（changeStatus）—— 前端契约 ============
+    // app.js 按这些字面量判断渲染，序列化进 JSON 的值必须逐字不变；
+    // 统一在此持有以消除散落的字符串字面量与拼写风险（OPT-31）。
+    /** 磁盘目录已被移除 */
+    private static final String STATUS_MISSING = "MISSING";
+    /** 无编译产物 / 源码比编译产物新，需重新编译 */
+    private static final String STATUS_NEEDS_COMPILE = "NEEDS_COMPILE";
+    /** 已编译但尚未分析 */
+    private static final String STATUS_NEEDS_ANALYZE = "NEEDS_ANALYZE";
+    /** 一切就绪 */
+    private static final String STATUS_UP_TO_DATE = "UP_TO_DATE";
+    /** 状态检测失败 */
+    private static final String STATUS_ERROR = "ERROR";
+
     private final ProjectRegistry registry;
     private final AnalysisService analysisService;
     private final AnalysisCacheService cacheService;
@@ -146,7 +160,7 @@ public class ProjectsController {
             p.analyzed = cacheService.hasAnyCache(p.projectPath);
 
             if (!p.existsOnDisk) {
-                p.changeStatus = "MISSING";
+                p.changeStatus = STATUS_MISSING;
                 p.changeHint = "磁盘目录已被移除，请重新导入";
                 p.compiled = false;
                 return;
@@ -155,7 +169,7 @@ public class ProjectsController {
             // jar 型项目本身已是编译产物，无需再检测 target/classes
             if (isJarProject) {
                 p.compiled = true;
-                p.changeStatus = p.analyzed ? "UP_TO_DATE" : "NEEDS_ANALYZE";
+                p.changeStatus = p.analyzed ? STATUS_UP_TO_DATE : STATUS_NEEDS_ANALYZE;
                 p.changeHint = p.analyzed ? "✓ 已就绪" : "未执行过分析，进入项目后点击\"开始分析\"";
                 return;
             }
@@ -168,7 +182,7 @@ public class ProjectsController {
                     p.name, artifact, p.compiled, p.analyzed);
 
             if (!p.compiled) {
-                p.changeStatus = "NEEDS_COMPILE";
+                p.changeStatus = STATUS_NEEDS_COMPILE;
                 p.changeHint = "GIT".equals(p.type)
                         ? "未找到编译产物，重新导入或切换版本会自动 mvn 编译"
                         : "未找到编译产物：本工具不编译本地项目，请先自行编译（如 mvn compile），或直接导入 target/classes、jar";
@@ -187,7 +201,7 @@ public class ProjectsController {
             // 只有源码比 .class 晚超过 5 分钟，才认为"真的修改过没重新编译"
             if (newestSourceMtime > newestClassMtime + 5 * 60 * 1000L) {
                 // 源码修改时间晚于编译产物 → 需要重新编译
-                p.changeStatus = "NEEDS_COMPILE";
+                p.changeStatus = STATUS_NEEDS_COMPILE;
                 p.changeHint = "GIT".equals(p.type)
                         ? "源码比编译产物新，切换版本会自动重新编译"
                         : "源码比编译产物新，请自行重新编译后再分析";
@@ -195,16 +209,16 @@ public class ProjectsController {
             }
 
             if (!p.analyzed) {
-                p.changeStatus = "NEEDS_ANALYZE";
+                p.changeStatus = STATUS_NEEDS_ANALYZE;
                 p.changeHint = "未执行过分析，进入项目后点击\"开始分析\"";
                 return;
             }
 
-            p.changeStatus = "UP_TO_DATE";
+            p.changeStatus = STATUS_UP_TO_DATE;
             p.changeHint = "✓ 已就绪";
 
         } catch (Exception e) {
-            p.changeStatus = "ERROR";
+            p.changeStatus = STATUS_ERROR;
             p.changeHint = "状态检测失败: " + e.getMessage();
         }
     }

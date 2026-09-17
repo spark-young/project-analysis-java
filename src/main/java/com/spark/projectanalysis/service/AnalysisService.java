@@ -44,7 +44,11 @@ public class AnalysisService {
     private static final Logger log = LoggerFactory.getLogger(AnalysisService.class);
 
     private static final int DEFAULT_MAX_DEPTH = 20;
-    private static final int MAX_NODES = 50000;
+    /**
+     * 每个入口方法的独立节点预算（graph builder 为每个 root 各分配一份，见 CallGraphBuilder#buildRoots）。
+     * 单一来源（OPT-31）：BatchAnalyzeService 复用本常量，避免两处各写一份 50000。
+     */
+    static final int MAX_NODES = 50000;
     private static final long CACHE_TTL_MS = 5 * 60 * 1000;
     private static final int ACC_SYNTHETIC = 0x1000;
     private static final int ACC_BRIDGE = 0x0040;

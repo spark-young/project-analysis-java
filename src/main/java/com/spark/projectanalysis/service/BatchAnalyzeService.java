@@ -42,8 +42,6 @@ public class BatchAnalyzeService {
     private static final Logger log = LoggerFactory.getLogger(BatchAnalyzeService.class);
 
     private static final int DEFAULT_MAX_DEPTH = 20;
-    /** 每个入口方法独立的节点预算（与同步分析语义一致） */
-    private static final int MAX_NODES_PER_ROOT = 50000;
     /** 频率分析来源筛选（持久化到每入口缓存文件名指纹，与同步分析一致） */
     private static final String FREQ_FILTER = "ALL";
 
@@ -167,7 +165,7 @@ public class BatchAnalyzeService {
                         failed++;
                         continue;
                     }
-                    CallGraph graph = builder.buildGraphRoots(roots, maxDepth, MAX_NODES_PER_ROOT);
+                    CallGraph graph = builder.buildGraphRoots(roots, maxDepth, AnalysisService.MAX_NODES);
 
                     AnalysisResult result = analysisService.assembleResult(
                             path, handle, graph, System.currentTimeMillis() - entryStart);
@@ -176,10 +174,10 @@ public class BatchAnalyzeService {
 
                     // 每个入口单独落盘（文件名与同步分析一致，可被 loadByFileName 按名加载）
                     cacheService.save(path, ref.getClassName(), ref.getMethodName(),
-                            maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER, result);
+                            maxDepth, AnalysisService.MAX_NODES, FREQ_FILTER, result);
 
                     entry.setFileName(cacheService.fileNameOf(ref.getClassName(), ref.getMethodName(),
-                            maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER));
+                            maxDepth, AnalysisService.MAX_NODES, FREQ_FILTER));
                     written.add(entry.getFileName());
                     entry.setStats(result.getStats());
 
