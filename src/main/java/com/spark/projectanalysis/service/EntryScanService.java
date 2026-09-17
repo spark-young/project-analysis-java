@@ -130,11 +130,11 @@ public class EntryScanService {
         try {
             // 0-5%：校验
             if (job.projectPath == null || job.projectPath.trim().isEmpty()) {
-                job.fail("项目路径不能为空");
+                job.fail("项目路径不能为空", HttpStatus.BAD_REQUEST);
                 return;
             }
             if (!Files.exists(Paths.get(job.projectPath.trim()))) {
-                job.fail("项目路径不存在: " + job.projectPath);
+                job.fail("项目路径不存在: " + job.projectPath, HttpStatus.BAD_REQUEST);
                 return;
             }
             String path = job.projectPath.trim();
@@ -237,6 +237,8 @@ public class EntryScanService {
         volatile String step = "排队中...";
         volatile EntryScanResult result;
         volatile String error;
+        /** 失败对应的 HTTP 状态码；默认 500，入参类失败（空路径/路径不存在）置为 400 */
+        volatile HttpStatus errorStatus = HttpStatus.INTERNAL_SERVER_ERROR;
         final long createdAt = System.currentTimeMillis();
         volatile long doneAt = 0;
 
