@@ -1751,51 +1751,11 @@
 
     // ------------------------------------------------------------------
     // 方法签名统一展示：全限定类名#方法名(参数类型短名列表)，例：com.foo.Bar#write(Object, int)
+    // 解析/格式化逻辑统一收敛到共享模块 Sig（sig.js，先于 app.js 加载，见 index.html）。
     // ------------------------------------------------------------------
-    const SIG_PRIM = { Z: 'boolean', B: 'byte', C: 'char', S: 'short', I: 'int', J: 'long', F: 'float', D: 'double', V: 'void' };
-
-    /** JVM 描述符参数 → 简短类型名列表，例：'(Ljava/lang/String;I)' → ['String', 'int'] */
-    function descriptorParamNames(descriptor) {
-        const out = [];
-        if (!descriptor) return out;
-        const i = descriptor.indexOf('(');
-        const j = descriptor.lastIndexOf(')');
-        if (i < 0 || j <= i) return out;
-        const body = descriptor.substring(i + 1, j);
-        let k = 0, n = body.length;
-        while (k < n) {
-            let arr = '';
-            while (body[k] === '[') { arr += '[]'; k++; }
-            const c = body[k];
-            if (c === 'L') {
-                const semi = body.indexOf(';', k);
-                const internal = body.substring(k + 1, semi < 0 ? n : semi);
-                out.push(shortInternalName(internal) + arr);
-                k = semi < 0 ? n : semi + 1;
-            } else {
-                out.push((SIG_PRIM[c] || c) + arr);
-                k++;
-            }
-        }
-        return out;
-    }
-    function shortInternalName(internal) {
-        const slash = internal.lastIndexOf('/');
-        const dollar = internal.lastIndexOf('$');
-        const cut = Math.max(slash, dollar);
-        return cut < 0 ? internal : internal.substring(cut + 1);
-    }
     /** 统一可读签名：全限定类名#方法名(参数...)。无方法名(整类入口)只显示类名。 */
     function readableFullSig(className, methodName, descriptor) {
-        const cls = className || '';
-        if (!methodName) return cls;
-        if (descriptor) {
-            const params = descriptorParamNames(descriptor);
-            return params.length > 0
-                ? cls + '#' + methodName + '(' + params.join(', ') + ')'
-                : cls + '#' + methodName + '()';
-        }
-        return cls + '#' + methodName;
+        return Sig.fullSignature(className, methodName, descriptor);
     }
     /** 把统一可读签名拆成 类名 / 方法名 / 参数 三段，供分色展示 */
     function sigPartsFromString(sig) {
@@ -1846,40 +1806,10 @@
         return parent;
     }
 
-    /** 判断一段参数是否已经是 JVM descriptor（形如 ''/J/I/[Ljava/lang/String;） */
-    function looksLikeDescriptor(body) {
-        let i = 0, n = body.length;
-        while (i < n) {
-            while (i < n && body[i] === '[') i++;
-            if (i >= n) return false;
-            const c = body[i];
-            if (c === 'L') {
-                const s = body.indexOf(';', i);
-                if (s < 0) return false;
-                i = s + 1;
-            } else if ('ZBCSIFDV'.indexOf(c) >= 0) {
-                i++;
-            } else {
-                return false;
-            }
-        }
-        return true;   // 空 body 也是合法 descriptor（无参方法）
-    }
-    /** 可读参数类型名 → 单个 JVM 类型描述符（尽力转换，供"精确重载"检测，检测端会自动校正） */
-    function readableTypeToDescriptor(name) {
-        let arr = '', t = name;
-        while (t.endsWith('[]')) { arr = '[' + arr; t = t.slice(0, -2); }
-        const primR = { boolean: 'Z', byte: 'B', char: 'C', short: 'S', int: 'I', long: 'J', float: 'F', double: 'D', void: 'V' };
-        if (primR[t]) return arr + primR[t];
-        if (t === 'Object') return arr + 'Ljava/lang/Object;';
-        if (t === 'String') return arr + 'Ljava/lang/String;';
-        if (t === 'Class') return arr + 'Ljava/lang/Class;';
-        return arr + 'L' + t.replace(/\./g, '/').replace(/\./g, '/') + ';';
-    }
-    function readableParamsToDescriptor(body) {
-        const parts = body.split(',').map((s) => s.trim());
-        return '(' + parts.filter(Boolean).map(readableTypeToDescriptor).join('') + ')';
-    }
+    // ------------------------------------------------------------------
+    // "可读参数 → JVM 描述符"与入口串解析：逻辑已统一到共享模块 Sig（sig.js）。
+    // 调用点见 parseEntryString（下方委托 Sig.parseEntryString）。
+    // ------------------------------------------------------------------
 
     /**
      * 跨入口聚合项目级频率。
@@ -2232,33 +2162,9 @@
         const hit = noiseMemo.get(gm);
         if (hit !== undefined) return hit;
         const v = matchCompiledRules(gm.source || 'EXTERNAL',
-            (gm.owner || '').replace(/\//g, '.'), gm.name || '', descriptorParamCount(gm.descriptor));
+            (gm.owner || '').replace(/\//g, '.'), gm.name || '', Sig.paramCountFromDescriptor(gm.descriptor));
         noiseMemo.set(gm, v);
         return v;
-    }
-
-    /** 从 JVM 描述符里取参数个数（不依赖方法名后缀） */
-    function descriptorParamCount(descriptor) {
-        if (!descriptor) return 0;
-        const i = descriptor.indexOf('(');
-        const j = descriptor.lastIndexOf(')');
-        if (i < 0 || j <= i) return 0;
-        const body = descriptor.substring(i + 1, j);
-        let count = 0, k = 0, n = body.length;
-        while (k < n) {
-            while (body[k] === '[') k++;
-            const c = body[k];
-            if (c === 'L') {
-                const semi = body.indexOf(';', k);
-                k = semi < 0 ? n : semi + 1;
-            } else if (c !== 'V') {
-                k++;
-            } else {
-                break;
-            }
-            count++;
-        }
-        return count;
     }
 
     /** 清 adapter cache（规则变更/项目切换时调用） */
@@ -2592,7 +2498,8 @@
         const methods = g && g.methods;
         if (methods && id != null && methods[id]) {
             const m = methods[id];
-            return m.display || ((m.owner || '').replace(/\//g, '.') + '#' + (m.name || ''));
+            // 兜底签名统一走 Sig（原实现漏掉参数列表 cls#name，与权威格式 cls#name(...) 漂移）
+            return m.display || Sig.fullSignature((m.owner || '').replace(/\//g, '.'), m.name, m.descriptor);
         }
         return null;
     }
@@ -2753,21 +2660,9 @@
     // 频次行操作：导出调用位置 / 加入过滤规则
     // ------------------------------------------------------------------
 
-    /** 拆分展示用签名：全限定类名#方法名(参数短名) → 各部分 */
+    /** 拆解权威签名 → { className, simpleClass, methodName, paramCount }（逻辑统一在 Sig，见 sig.js） */
     function splitMethodSignature(method) {
-        const s = method || '';
-        const hashIdx = s.indexOf('#');
-        const className = hashIdx >= 0 ? s.slice(0, hashIdx) : '';
-        const rest = hashIdx >= 0 ? s.slice(hashIdx + 1) : s;
-        const parenIdx = rest.indexOf('(');
-        const methodName = parenIdx >= 0 ? rest.slice(0, parenIdx) : rest;
-        const dot = className.lastIndexOf('.');
-        return {
-            className: className,
-            simpleClass: dot >= 0 ? className.slice(dot + 1) : className,
-            methodName: methodName,
-            paramCount: parseParamCount(rest),
-        };
+        return Sig.splitSignature(method);
     }
 
     /** 正则元字符转义：把方法名/类名当字面量匹配 */
@@ -2945,35 +2840,11 @@
         const hit = freqNoiseMemo.get(m);
         if (hit !== undefined) return hit;
         const src = m.source || 'EXTERNAL';
-        const hashIdx = m.method.indexOf('#');
-        const className = hashIdx >= 0 ? m.method.slice(0, hashIdx) : '';
-        let methodWithArgs = hashIdx >= 0 ? m.method.slice(hashIdx + 1) : m.method;
-        const parenIdx = methodWithArgs.indexOf('(');
-        const methodName = parenIdx >= 0 ? methodWithArgs.slice(0, parenIdx) : methodWithArgs;
-        const paramCount = parseParamCount(methodWithArgs);
-        const v = matchCompiledRules(src, className, methodName, paramCount);
+        // 签名拆解统一走 Sig（原内联解析与 splitMethodSignature / 后端 parseMethodSignature 重复）
+        const p = Sig.splitSignature(m.method);
+        const v = matchCompiledRules(src, p.className, p.methodName, p.paramCount);
         freqNoiseMemo.set(m, v);
         return v;
-    }
-
-    /** 从方法签名解析参数个数，正确处理泛型中的逗号，如 Map<String, Integer> */
-    function parseParamCount(methodWithArgs) {
-        if (!methodWithArgs) return 0;
-        const paren = methodWithArgs.indexOf('(');
-        if (paren < 0) return 0;
-        let closeParen = methodWithArgs.indexOf(')', paren);
-        if (closeParen < 0) closeParen = methodWithArgs.length;
-        const params = methodWithArgs.slice(paren + 1, closeParen).trim();
-        if (!params) return 0;
-        let depth = 0;
-        let count = 1;
-        for (let i = 0; i < params.length; i++) {
-            const c = params.charAt(i);
-            if (c === '<' || c === '(') depth++;
-            else if (c === '>' || c === ')') depth--;
-            else if (c === ',' && depth === 0) count++;
-        }
-        return count;
     }
 
     // 来源筛选：全部/项目/依赖/外部
@@ -3023,12 +2894,8 @@
      */
     function compileActiveNoiseRules() {
         const enabled = (activeNoiseRules || []).filter((r) => r && r.enabled);
-        compiledActiveRules = enabled.map((r) => ({
-            source: r.source || 'ALL',
-            paramCount: r.paramCount != null ? r.paramCount : null,
-            methodRe: compileRegex(r.methodPattern),
-            classRe: compileRegex(r.classPattern),
-        }));
+        // 预编译统一走 Sig（与后端 NoiseRuleService.isNoiseOnRules 同口径，见 sig.js）
+        compiledActiveRules = Sig.compileRules(activeNoiseRules);
         activeNoiseHash = enabled.map((r) => (r.source || 'ALL') + '~' + (r.methodPattern || '')
             + '~' + (r.classPattern || '') + '~' + (r.paramCount != null ? r.paramCount : '')).join('|');
         // 规则已变，丢弃旧的判定记忆
@@ -3036,28 +2903,9 @@
         freqNoiseMemo = new WeakMap();
     }
 
-    /** 编译正则：空/未填 → null（匹配全部）；非法 → false（永不匹配） */
-    function compileRegex(pattern) {
-        if (!pattern || pattern.trim() === '') return null;
-        try {
-            return new RegExp(pattern);
-        } catch (e) {
-            return false;
-        }
-    }
-
-    /** 按预编译规则判定噪声（gm 字段通道与签名通道共用同一套语义） */
+    /** 按预编译规则判定噪声（gm 字段通道与签名通道共用同一套语义；匹配逻辑在 Sig，见 sig.js） */
     function matchCompiledRules(src, className, methodName, paramCount) {
-        for (const cr of compiledActiveRules) {
-            if (cr.source !== 'ALL' && cr.source !== src) continue;
-            if (cr.methodRe === false) continue;                    // 非法正则 → 永不匹配
-            if (cr.methodRe && !cr.methodRe.test(methodName)) continue;
-            if (cr.classRe === false) continue;
-            if (cr.classRe && !cr.classRe.test(className)) continue;
-            if (cr.paramCount != null && cr.paramCount !== paramCount) continue;
-            return true;
-        }
-        return false;
+        return Sig.matchCompiledRules(compiledActiveRules, src, className, methodName, paramCount);
     }
 
     /** 从磁盘同步两层规则：更新两层缓存 + 编辑缓冲区指向当前 scope 层，并重绘规则列表 */
@@ -4907,31 +4755,9 @@
         }
     });
 
+    /** 解析用户输入的入口串（逻辑统一在 Sig，见 sig.js；支持整类/方法/可读重载/旧 JVM 描述符） */
     function parseEntryString(raw) {
-        // 支持: com.demo.OrderController
-        //       com.demo.OrderController#createOrder
-        //       com.demo.OrderController#createOrder(Order)          ← 可读精确重载
-        //       com.demo.OrderController#createOrder(Lcom/demo/Order;)V  ← 兼容旧 JVM 描述符
-        const hashIdx = raw.indexOf('#');
-        if (hashIdx < 0) {
-            return { className: raw, methodName: null, descriptor: '' };
-        }
-        const cls = raw.substring(0, hashIdx);
-        const afterHash = raw.substring(hashIdx + 1);
-        const parenIdx = afterHash.indexOf('(');
-        if (parenIdx < 0) {
-            return { className: cls, methodName: afterHash, descriptor: '' };
-        }
-        const method = afterHash.substring(0, parenIdx);
-        // 找最后一个 )
-        const closeParen = afterHash.lastIndexOf(')');
-        if (closeParen >= 0) {
-            const body = afterHash.substring(parenIdx + 1, closeParen);
-            // 已经是 JVM descriptor 原样保留，否则把可读参数列表转成 descriptor
-            const descriptor = looksLikeDescriptor(body) ? '(' + body + ')' : readableParamsToDescriptor(body);
-            return { className: cls, methodName: method, descriptor };
-        }
-        return { className: cls, methodName: method, descriptor: '' };
+        return Sig.parseEntryString(raw);
     }
 
     // 🔎 扫描按钮：调用 scan-manual，渲染扫描结果列表
