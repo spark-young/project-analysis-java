@@ -3,6 +3,7 @@ package com.spark.projectanalysis.service;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.spark.projectanalysis.config.CallgraphPaths;
 import com.spark.projectanalysis.service.dto.EntryList;
 import com.spark.projectanalysis.service.dto.EntryList.EntryItem;
 import com.spark.projectanalysis.service.dto.EntryScanResult;
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -352,7 +352,7 @@ public class EntryListService {
     }
 
     private static Path cacheDir(String projectPath) {
-        return Paths.get(projectPath, ".callgraph");
+        return CallgraphPaths.projectDataDir(projectPath);
     }
 
     private static Path file(String projectPath) {

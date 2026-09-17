@@ -82,12 +82,13 @@ public class AnalysisCacheService {
 
     /**
      * 缓存目录：强制放项目根目录下的 ".callgraph/cache/"。
+     * 项目路径指向 jar 文件时（支持直接分析 fat jar），落在 <jar>.callgraph/cache（见 CallgraphPaths.projectDataDir）。
      * 不可写时 warn 日志但仍然返回该路径，由调用方 catch IOException。
      * 缓存跟着项目走，项目搬去哪缓存就去哪，不再兜底全局。
      */
     private Path cacheDir(String projectPath) {
         if (projectPath != null && !projectPath.isEmpty()) {
-            Path projectCache = Paths.get(projectPath, ".callgraph", "cache");
+            Path projectCache = CallgraphPaths.projectDataDir(projectPath).resolve("cache");
             try {
                 Files.createDirectories(projectCache);
             } catch (IOException e) {
@@ -101,11 +102,10 @@ public class AnalysisCacheService {
         return global;
     }
 
-    /** 某项目是否有任意分析缓存文件（只查项目内目录） */
+    /** 某项目是否有任意分析缓存文件（只查项目内目录，不创建） */
     public boolean hasAnyCache(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return false;
-        Path local = cacheDir(projectPath);
-        return hasJsonFile(local);
+        return hasJsonFile(CallgraphPaths.projectDataDir(projectPath).resolve("cache"));
     }
 
     // ==================================================================
@@ -223,7 +223,7 @@ public class AnalysisCacheService {
     public List<CacheFileInfo> listAll(String projectPath) {
         List<CacheFileInfo> result = new ArrayList<>();
         if (projectPath == null || projectPath.isEmpty()) return result;
-        Path dir = Paths.get(projectPath, ".callgraph", "cache");
+        Path dir = CallgraphPaths.projectDataDir(projectPath).resolve("cache");
         if (!Files.isDirectory(dir)) return result;
         try (java.util.stream.Stream<Path> walk = Files.walk(dir, 2)) {
             walk.filter(Files::isRegularFile)

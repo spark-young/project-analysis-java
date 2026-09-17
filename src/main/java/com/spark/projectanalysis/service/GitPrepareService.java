@@ -56,6 +56,8 @@ public class GitPrepareService {
         volatile String projectPath;
         volatile String projectName;
         volatile Path dir;
+        /** mvn 编译的实时输出，供前端滚动展示 */
+        final JobLogBuffer compileLog = new JobLogBuffer();
         long createdAt;      // 创建时间
         long doneAt;         // DONE/FAILED 时间（0 表示未结束）
     }
@@ -87,10 +89,11 @@ public class GitPrepareService {
             throw new AnalysisException(HttpStatus.BAD_REQUEST, "仓库地址不能为空");
         }
 
-        // URL 去重：如果同一个 URL 已有在途任务（CLONING）或刚完成（DONE/FAILED，5 分钟内），直接返回
+        // URL 去重：同一个 URL 已有在途任务（CLONING/COMPILING）或刚完成（DONE，5 分钟内），直接返回；
+        // FAILED 不拦截，否则编译失败后 5 分钟内无法重试。
         final String repoUrl = req.getRepoUrl().trim();
         Job ongoingJob = jobsByUrl.get(normalizeUrl(repoUrl));
-        if (ongoingJob != null && !isExpired(ongoingJob)) {
+        if (ongoingJob != null && !isExpired(ongoingJob) && !"FAILED".equals(ongoingJob.status)) {
             return status(ongoingJob.id);
         }
         // 清理过期条目
@@ -146,6 +149,24 @@ public class GitPrepareService {
             Path compileDir = located.root;
             job.projectPath = compileDir.toString();
 
+            // Maven 工程：克隆后立即编译，保证进入分析时 target/classes 已就绪。
+            // 编译失败则不注册项目——没有产物也无法分析；已克隆的目录保留，用户修正后按同一 URL 重新导入会复用该目录。
+            if (located.needMaven) {
+                job.status = "COMPILING";
+                job.progress = 90;
+                job.step = "正在 mvn 编译（首次需下载依赖，可能较慢）...";
+                MavenCompileService.CompileResult r = mavenCompileService.compile(compileDir, job.compileLog::add);
+                if (!r.isSuccess()) {
+                    job.status = "FAILED";
+                    job.step = "编译失败";
+                    job.message = "仓库已拉取，但 Maven 编译失败：\n" + r.getOutputTail();
+                    return;
+                }
+            }
+
+            job.progress = 96;
+            job.step = "正在注册项目...";
+
             // 自动注册到项目注册表
             try {
                 ProjectRegistry.RegisteredProject existing = registry.getByPath(job.projectPath);
@@ -172,7 +193,7 @@ public class GitPrepareService {
             job.progress = 100;
             job.status = "DONE";
             job.step = "导入完成";
-            job.message = located.needMaven ? "项目已克隆，进入分析时将自动编译" : "项目已克隆";
+            job.message = located.needMaven ? "仓库已克隆并完成 mvn 编译" : "项目已克隆";
         });
         return status(job.id);
     }
@@ -191,6 +212,7 @@ public class GitPrepareService {
         s.setRepoUrl(job.repoUrl);
         s.setProjectPath(job.projectPath);
         s.setProjectName(job.projectName);
+        s.setCompileLog(job.compileLog.snapshot());
         return s;
     }
 

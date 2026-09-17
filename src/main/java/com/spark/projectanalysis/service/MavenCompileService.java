@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * 调用本机 mvn 编译被分析项目（多模块在根目录执行一次即全部编译）。
@@ -26,16 +27,21 @@ public class MavenCompileService {
     private static final long LOCK_RETRY_WAIT_MS = 4000;
 
     public CompileResult compile(Path projectDir) {
-        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, false);
+        return compile(projectDir, null);
+    }
+
+    /** 编译并把 mvn 的实时输出逐行回调给 onLine（可为 null）；用于前端展示编译过程 */
+    public CompileResult compile(Path projectDir, Consumer<String> onLine) {
+        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, false, onLine);
     }
 
     public CompileResult compile(Path projectDir, long timeout, TimeUnit unit) {
-        return compileWithLockRetry(projectDir, timeout, unit, false);
+        return compileWithLockRetry(projectDir, timeout, unit, false, null);
     }
 
     /** clean compile（强制全新编译，用于"重新分析"场景） */
     public CompileResult compileClean(Path projectDir) {
-        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, true);
+        return compileWithLockRetry(projectDir, DEFAULT_TIMEOUT_MIN, TimeUnit.MINUTES, true, null);
     }
 
     /**
@@ -46,11 +52,13 @@ public class MavenCompileService {
      * 解决：失败结果若命中锁冲突特征，等待片刻（等对方下载完成）后清理残留的 .part 临时文件
      * 再重试一次——重试时往往已能直接命中本地缓存，不再需要网络。
      */
-    private CompileResult compileWithLockRetry(Path projectDir, long timeout, TimeUnit unit, boolean clean) {
-        CompileResult first = runCompile(projectDir, timeout, unit, clean);
+    private CompileResult compileWithLockRetry(Path projectDir, long timeout, TimeUnit unit, boolean clean,
+                                               Consumer<String> onLine) {
+        CompileResult first = runCompile(projectDir, timeout, unit, clean, onLine);
         if (first.isSuccess() || !looksLikeRepoLock(first.getOutputTail())) {
             return first;
         }
+        notifyLine(onLine, "── 检测到本地仓库并发锁冲突，稍候自动重试 ──");
         try {
             Thread.sleep(LOCK_RETRY_WAIT_MS);
         } catch (InterruptedException e) {
@@ -58,7 +66,16 @@ public class MavenCompileService {
             return first;
         }
         clearPartialArtifacts();
-        return runCompile(projectDir, timeout, unit, clean);
+        return runCompile(projectDir, timeout, unit, clean, onLine);
+    }
+
+    private static void notifyLine(Consumer<String> onLine, String line) {
+        if (onLine == null) return;
+        try {
+            onLine.accept(line);
+        } catch (Exception ignore) {
+            // 回调异常不影响编译本身
+        }
     }
 
     /** 命中 Maven 本地仓库并发锁特征：出现 .part 文件 + 访问被拒 */
@@ -109,7 +126,8 @@ public class MavenCompileService {
     }
 
     /** 单次实际执行 mvn 编译 */
-    private CompileResult runCompile(Path projectDir, long timeout, TimeUnit unit, boolean clean) {
+    private CompileResult runCompile(Path projectDir, long timeout, TimeUnit unit, boolean clean,
+                                     Consumer<String> onLine) {
         // clean=true → mvn clean compile；否则 mvn compile
         String goal = clean ? "clean" : "compile";
         List<String> cmd = new ArrayList<>(Arrays.asList(mavenCommand(), "-B", "-DskipTests", goal));
@@ -132,6 +150,7 @@ public class MavenCompileService {
                     String line;
                     while ((line = br.readLine()) != null) {
                         output.append(line).append('\n');
+                        notifyLine(onLine, line);
                         if (output.length() > 200_000) {
                             output.delete(0, 100_000); // 防超长输出撑爆内存
                         }

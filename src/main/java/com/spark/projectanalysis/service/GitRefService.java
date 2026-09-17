@@ -22,6 +22,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -66,6 +67,8 @@ public class GitRefService {
         volatile String refType;
         volatile boolean stashed;
         volatile boolean conflict;
+        /** 重新编译时 mvn 的实时输出，供前端滚动展示 */
+        final JobLogBuffer compileLog = new JobLogBuffer();
         long createdAt;
         long doneAt;
     }
@@ -195,7 +198,7 @@ public class GitRefService {
             job.status = "COMPILING";
             job.progress = 82;
             job.step = "正在重新编译...";
-            String err = recompile(gitRoot);
+            String err = recompile(gitRoot, job.compileLog::add);
             if (err != null) {
                 job.status = "FAILED";
                 job.message = "已切换但重新编译失败：\n" + err;
@@ -223,17 +226,19 @@ public class GitRefService {
      * 切换后重新编译，保证分析产物与源码一致。
      * 从 Git 根目录重新探测工程类型（注册表里的 projectPath 可能是子目录）。
      *
+     * @param onLine 编译输出逐行回调（可为 null），用于前端实时展示
      * @return null 表示成功；非空为失败输出
      */
-    private String recompile(Path gitRoot) throws IOException {
+    private String recompile(Path gitRoot, Consumer<String> onLine) throws IOException {
         // 1) Maven：根目录或嵌套子目录存在 pom.xml
         Path mavenDir = findPomDir(gitRoot);
         if (mavenDir != null) {
-            MavenCompileService.CompileResult r = mavenCompileService.compile(mavenDir);
+            MavenCompileService.CompileResult r = mavenCompileService.compile(mavenDir, onLine);
             return r.isSuccess() ? null : r.getOutputTail();
         }
         // 2) 普通 Java 源码 → javac 覆盖 build/
         if (hasJavaSources(gitRoot)) {
+            if (onLine != null) onLine.accept("检测到普通 Java 源码工程，正在用 javac 编译...");
             Path buildRoot = gitRoot.resolve("build");
             Files.createDirectories(buildRoot);
             JavacCompileService.CompileResult r = javacCompileService.compile(gitRoot, buildRoot);
@@ -381,6 +386,7 @@ public class GitRefService {
         s.setRefType(job.refType);
         s.setStashed(job.stashed);
         s.setConflict(job.conflict);
+        s.setCompileLog(job.compileLog.snapshot());
         return s;
     }
 

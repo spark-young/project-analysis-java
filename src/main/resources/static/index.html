@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Java工程分析工具</title>
-    <link rel="stylesheet" href="style.css?v=20260915a">
+    <link rel="stylesheet" href="style.css?v=20260916b">
 </head>
 <body>
 <header class="header">
@@ -59,7 +59,7 @@
                 <div class="form-item span-2">
                     <label for="projectPath">项目路径 <span class="req">*</span></label>
                     <div class="input-group">
-                        <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（需已编译，或指向 .jar 文件）">
+                        <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（指向工程根目录即可，含 target 那一层；也可直接指向 .jar 文件）">
                         <button id="btnInfo" type="button" class="btn ghost">检查</button>
                         <button id="btnImportLocal" type="button" class="btn primary">导入项目</button>
                     </div>
@@ -90,6 +90,7 @@
                 </div>
                 <div class="form-item span-2">
                     <div id="gitStatus" class="git-status" hidden></div>
+                    <pre id="gitPrepareLog" class="job-log" hidden></pre>
                 </div>
             </div>
             <div id="projectsImportError" class="error-banner" hidden></div>
@@ -162,6 +163,7 @@
                                 <div id="gitSwitchProgressBar" class="scan-progress-bar" style="width:0%"></div>
                             </div>
                             <div id="gitSwitchProgressText" class="scan-progress-text">准备中...</div>
+                            <pre id="gitSwitchLog" class="job-log" hidden></pre>
                         </div>
                     </div>
                 </div>
@@ -677,13 +679,6 @@
     </div>
 </footer>
 
-<div id="loading" class="loading-overlay" hidden>
-    <div class="loading-box">
-        <div class="spinner"></div>
-        <div id="loadingText">正在分析……</div>
-    </div>
-</div>
-
 <footer class="footer">
     <div class="container">
         内网工具 · 零出站网络 · 对被分析项目只读不执行 ·
@@ -708,17 +703,22 @@
     </div>
 </div>
 
-<!-- 全屏加载遮罩（进入项目等耗时操作） -->
+<!-- 全屏加载遮罩：支持「单行文案」与「分步进度」两种模式 -->
 <div id="loadingOverlay" class="loading-overlay" hidden>
     <div class="loading-box">
         <div class="loading-spinner"></div>
-        <div id="loadingText" class="loading-text">正在加载...</div>
+        <div id="loadingOverlayText" class="loading-text">正在加载...</div>
+        <div id="loadingSteps" class="loading-steps" hidden></div>
+        <div id="loadingBarWrap" class="loading-bar-wrap" hidden>
+            <div id="loadingBar" class="loading-bar"></div>
+        </div>
+        <div id="loadingElapsed" class="loading-elapsed" hidden></div>
     </div>
 </div>
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="guide.js?v=20260915a"></script>
-<script src="app.js?v=20260915a"></script>
+<script src="guide.js?v=20260916b"></script>
+<script src="app.js?v=20260916b"></script>
 </body>
 </html>

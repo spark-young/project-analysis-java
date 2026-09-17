@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -242,7 +241,7 @@ public class NoiseRuleService {
     /** 项目级规则文件路径：<项目>/.callgraph/noise-rules.json */
     public static Path projectRulesFile(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return GLOBAL_RULES_FILE;
-        return Paths.get(projectPath, ".callgraph", "noise-rules.json");
+        return CallgraphPaths.projectDataDir(projectPath).resolve("noise-rules.json");
     }
 
     /**
