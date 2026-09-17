@@ -29,6 +29,12 @@ class GitPrepareServiceTest {
             this.compiledDir = projectDir;
             return fail ? CompileResult.failure("模拟编译失败") : CompileResult.success();
         }
+
+        // 生产代码走的是带日志回调的重载；桩必须一并覆写，否则会绕过桩真的去跑 mvn
+        @Override
+        public CompileResult compile(Path projectDir, java.util.function.Consumer<String> onLine) {
+            return compile(projectDir);
+        }
     }
 
     /** javac 编译桩：可记录收到的源码目录，可模拟成功/失败 */
