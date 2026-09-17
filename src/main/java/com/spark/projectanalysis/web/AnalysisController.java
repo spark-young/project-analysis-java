@@ -176,6 +176,10 @@ public class AnalysisController {
      * force=true 时强制 clean compile（用于"重新分析"场景）。
      */
     private void compileIfNeeded(Path root, boolean force) {
+        // 路径不存在是调用方传错（400），不能落到下面的通用 catch 变成"编译探测失败"的 500
+        if (!Files.exists(root)) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST, "项目路径不存在: " + root);
+        }
         try {
             if (!force) {
                 // 非强制：已有产物就跳过
