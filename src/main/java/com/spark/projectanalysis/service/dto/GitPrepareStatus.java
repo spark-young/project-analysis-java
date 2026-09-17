@@ -13,6 +13,10 @@ public class GitPrepareStatus {
     private String projectPath; // DONE 后可用
     private String projectName;
     private List<String> compileLog;  // mvn 编译输出的最近若干行（实时滚动展示）
+    /** true=按编译策略跳过了自动编译（项目仍已克隆注册，需手动编译） */
+    private boolean compileSkipped;
+    /** 跳过编译的原因（供前端提示用户） */
+    private String compileSkipReason;
 
     public String getJobId() { return jobId; }
     public void setJobId(String jobId) { this.jobId = jobId; }
@@ -32,4 +36,8 @@ public class GitPrepareStatus {
     public void setProjectName(String projectName) { this.projectName = projectName; }
     public List<String> getCompileLog() { return compileLog; }
     public void setCompileLog(List<String> compileLog) { this.compileLog = compileLog; }
+    public boolean isCompileSkipped() { return compileSkipped; }
+    public void setCompileSkipped(boolean compileSkipped) { this.compileSkipped = compileSkipped; }
+    public String getCompileSkipReason() { return compileSkipReason; }
+    public void setCompileSkipReason(String compileSkipReason) { this.compileSkipReason = compileSkipReason; }
 }

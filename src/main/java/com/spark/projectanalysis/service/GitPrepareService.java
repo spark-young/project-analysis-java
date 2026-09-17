@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -43,6 +45,11 @@ public class GitPrepareService {
     /** URL 去重索引（normalizedUrl → Job） */
     private final Map<String, Job> jobsByUrl = new ConcurrentHashMap<>();
 
+    /** 克隆后是否自动 mvn 编译的策略：always（默认）| whitelist | never */
+    private final String compilePolicy;
+    /** whitelist 策略下允许自动编译的 host 列表 */
+    private final List<String> compileAllowedHosts;
+
     /** DONE/FAILED 后 Job 在内存里保留 5 分钟，让前端刷新还能查到 */
     private static final long JOB_TTL_MS = 5 * 60 * 1000L;
 
@@ -58,6 +65,9 @@ public class GitPrepareService {
         volatile Path dir;
         /** mvn 编译的实时输出，供前端滚动展示 */
         final JobLogBuffer compileLog = new JobLogBuffer();
+        /** 按策略跳过了自动编译（项目仍会克隆并注册） */
+        volatile boolean compileSkipped;
+        volatile String compileSkipReason;
         long createdAt;      // 创建时间
         long doneAt;         // DONE/FAILED 时间（0 表示未结束）
     }
@@ -65,12 +75,17 @@ public class GitPrepareService {
     public GitPrepareService(GitCloneService gitCloneService, MavenCompileService mavenCompileService,
                              JavacCompileService javacCompileService,
                              ProjectRegistry registry,
-                             @Value("${callgraph.git.work-root:}") String workRootConfig) {
+                             @Value("${callgraph.git.work-root:}") String workRootConfig,
+                             @Value("${callgraph.git.compile-policy:always}") String compilePolicy,
+                             @Value("${callgraph.git.compile-allowed-hosts:}") List<String> compileAllowedHosts) {
         this.gitCloneService = gitCloneService;
         this.mavenCompileService = mavenCompileService;
         this.javacCompileService = javacCompileService;
         this.registry = registry;
         this.workRootConfig = workRootConfig == null ? "" : workRootConfig.trim();
+        this.compilePolicy = compilePolicy == null ? "" : compilePolicy.trim();
+        this.compileAllowedHosts = compileAllowedHosts == null
+                ? new ArrayList<>() : new ArrayList<>(compileAllowedHosts);
     }
 
     /** 工程定位结果：记录最终的分析根目录，以及它是否需要走 mvn 编译 */
@@ -152,15 +167,24 @@ public class GitPrepareService {
             // Maven 工程：克隆后立即编译，保证进入分析时 target/classes 已就绪。
             // 编译失败则不注册项目——没有产物也无法分析；已克隆的目录保留，用户修正后按同一 URL 重新导入会复用该目录。
             if (located.needMaven) {
-                job.status = "COMPILING";
-                job.progress = 90;
-                job.step = "正在 mvn 编译（首次需下载依赖，可能较慢）...";
-                MavenCompileService.CompileResult r = mavenCompileService.compile(compileDir, job.compileLog::add);
-                if (!r.isSuccess()) {
-                    job.status = "FAILED";
-                    job.step = "编译失败";
-                    job.message = "仓库已拉取，但 Maven 编译失败：\n" + r.getOutputTail();
-                    return;
+                // 克隆不可信仓库后直接 mvn compile 等于执行 pom 里绑定的任意插件代码，
+                // 因此编译行为受 callgraph.git.compile-policy 控制；跳过时项目照常克隆注册。
+                String skipReason = compileSkipReason(repoUrl);
+                if (skipReason != null) {
+                    job.compileSkipped = true;
+                    job.compileSkipReason = skipReason;
+                    job.step = "已跳过自动编译";
+                } else {
+                    job.status = "COMPILING";
+                    job.progress = 90;
+                    job.step = "正在 mvn 编译（首次需下载依赖，可能较慢）...";
+                    MavenCompileService.CompileResult r = mavenCompileService.compile(compileDir, job.compileLog::add);
+                    if (!r.isSuccess()) {
+                        job.status = "FAILED";
+                        job.step = "编译失败";
+                        job.message = "仓库已拉取，但 Maven 编译失败：\n" + r.getOutputTail();
+                        return;
+                    }
                 }
             }
 
@@ -193,7 +217,11 @@ public class GitPrepareService {
             job.progress = 100;
             job.status = "DONE";
             job.step = "导入完成";
-            job.message = located.needMaven ? "仓库已克隆并完成 mvn 编译" : "项目已克隆";
+            job.message = located.needMaven
+                    ? (job.compileSkipped
+                        ? "仓库已克隆；" + job.compileSkipReason + "请手动编译后重新分析。"
+                        : "仓库已克隆并完成 mvn 编译")
+                    : "项目已克隆";
         });
         return status(job.id);
     }
@@ -213,6 +241,8 @@ public class GitPrepareService {
         s.setProjectPath(job.projectPath);
         s.setProjectName(job.projectName);
         s.setCompileLog(job.compileLog.snapshot());
+        s.setCompileSkipped(job.compileSkipped);
+        s.setCompileSkipReason(job.compileSkipReason);
         return s;
     }
 
@@ -252,6 +282,67 @@ public class GitPrepareService {
         // SSH git@host:group/repo → https://host/group/repo
         u = u.replaceFirst("^git@([^:]+):", "https://$1/");
         return u;
+    }
+
+    /**
+     * 判定本次是否应跳过"克隆后自动 mvn 编译"。
+     *
+     * @return null 表示允许编译；非 null 为跳过原因（会回传给前端）
+     */
+    private String compileSkipReason(String repoUrl) {
+        String policy = compilePolicy.isEmpty() ? "always" : compilePolicy.toLowerCase();
+        if ("never".equals(policy)) {
+            return "已配置 callgraph.git.compile-policy=never，不自动编译。";
+        }
+        if ("whitelist".equals(policy)) {
+            String host = hostOf(repoUrl);
+            // 取不到主机的（本地路径 / file://）不是远端来源，按可信处理
+            if (host.isEmpty() || matchesAllowedHost(host)) {
+                return null;
+            }
+            return "该来源（" + host + "）不在 callgraph.git.compile-allowed-hosts 白名单内，未自动编译。";
+        }
+        // always：保持既有行为
+        return null;
+    }
+
+    /** host 是否命中白名单：精确匹配或子域名匹配 */
+    private boolean matchesAllowedHost(String host) {
+        for (String raw : compileAllowedHosts) {
+            if (raw == null) continue;
+            // 兼容 YAML 列表被整体转成 "[a, b]" 的写法
+            for (String h : raw.split("[,;\\s]+")) {
+                String t = h.trim().toLowerCase()
+                        .replace("[", "").replace("]", "")
+                        .replace("\"", "").replace("'", "");
+                if (t.isEmpty()) continue;
+                if (t.equals(host) || host.endsWith("." + t)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** 从仓库地址取主机名（小写，去掉 userinfo 与端口）；本地路径 / file:// 取不到时返回空串 */
+    static String hostOf(String repoUrl) {
+        String s = repoUrl == null ? "" : repoUrl.trim();
+        if (s.isEmpty()) return "";
+        // SSH 写法：git@host:group/repo
+        int at = s.indexOf('@');
+        int colon = s.indexOf(':');
+        if (at >= 0 && colon > at && !s.contains("://")) {
+            return s.substring(at + 1, colon).trim().toLowerCase();
+        }
+        final String scheme = "://";
+        int i = s.indexOf(scheme);
+        if (i < 0) return "";
+        String rest = s.substring(i + scheme.length());
+        int slash = rest.indexOf('/');
+        String hostPort = slash >= 0 ? rest.substring(0, slash) : rest;
+        int userInfo = hostPort.lastIndexOf('@');
+        if (userInfo >= 0) hostPort = hostPort.substring(userInfo + 1);
+        int port = hostPort.indexOf(':');
+        if (port >= 0) hostPort = hostPort.substring(0, port);
+        return hostPort.trim().toLowerCase();
     }
 
     /** 5 分钟 TTL：超过这个时间的 DONE/FAILED job 清理掉；在途永不过期 */

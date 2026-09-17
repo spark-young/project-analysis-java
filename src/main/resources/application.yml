@@ -12,6 +12,17 @@ spring:
   jackson:
     default-property-inclusion: non_null
 
+callgraph:
+  git:
+    # 克隆后是否自动执行 mvn compile（Maven 生命周期会执行 pom.xml 里绑定的任意插件代码，
+    # 等于执行不可信仓库的代码）。
+    #   always    = 总是编译（默认，保持既有行为，适合单人内网使用）
+    #   whitelist = 仅当仓库 host 命中下面的白名单时才编译
+    #   never     = 永不自动编译（项目仍会克隆并注册，需手动编译后重新分析）
+    compile-policy: always
+    compile-allowed-hosts:
+      # - git.internal.company.com
+
 logging:
   level:
     root: info
