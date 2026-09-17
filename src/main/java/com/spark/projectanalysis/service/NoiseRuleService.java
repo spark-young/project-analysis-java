@@ -45,6 +45,14 @@ public class NoiseRuleService {
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
+    /**
+     * 正则编译结果缓存：key = 正则本体（本匹配路径的 flags 恒为默认 0）。
+     * isNoise/getMatchedRule 是导出与页面的热路径，同一规则会反复匹配成千上万个方法，
+     * 缓存后避免每次调用都 Pattern.compile。
+     * 非法正则的 PatternSyntaxException 由 computeIfAbsent 抛出且不入缓存，行为与改前一致。
+     */
+    private static final Map<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
+
     /** 全局规则文件路径 */
     private static final Path GLOBAL_RULES_FILE = CallgraphPaths.noiseRulesFile();
 
@@ -550,10 +558,15 @@ public class NoiseRuleService {
         if (regex == null || regex.isEmpty()) return true;
         if (input == null) return false;
         try {
-            return Pattern.compile(regex).matcher(input).find();
+            return compiledPattern(regex).matcher(input).find();
         } catch (PatternSyntaxException e) {
             return false;
         }
+    }
+
+    /** 取缓存的编译结果；未命中则由 Pattern.compile 编译后放入（非法正则抛出且不缓存） */
+    private static Pattern compiledPattern(String regex) {
+        return PATTERN_CACHE.computeIfAbsent(regex, Pattern::compile);
     }
 
     private static void saveQuietly(Path file, List<NoiseRule> rules) {
