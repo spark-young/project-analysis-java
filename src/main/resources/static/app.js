@@ -3922,11 +3922,6 @@
         els.entryCheckAll.indeterminate = sel > 0 && sel < confirmed.length;
     }
 
-    function escapeHtml(s) {
-        return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
-            ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
-    }
-
     // ==============================================================
     // 扫描策略配置（自动扫描方案管理）
     // ==============================================================
