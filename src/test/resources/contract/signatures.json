@@ -1,0 +1,125 @@
+{
+  "_comment": "OPT-24 前后端签名契约夹具。权威格式 = 后端 MethodKey.getIdentifier()：全限定类名#方法名(参数类型短名列表)。前端 Sig 模块与后端 MethodKey 都必须对每个用例产出相同的 identifier / paramTypes。",
+  "cases": [
+    {
+      "name": "无参方法",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "ping",
+      "descriptor": "()V",
+      "paramTypes": [],
+      "identifier": "com.demo.Foo#ping()",
+      "display": "ping()"
+    },
+    {
+      "name": "单个对象参数",
+      "className": "com.demo.OrderController",
+      "owner": "com/demo/OrderController",
+      "methodName": "createOrder",
+      "descriptor": "(Lcom/demo/Order;)V",
+      "paramTypes": ["Order"],
+      "identifier": "com.demo.OrderController#createOrder(Order)",
+      "display": "createOrder(Order)"
+    },
+    {
+      "name": "基本类型 + String + 布尔数组",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "mix",
+      "descriptor": "(ILjava/lang/String;[Z)V",
+      "paramTypes": ["int", "String", "boolean[]"],
+      "identifier": "com.demo.Foo#mix(int, String, boolean[])",
+      "display": "mix(int, String, boolean[])"
+    },
+    {
+      "name": "对象数组 + 二维基本数组",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "arr",
+      "descriptor": "([Ljava/lang/String;[[I)V",
+      "paramTypes": ["String[]", "int[][]"],
+      "identifier": "com.demo.Foo#arr(String[], int[][])",
+      "display": "arr(String[], int[][])"
+    },
+    {
+      "name": "二维对象数组",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "grid",
+      "descriptor": "([[Ljava/lang/String;)V",
+      "paramTypes": ["String[][]"],
+      "identifier": "com.demo.Foo#grid(String[][])",
+      "display": "grid(String[][])"
+    },
+    {
+      "name": "嵌套类（内部名含 $，取最后一段短名）",
+      "className": "com.demo.Outer$Inner",
+      "owner": "com/demo/Outer$Inner",
+      "methodName": "run",
+      "descriptor": "()V",
+      "paramTypes": [],
+      "identifier": "com.demo.Outer$Inner#run()",
+      "display": "run()"
+    },
+    {
+      "name": "以嵌套类为参数类型",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "apply",
+      "descriptor": "(Lcom/demo/Outer$Inner;)V",
+      "paramTypes": ["Inner"],
+      "identifier": "com.demo.Foo#apply(Inner)",
+      "display": "apply(Inner)"
+    },
+    {
+      "name": "构造器",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "<init>",
+      "descriptor": "(Ljava/lang/String;)V",
+      "paramTypes": ["String"],
+      "identifier": "com.demo.Foo#<init>(String)",
+      "display": "new Foo(String)"
+    },
+    {
+      "name": "静态初始化块",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "<clinit>",
+      "descriptor": "()V",
+      "paramTypes": [],
+      "identifier": "com.demo.Foo#<clinit>()",
+      "display": "static {}"
+    },
+    {
+      "name": "long/double 基本类型",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "calc",
+      "descriptor": "(JD)V",
+      "paramTypes": ["long", "double"],
+      "identifier": "com.demo.Foo#calc(long, double)",
+      "display": "calc(long, double)"
+    },
+    {
+      "name": "无参带返回类型",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "getName",
+      "descriptor": "()Ljava/lang/String;",
+      "paramTypes": [],
+      "identifier": "com.demo.Foo#getName()",
+      "display": "getName()"
+    },
+    {
+      "name": "多参数混合（集合/基本/数组/对象）",
+      "className": "com.demo.Foo",
+      "owner": "com/demo/Foo",
+      "methodName": "run",
+      "descriptor": "(Ljava/util/Map;Ljava/util/List;I[BLjava/lang/Object;)V",
+      "paramTypes": ["Map", "List", "int", "byte[]", "Object"],
+      "identifier": "com.demo.Foo#run(Map, List, int, byte[], Object)",
+      "display": "run(Map, List, int, byte[], Object)"
+    }
+  ]
+}
