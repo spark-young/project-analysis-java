@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -547,6 +548,12 @@ public class GitCloneService {
         return git(args, url, progressCb.get());
     }
 
+    /** 本机 git 命令超时（分钟）：git 卡死（网络挂起 / 认证阻塞）不再永久阻塞调用线程（OPT-26）。 */
+    private static final long GIT_TIMEOUT_MINUTES = 10L;
+
+    /** 进程结束/被强杀后，等待输出采集线程收尾的最长时间（毫秒）。 */
+    private static final long GIT_PUMP_JOIN_MS = 2000L;
+
     /** 执行本机 git 命令；url 非空时注入代理；progressCallback 非空时实时回调 git 输出中的进度。 */
     private String git(String[] args, String url, java.util.function.BiConsumer<Integer, String> progressCallback)
             throws IOException, InterruptedException {
@@ -569,29 +576,46 @@ public class GitCloneService {
         pb.redirectErrorStream(true);
         Process p = pb.start();
 
+        // stdout/stderr 采集（逻辑与原实现一致）放到独立采集线程：git 卡死时从流上读取会长时间阻塞，
+        // 若与 waitFor 同处一个线程，带超时的 waitFor 将永远执行不到。分离后下面的超时才能真正生效（OPT-26）。
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        byte[] chunk = new byte[8192];
-        StringBuilder lineBuf = new StringBuilder();  // 用于实时解析进度
-        int n;
-        try (java.io.InputStream in = p.getInputStream()) {
-            while ((n = in.read(chunk)) != -1) {
-                buf.write(chunk, 0, n);
-                if (progressCallback != null) {
-                    // 实时解析：git 进度用 \r 分隔，stderr 里可能是逐字节来的
-                    String piece = new String(chunk, 0, n, StandardCharsets.UTF_8);
-                    for (char c : piece.toCharArray()) {
-                        if (c == '\r' || c == '\n') {
-                            String line = lineBuf.toString().trim();
-                            lineBuf.setLength(0);
-                            if (!line.isEmpty()) parseAndReportProgress(line, progressCallback);
-                        } else {
-                            lineBuf.append(c);
+        Thread pump = new Thread(() -> {
+            byte[] chunk = new byte[8192];
+            StringBuilder lineBuf = new StringBuilder();  // 用于实时解析进度
+            int n;
+            try (java.io.InputStream in = p.getInputStream()) {
+                while ((n = in.read(chunk)) != -1) {
+                    buf.write(chunk, 0, n);
+                    if (progressCallback != null) {
+                        // 实时解析：git 进度用 \r 分隔，stderr 里可能是逐字节来的
+                        String piece = new String(chunk, 0, n, StandardCharsets.UTF_8);
+                        for (char c : piece.toCharArray()) {
+                            if (c == '\r' || c == '\n') {
+                                String line = lineBuf.toString().trim();
+                                lineBuf.setLength(0);
+                                if (!line.isEmpty()) parseAndReportProgress(line, progressCallback);
+                            } else {
+                                lineBuf.append(c);
+                            }
                         }
                     }
                 }
+            } catch (IOException ignore) {
+                // 进程被强制终止时流会中断，采集线程随之退出即可
             }
+        }, "git-stdout-pump");
+        pump.setDaemon(true);
+        pump.start();
+
+        boolean finished = p.waitFor(GIT_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+        if (!finished) {
+            p.destroyForcibly();
+            pump.join(GIT_PUMP_JOIN_MS);
+            throw new IOException("git 命令执行超时（超过 " + GIT_TIMEOUT_MINUTES + " 分钟未结束），已强制终止：git "
+                    + String.join(" ", args));
         }
-        int code = p.waitFor();
+        pump.join();  // 进程已结束，等采集线程把剩余输出读完，保证 buf 完整
+        int code = p.exitValue();
         String output = new String(buf.toByteArray(), StandardCharsets.UTF_8);
         if (code != 0) {
             // 脱敏：git 报错输出里常带 authed URL（含 token），禁止回显到异常信息（OPT-10）
