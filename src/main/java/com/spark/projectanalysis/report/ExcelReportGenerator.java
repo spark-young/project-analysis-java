@@ -62,6 +62,7 @@ public class ExcelReportGenerator {
         try (SXSSFWorkbook wb = new SXSSFWorkbook(200)) {
             CellStyle headerStyle = headerStyle(wb);
             CellStyle rootStyle = rootStyle(wb);
+            MethodSig sig = singleResolver(result);
 
             // 预计算：来源筛选 + 样板规则分离
             List<MethodFrequency> allFreq = result.getMethodFrequency() == null
@@ -73,17 +74,17 @@ public class ExcelReportGenerator {
                         && !"ALL".equalsIgnoreCase(sourceFilter)) {
                     if (!sourceFilter.equalsIgnoreCase(mf.getSource())) continue;
                 }
-                if (noiseRuleService.isNoise(mf.getMethod(), mf.getSource(), projectPath)) {
+                if (noiseRuleService.isNoise(sig.of(mf.getMethodId()), mf.getSource(), projectPath)) {
                     noiseRemoved.add(mf);
                 } else {
                     kept.add(mf);
                 }
             }
 
-            writeOverview(wb, result, headerStyle, sourceFilter, kept, noiseRemoved);
+            writeOverview(wb, result, headerStyle, sourceFilter, kept, noiseRemoved, sig);
             writeNoiseRulesSheet(wb, headerStyle, projectPath);
-            writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
-            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
+            writeFrequencySheet(wb, kept, headerStyle, "方法调用分析", sig);
+            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath, sig);
 
             writeRootSheets(wb, result, headerStyle, rootStyle, projectPath);
 
@@ -104,7 +105,9 @@ public class ExcelReportGenerator {
             CellStyle rootStyle = rootStyle(wb);
 
             // 跨入口聚合频率（口径同单入口 collectGraphStats：入边数 = 被调次数）
-            List<MethodFrequency> allFreq = aggregateFrequency(results);
+            ProjectFreq pf = aggregateFrequency(results);
+            MethodSig sig = id -> (id >= 0 && id < pf.methods.size()) ? pf.methods.get(id) : "";
+            List<MethodFrequency> allFreq = pf.list;
 
             List<MethodFrequency> kept = new ArrayList<>();
             List<MethodFrequency> noiseRemoved = new ArrayList<>();
@@ -113,7 +116,7 @@ public class ExcelReportGenerator {
                         && !"ALL".equalsIgnoreCase(sourceFilter)) {
                     if (!sourceFilter.equalsIgnoreCase(mf.getSource())) continue;
                 }
-                if (noiseRuleService.isNoise(mf.getMethod(), mf.getSource(), projectPath)) {
+                if (noiseRuleService.isNoise(sig.of(mf.getMethodId()), mf.getSource(), projectPath)) {
                     noiseRemoved.add(mf);
                 } else {
                     kept.add(mf);
@@ -122,8 +125,8 @@ public class ExcelReportGenerator {
 
             writeProjectOverview(wb, results, headerStyle, sourceFilter, kept, noiseRemoved);
             writeNoiseRulesSheet(wb, headerStyle, projectPath);
-            writeFrequencySheet(wb, kept, headerStyle, "方法调用分析");
-            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath);
+            writeFrequencySheet(wb, kept, headerStyle, "方法调用分析", sig);
+            writeFilteredOutSheet(wb, noiseRemoved, headerStyle, projectPath, sig);
             writeProjectRootSheets(wb, results, headerStyle, rootStyle, projectPath);
 
             ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -137,8 +140,11 @@ public class ExcelReportGenerator {
      * 口径 = **不同调用位置的计数**：同一调用位置（同一调用方的同一行）即使出现在多个
      * 交易入口的调用链里，也只计一次；也就等于各入口去重后的调用位置并集大小。
      */
-    private List<MethodFrequency> aggregateFrequency(List<AnalysisResult> results) {
+    private ProjectFreq aggregateFrequency(List<AnalysisResult> results) {
         Map<MethodKey, FreqAgg> agg = new HashMap<>();
+        // 跨入口合并后的独立方法表：id → 可读标识，methodId/callerId 均引用它
+        List<String> methodTable = new ArrayList<>();
+        Map<String, Integer> methodIdOf = new HashMap<>();
         for (AnalysisResult r : results) {
             CallGraph g = r.getGraph();
             if (g == null) continue;
@@ -149,12 +155,13 @@ public class ExcelReportGenerator {
                 MethodKey key = target.toKey();
                 FreqAgg a = agg.computeIfAbsent(key, k -> new FreqAgg());
                 if (a.source == null) a.source = target.getSource();
+                if (a.methodId < 0) a.methodId = methodId(methodTable, methodIdOf, target.getDisplay());
                 String site = (caller != null ? caller.toKey().getIdentifier() : "?") + "@" + edge.getLine();
                 if (!a.sites.add(site)) continue;   // 该位置已计过，不重复累加
                 a.callCount++;
                 if (caller != null) {
                     MethodCaller mc = new MethodCaller();
-                    mc.setCaller(caller.getDisplay());
+                    mc.setCallerId(methodId(methodTable, methodIdOf, caller.getDisplay()));
                     mc.setLine(edge.getLine());
                     a.callers.add(mc);
                 }
@@ -163,7 +170,7 @@ public class ExcelReportGenerator {
         List<MethodFrequency> out = new ArrayList<>(agg.size());
         for (Map.Entry<MethodKey, FreqAgg> e : agg.entrySet()) {
             MethodFrequency f = new MethodFrequency();
-            f.setMethod(e.getKey().getIdentifier());
+            f.setMethodId(e.getValue().methodId);
             f.setSource(e.getValue().source.name());
             f.setCallCount(e.getValue().callCount);
             f.setCallers(e.getValue().callers);
@@ -171,9 +178,36 @@ public class ExcelReportGenerator {
         }
         out.sort((a, b) -> {
             int c = Integer.compare(b.getCallCount(), a.getCallCount());
-            return c != 0 ? c : a.getMethod().compareTo(b.getMethod());
+            return c != 0 ? c : methodTable.get(a.getMethodId()).compareTo(methodTable.get(b.getMethodId()));
         });
-        return out;
+        return new ProjectFreq(out, methodTable);
+    }
+
+    /** 取（或登记）某签名在合并方法表中的 id */
+    private static int methodId(List<String> table, Map<String, Integer> index, String signature) {
+        Integer existing = index.get(signature);
+        if (existing != null) return existing;
+        int id = table.size();
+        table.add(signature);
+        index.put(signature, id);
+        return id;
+    }
+
+    /** methodId → 可读方法标识（从结果图节点表解析） */
+    @FunctionalInterface
+    private interface MethodSig {
+        String of(int methodId);
+    }
+
+    /** 单入口结果的签名解析器：methodId 即 result.graph.methods 下标 */
+    private static MethodSig singleResolver(AnalysisResult result) {
+        CallGraph g = result == null ? null : result.getGraph();
+        List<GraphMethod> methods = g == null ? null : g.getMethods();
+        return id -> {
+            if (methods == null || id < 0 || id >= methods.size()) return "";
+            GraphMethod m = methods.get(id);
+            return m == null ? "" : m.getDisplay();
+        };
     }
 
     /** 项目级总览：项目信息 + 跨入口汇总 + 每入口一行明细 */
@@ -275,6 +309,17 @@ public class ExcelReportGenerator {
         final Set<String> sites = new HashSet<>();
         int callCount;
         SourceType source;
+        int methodId = -1;   // 被调方法在合并方法表中的 id
+    }
+
+    /** 跨入口聚合结果：频率列表 + 供 methodId/callerId 解析的合并方法表 */
+    private static final class ProjectFreq {
+        final List<MethodFrequency> list;
+        final List<String> methods;
+        ProjectFreq(List<MethodFrequency> list, List<String> methods) {
+            this.list = list;
+            this.methods = methods;
+        }
     }
 
     /** 入口方法的统一可读签名：全限定类名#方法名(参数类型短名列表)；缺 descriptor 时回退 className#methodName */
@@ -304,7 +349,8 @@ public class ExcelReportGenerator {
     // ------------------------------------------------------------------
 
     private void writeOverview(SXSSFWorkbook wb, AnalysisResult result, CellStyle headerStyle,
-                               String sourceFilter, List<MethodFrequency> kept, List<MethodFrequency> noiseRemoved) {
+                               String sourceFilter, List<MethodFrequency> kept, List<MethodFrequency> noiseRemoved,
+                               MethodSig sig) {
         Sheet sheet = wb.createSheet("总览");
         int r = 0;
         r = titleRow(sheet, r, reportTitle(result, "调用链分析报告"), headerStyle);
@@ -334,7 +380,7 @@ public class ExcelReportGenerator {
             int totalCalls = 0;
             for (MethodFrequency mf : kept) totalCalls += mf.getCallCount();
             r = kv(sheet, r, "保留方法总被调次数", String.valueOf(totalCalls));
-            r = kv(sheet, r, "最高被调方法", kept.get(0).getMethod() + "（" + kept.get(0).getCallCount() + " 次）");
+            r = kv(sheet, r, "最高被调方法", sig.of(kept.get(0).getMethodId()) + "（" + kept.get(0).getCallCount() + " 次）");
         }
 
         if (!result.getUnresolvedDependencies().isEmpty()) {
@@ -421,29 +467,10 @@ public class ExcelReportGenerator {
     }
 
     /**
-     * 按来源筛选 + 启用的样板规则过滤方法频次列表。
-     */
-    private List<MethodFrequency> filterFrequency(List<MethodFrequency> all, String sourceFilter, String projectPath) {
-        List<MethodFrequency> out = new ArrayList<>();
-        for (MethodFrequency mf : all) {
-            String src = mf.getSource();
-            // 来源筛选
-            if (sourceFilter != null && !sourceFilter.isEmpty()
-                    && !"ALL".equalsIgnoreCase(sourceFilter)) {
-                if (!sourceFilter.equalsIgnoreCase(src)) continue;
-            }
-            // 样板规则过滤（传入完整方法标识，内部解析类名/方法名/参数个数）
-            if (noiseRuleService.isNoise(mf.getMethod(), src, projectPath)) continue;
-            out.add(mf);
-        }
-        return out;
-    }
-
-    /**
      * 独立 Sheet：方法调用分析（保留的方法，完整列表）。
      */
     private void writeFrequencySheet(SXSSFWorkbook wb, List<MethodFrequency> kept,
-                                     CellStyle headerStyle, String sheetName) {
+                                     CellStyle headerStyle, String sheetName, MethodSig sig) {
         if (kept == null || kept.isEmpty()) return;
         Sheet sheet = wb.createSheet(sheetName);
         int r = 0;
@@ -461,7 +488,7 @@ public class ExcelReportGenerator {
         for (MethodFrequency mf : kept) {
             Row row = sheet.createRow(r++);
             row.createCell(0).setCellValue(rank++);
-            row.createCell(1).setCellValue(mf.getMethod());
+            row.createCell(1).setCellValue(sig.of(mf.getMethodId()));
             row.createCell(2).setCellValue(mf.getSource());
             row.createCell(3).setCellValue(mf.getCallCount());
             StringBuilder callers = new StringBuilder();
@@ -470,7 +497,7 @@ public class ExcelReportGenerator {
                 int limit = Math.min(cs.size(), 20);
                 for (int k = 0; k < limit; k++) {
                     if (k > 0) callers.append("\n");
-                    callers.append(cs.get(k).getCaller());
+                    callers.append(sig.of(cs.get(k).getCallerId()));
                     int ln = cs.get(k).getLine();
                     if (ln > 0) callers.append("  L").append(ln);
                 }
@@ -493,7 +520,7 @@ public class ExcelReportGenerator {
      * 最后一列显示命中的规则名称。
      */
     private void writeFilteredOutSheet(SXSSFWorkbook wb, List<MethodFrequency> noiseRemoved,
-                                       CellStyle headerStyle, String projectPath) {
+                                       CellStyle headerStyle, String projectPath, MethodSig sig) {
         if (noiseRemoved == null || noiseRemoved.isEmpty()) return;
         Sheet sheet = wb.createSheet("被过滤方法");
         int r = 0;
@@ -514,7 +541,7 @@ public class ExcelReportGenerator {
         for (MethodFrequency mf : noiseRemoved) {
             Row row = sheet.createRow(r++);
             row.createCell(0).setCellValue(rank++);
-            row.createCell(1).setCellValue(mf.getMethod());
+            row.createCell(1).setCellValue(sig.of(mf.getMethodId()));
             row.createCell(2).setCellValue(mf.getSource());
             row.createCell(3).setCellValue(mf.getCallCount());
             StringBuilder callers = new StringBuilder();
@@ -523,7 +550,7 @@ public class ExcelReportGenerator {
                 int limit = Math.min(cs.size(), 20);
                 for (int k = 0; k < limit; k++) {
                     if (k > 0) callers.append("\n");
-                    callers.append(cs.get(k).getCaller());
+                    callers.append(sig.of(cs.get(k).getCallerId()));
                     int ln = cs.get(k).getLine();
                     if (ln > 0) callers.append("  L").append(ln);
                 }
@@ -533,7 +560,7 @@ public class ExcelReportGenerator {
             }
             setCellText(row.createCell(4), callers.toString());
             row.createCell(5).setCellValue(
-                    noiseRuleService.getMatchedRule(mf.getMethod(), mf.getSource(), projectPath));
+                    noiseRuleService.getMatchedRule(sig.of(mf.getMethodId()), mf.getSource(), projectPath));
         }
         sheet.setColumnWidth(0, 8 * 256);
         sheet.setColumnWidth(1, 90 * 256);

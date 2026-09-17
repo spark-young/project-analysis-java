@@ -2583,13 +2583,103 @@
         });
     }
 
+    /** 后端 methodFrequency 的 Top-N 上限（与 AnalysisService.DEFAULT_METHOD_TOP_N 对齐） */
+    const FREQ_TOP_N = 200;
+
+    /** methodId → 可读方法签名（从当前单入口结果的节点表 graph.methods 解析） */
+    function resolveFreqSignature(id) {
+        const g = currentResult && currentResult.graph;
+        const methods = g && g.methods;
+        if (methods && id != null && methods[id]) {
+            const m = methods[id];
+            return m.display || ((m.owner || '').replace(/\//g, '.') + '#' + (m.name || ''));
+        }
+        return null;
+    }
+
+    /**
+     * 归一化频次条目 → 展示用形态 {method, source, callCount, callers:[{caller,line}]}。
+     * 后端条目（存 methodId/callerId）用节点表解析出签名；项目级聚合条目（前端计算，本就含
+     * method 字符串）原样返回。
+     */
+    function normalizeFreqItem(item) {
+        if (!item || item.method) return item;
+        return {
+            method: resolveFreqSignature(item.methodId) || ('#' + item.methodId),
+            source: item.source,
+            callCount: item.callCount,
+            callers: (item.callers || []).map((c) => ({
+                caller: c.caller || resolveFreqSignature(c.callerId) || ('#' + c.callerId),
+                line: c.line,
+            })),
+        };
+    }
+
     // 频次列表当前数据快照：调用方明细改为展开时才生成（首屏不再拼巨量 HTML）
     let _freqRows = [];
 
+    /** 前端分页大小（OPT-19）：单页最多渲染 FREQ_PAGE_SIZE 行，避免一次拼 200 行巨量 HTML */
+    const FREQ_PAGE_SIZE = 50;
+    /** 当前页码（0 基）；切换来源 / 改动过滤 / 新分析时重置为 0 */
+    let _freqPage = 0;
+
+    /**
+     * 渲染频次列表当前页（含翻页器）。
+     * data-idx 仍用全局下标，行内操作（导出/过滤）与调用方明细展开沿用 _freqRows 索引。
+     */
+    function renderFreqPage() {
+        const size = FREQ_PAGE_SIZE;
+        const total = _freqRows.length;
+        const totalPages = Math.max(1, Math.ceil(total / size));
+        _freqPage = Math.min(Math.max(_freqPage, 0), totalPages - 1);
+        const start = _freqPage * size;
+        const rowsHtml = _freqRows.slice(start, start + size).map((item, i) => {
+            const idx = start + i;                  // 全局下标 = 排行榜名次 - 1
+            const top3 = idx < 3 ? ' mf-top3' : '';  // 前三名高亮改按名次判定，避免分页后错位
+            return '<div class="mf-item' + top3 + '" data-idx="' + idx + '">'
+                + '<div class="mf-row">'
+                + '<span class="mf-toggle">▸</span>'
+                + '<span class="mf-rank">' + (idx + 1) + '</span>'
+                + '<span class="mf-body">'
+                + '<span class="mf-method">' + sigHtmlFromString(item.method) + '</span>'
+                + badgeHtml('source-' + (item.source || '').toLowerCase(),
+                    SOURCE_LABEL[item.source] || item.source)
+                + '</span>'
+                + '<span class="mf-hot">'
+                + '<span class="mf-count">' + item.callCount + '</span>'
+                + '<span class="mf-count-unit">次</span>'
+                + '</span>'
+                + '<span class="mf-acts">'
+                + '<button type="button" class="mf-act mf-export" title="导出该方法的全部调用位置（CSV）">导出</button>'
+                + '<button type="button" class="mf-act mf-filter" title="把该方法加入过滤规则并立即生效">过滤</button>'
+                + '</span>'
+                + '</div>'
+                + '<div class="mf-callers" style="display:none"></div>'   // 明细展开时才填充
+                + '</div>';
+        }).join('');
+        const pagerHtml = totalPages > 1
+            ? '<div class="freq-pager">'
+                + '<button type="button" class="freq-pager-btn freq-pager-prev"'
+                + (_freqPage <= 0 ? ' disabled' : '') + '>‹ 上一页</button>'
+                + '<span class="freq-pager-info">第 ' + (_freqPage + 1) + ' / ' + totalPages
+                + ' 页 · 共 ' + total + ' 条</span>'
+                + '<button type="button" class="freq-pager-btn freq-pager-next"'
+                + (_freqPage >= totalPages - 1 ? ' disabled' : '') + '>下一页 ›</button>'
+                + '</div>'
+            : '';
+        els.freqList.innerHTML = rowsHtml + pagerHtml;
+    }
+
     /** 按当前 freqFilter + 启用的样板规则过滤并渲染方法列表 */
     function renderFreqList(all) {
+        // 后端 methodFrequency 现在只存 methodId/callerId：先归一化为展示用的字符串签名；
+        // 项目级聚合（前端计算）本就是字符串形态、原样保留。
+        const raw = all || [];
+        const serverSide = raw.some((x) => x && x.methodId !== undefined && x.method === undefined);
+        const topNTruncated = serverSide && raw.length >= FREQ_TOP_N;
+        const normalized = raw.map(normalizeFreqItem);
         // 第一步：按样板规则过滤（跨所有来源），用于更新统计和来源标签
-        const noiseFiltered = (all || []).filter((m) => !isNoiseMethod(m));
+        const noiseFiltered = normalized.filter((m) => !isNoiseMethod(m));
         // 来源标签计数 = 样板规则过滤后的各来源数量
         updateFreqFilterChips(noiseFiltered);
         // 第二步：在样板过滤基础上再按当前来源筛选
@@ -2597,8 +2687,12 @@
             if (freqFilter !== 'ALL' && (m.source || 'EXTERNAL') !== freqFilter) return false;
             return true;
         });
-        // 统计栏：方法总数 + 最高/最低被调次数 + 已过滤数量
-        const noiseRemoved = (all || []).length - noiseFiltered.length;
+        // 统计栏：方法总数 + 最高/最低被调次数 + 已过滤数量（+ Top-N 截断提示）
+        const noiseRemoved = normalized.length - noiseFiltered.length;
+        const topNChip = topNTruncated
+            ? '<span class="stat-chip" style="color:#b45309;border-color:#fde68a">'
+                + '仅显示被调最高的 ' + FREQ_TOP_N + ' 个（Top-N 截断）</span>'
+            : '';
         if (list.length > 0) {
             const max = list[0].callCount;
             const min = list[list.length - 1].callCount;
@@ -2608,41 +2702,23 @@
                 ['最高被调', max + ' 次'],
                 ['最低被调', min + ' 次'],
             ].map(([k, v]) =>
-                '<span class="stat-chip">' + k + '<b>' + v + '</b></span>').join('');
+                '<span class="stat-chip">' + k + '<b>' + v + '</b></span>').join('') + topNChip;
         } else {
             els.freqStatsBar.innerHTML =
                 '<span class="stat-chip">方法总数 <b>0</b></span>'
-                + '<span class="stat-chip">已过滤 <b>' + noiseRemoved + ' 个</b></span>';
+                + '<span class="stat-chip">已过滤 <b>' + noiseRemoved + ' 个</b></span>'
+                + topNChip;
         }
         if (list.length === 0) {
             _freqRows = [];
+            _freqPage = 0;
             els.freqList.innerHTML =
                 '<div class="mf-empty">该来源下暂无可统计的方法调用数据</div>';
             return;
         }
         _freqRows = list;
-        els.freqList.innerHTML = list.map((item, idx) =>
-            '<div class="mf-item" data-idx="' + idx + '">'
-            + '<div class="mf-row">'
-            + '<span class="mf-toggle">▸</span>'
-            + '<span class="mf-rank">' + (idx + 1) + '</span>'
-            + '<span class="mf-body">'
-            + '<span class="mf-method">' + sigHtmlFromString(item.method) + '</span>'
-            + badgeHtml('source-' + (item.source || '').toLowerCase(),
-                SOURCE_LABEL[item.source] || item.source)
-            + '</span>'
-            + '<span class="mf-hot">'
-            + '<span class="mf-count">' + item.callCount + '</span>'
-            + '<span class="mf-count-unit">次</span>'
-            + '</span>'
-            + '<span class="mf-acts">'
-            + '<button type="button" class="mf-act mf-export" title="导出该方法的全部调用位置（CSV）">导出</button>'
-            + '<button type="button" class="mf-act mf-filter" title="把该方法加入过滤规则并立即生效">过滤</button>'
-            + '</span>'
-            + '</div>'
-            + '<div class="mf-callers" style="display:none"></div>'   // 明细展开时才填充
-            + '</div>'
-        ).join('');
+        _freqPage = 0;   // 数据变化（切换来源 / 过滤 / 新分析）回到第一页
+        renderFreqPage();
     }
 
     /** 懒渲染某行的调用方明细（首次展开时才生成 DOM，避免首屏拼巨量 HTML） */
@@ -2827,6 +2903,13 @@
 
     // 事件委托：整个频次列表只挂一个监听（原实现每行挂闭包 + N 次 querySelectorAll）
     els.freqList.addEventListener('click', (e) => {
+        // 翻页器按钮（分页渲染，OPT-19）：切页后重渲染当前页
+        const pagerBtn = e.target.closest('.freq-pager-btn');
+        if (pagerBtn && !pagerBtn.disabled) {
+            _freqPage += pagerBtn.classList.contains('freq-pager-prev') ? -1 : 1;
+            renderFreqPage();
+            return;
+        }
         // 行内操作按钮优先处理，且不触发展开/收起
         const act = e.target.closest('.mf-act');
         if (act) {

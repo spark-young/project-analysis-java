@@ -39,8 +39,12 @@ public class AnalysisCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisCacheService.class);
 
-    /** 指纹算法版本：算法升级后旧缓存自动失效 */
-    private static final String FINGERPRINT_VERSION = "fp1";
+    /**
+     * 指纹算法版本：算法升级后旧缓存自动失效。
+     * fp1 → fp2：methodFrequency 由"完整签名"改为"methodId/callerId"（OPT-19），
+     * 旧 JSON 反序列化后 methodId 会缺失/错位，故提升版本让旧缓存失效、强制重析。
+     */
+    private static final String FINGERPRINT_VERSION = "fp2";
 
     /** 需要纳入指纹的 class 产物目录（相对项目根的路径段） */
     private static final String[][] CLASS_OUTPUT_DIRS = {

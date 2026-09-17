@@ -48,8 +48,8 @@ public class AnalysisService {
     private static final long CACHE_TTL_MS = 5 * 60 * 1000;
     private static final int ACC_SYNTHETIC = 0x1000;
     private static final int ACC_BRIDGE = 0x0040;
-    /** 方法调用次数分析：展示全部去重方法（不截断，按被调次数降序） */
-    private static final int DEFAULT_METHOD_TOP_N = Integer.MAX_VALUE;
+    /** 方法调用次数分析：仅保留被调最高的 Top N 个去重方法（按被调次数降序），避免响应体积膨胀（OPT-19） */
+    private static final int DEFAULT_METHOD_TOP_N = 200;
     /** 每个方法调用方采集上限（不再截断，完整采集供单方法导出使用） */
     private static final int CALLER_CAPTURE_LIMIT = Integer.MAX_VALUE;
 
@@ -525,18 +525,18 @@ public class AnalysisService {
         result.setMethodFrequency(topFrequency(collectGraphStats(graph)));
     }
 
-    /** 由图边表汇总：被调次数 = 入边数，调用方 = 入边来源方法 + 行号 */
+    /** 由图边表汇总：被调次数 = 入边数，调用方 = 入边来源方法id + 行号 */
     private Map<MethodKey, MethodAgg> collectGraphStats(CallGraph graph) {
         Map<MethodKey, MethodAgg> agg = new HashMap<>();
         for (GraphEdge edge : graph.getEdges()) {
             GraphMethod target = graph.getMethods().get(edge.getTo());
-            GraphMethod caller = graph.getMethods().get(edge.getFrom());
             MethodKey targetKey = target.toKey();
             MethodAgg a = agg.computeIfAbsent(targetKey, k -> new MethodAgg());
             if (a.source == null) a.source = target.getSource();
+            a.methodId = edge.getTo();          // 被调方法在节点表中的下标（存 id，不存签名）
             a.callCount++;
             if (a.callers.size() < CALLER_CAPTURE_LIMIT) {
-                a.callers.add(new CallerInfo(caller.toKey(), edge.getLine()));
+                a.callers.add(new CallerInfo(edge.getFrom(), edge.getLine()));
             }
         }
         return agg;
@@ -551,36 +551,37 @@ public class AnalysisService {
                     return r != 0 ? r : a.getKey().getIdentifier().compareTo(b.getKey().getIdentifier());
                 })
                 .limit(DEFAULT_METHOD_TOP_N)
-                .map(e -> toFrequency(e.getKey(), e.getValue()))
+                .map(e -> toFrequency(e.getValue()))
                 .collect(Collectors.toList());
     }
 
-    private MethodFrequency toFrequency(MethodKey method, MethodAgg a) {
+    private MethodFrequency toFrequency(MethodAgg a) {
         MethodFrequency f = new MethodFrequency();
-        f.setMethod(method.getIdentifier());
+        f.setMethodId(a.methodId);
         f.setSource(a.source.name());
         f.setCallCount(a.callCount);
         f.setCallers(a.callers.stream().map(ci -> {
             MethodCaller mc = new MethodCaller();
-            mc.setCaller(ci.caller.getIdentifier());
+            mc.setCallerId(ci.callerId);
             mc.setLine(ci.line);
             return mc;
         }).collect(Collectors.toList()));
         return f;
     }
 
-    /** 统计收集器：去重方法结构（MethodKey 引用 + 入度 + 调用方集合） */
+    /** 统计收集器：去重方法结构（节点 id + 入度 + 调用方集合） */
     private static final class MethodAgg {
         final List<CallerInfo> callers = new ArrayList<>();
         int callCount;      // 入度：被调次数（根方法为 0，不进排行）
         SourceType source;  // 首次出现时的来源（owner 固定，source 稳定）
+        int methodId = -1;  // 被调方法在 graph.methods 中的下标
     }
 
     private static final class CallerInfo {
-        final MethodKey caller; // 调用方
-        final int line;         // 调用处行号，未知 -1
-        CallerInfo(MethodKey caller, int line) {
-            this.caller = caller;
+        final int callerId; // 调用方在 graph.methods 中的下标
+        final int line;     // 调用处行号，未知 -1
+        CallerInfo(int callerId, int line) {
+            this.callerId = callerId;
             this.line = line;
         }
     }

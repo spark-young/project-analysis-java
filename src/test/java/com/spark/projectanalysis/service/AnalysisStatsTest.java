@@ -117,8 +117,11 @@ class AnalysisStatsTest {
         assertTrue(f != null);
         assertTrue(!expectedCallers.isEmpty(), "Util.trim 应有独立重算调用方");
         for (com.spark.projectanalysis.service.dto.MethodCaller mc : f.getCallers()) {
-            assertTrue(expectedCallers.contains(mc.getCaller()),
-                    "调用方应来自独立重算集合: " + mc.getCaller());
+            int cid = mc.getCallerId();
+            assertTrue(cid >= 0 && cid < r.getGraph().getMethods().size(), "调用方 id 应在节点表范围内");
+            String callerSig = r.getGraph().getMethods().get(cid).toKey().getIdentifier();
+            assertTrue(expectedCallers.contains(callerSig),
+                    "调用方应来自独立重算集合: " + callerSig);
         }
     }
 
@@ -136,11 +139,12 @@ class AnalysisStatsTest {
         }
     }
 
-    /** 在高频排行里找指定方法 */
+    /** 在高频排行里找指定方法（methodId → 节点表解析比对） */
     private static MethodFrequency findFrequency(AnalysisResult r, MethodKey key) {
-        String id = key.getIdentifier();
+        java.util.List<GraphMethod> methods = r.getGraph().getMethods();
         for (MethodFrequency f : r.getMethodFrequency()) {
-            if (f.getMethod().equals(id)) return f;
+            int id = f.getMethodId();
+            if (id >= 0 && id < methods.size() && methods.get(id).toKey().equals(key)) return f;
         }
         return null;
     }

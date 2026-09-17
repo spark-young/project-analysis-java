@@ -436,7 +436,8 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     font-weight: 700;
     font-size: 13px;
 }
-.mf-item:nth-child(-n+3) .mf-rank { background: #fee2e2; color: #b91c1c; }
+/* 前三名高亮：按名次判定（而非 :nth-child），分页后仍是全局前三名 */
+.mf-item.mf-top3 .mf-rank { background: #fee2e2; color: #b91c1c; }
 
 /* 方法名主体，右上角徽标 */
 .mf-body {
@@ -524,6 +525,31 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     color: var(--text-dim);
     padding: 12px 4px;
 }
+
+/* 频次列表翻页器（OPT-19 前端分页） */
+.freq-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.freq-pager-btn {
+    padding: 4px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #334155;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color .12s, border-color .12s, background .12s;
+}
+.freq-pager-btn:hover:not(:disabled) { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
+.freq-pager-btn:disabled { color: #cbd5e1; cursor: not-allowed; background: #f8fafc; }
+.freq-pager-info { font-size: 12px; color: var(--text-dim); }
 
 .warnings {
     margin-bottom: 12px;
