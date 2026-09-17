@@ -7,13 +7,18 @@ import com.spark.projectanalysis.service.dto.GitSwitchResult;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.transport.JschConfigSessionFactory;
 import org.eclipse.jgit.transport.OpenSshConfig;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -41,6 +46,8 @@ import java.util.regex.Pattern;
  */
 @Service
 public class GitCloneService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitCloneService.class);
 
     /** 每次 clone/pull 时通过 ThreadLocal 注入的进度回调 */
     private final ThreadLocal<java.util.function.BiConsumer<Integer, String>> progressCb = new ThreadLocal<>();
@@ -324,8 +331,14 @@ public class GitCloneService {
             cmd.setCredentialsProvider(new UsernamePasswordCredentialsProvider(user, token.trim()));
         }
 
-        // 3) StrictHostKeyChecking=no 兜底（万一转换失败 / 内网 GitLab 必须 SSH）
+        // 3) 传输层回调：任何传输（https / ssh / 本地）打开时都会触发。
+        //    OPT-16（CVE-2023-4759）：core.symlinks=false 必须早于 checkout 生效。
+        //    CloneCommand.call() 的顺序是 verifyDirectories → fetch（此处打开传输、触发本回调）
+        //    → checkout，因此在 fetch 阶段把该配置落盘，随后 DirCacheCheckout 读到的即为 false，
+        //    首次克隆的 checkout 也不会在启用符号链接的状态下执行。
+        //    （对比：若写在 cmd.call() 之后，checkout 已经完成，保护不到主向量。）
         cmd.setTransportConfigCallback(transport -> {
+            disableSymlinks(targetDir);
             if (transport instanceof SshTransport) {
                 SshTransport ssh = (SshTransport) transport;
                 ssh.setSshSessionFactory(new JschConfigSessionFactory() {
@@ -338,11 +351,32 @@ public class GitCloneService {
             }
         });
 
+        // 克隆与检出都在 call() 内完成；core.symlinks=false 已在上面回调中（checkout 之前）落盘。
         try (Git git = cmd.call()) {
-            // 加固：禁用符号链接，规避 CVE-2023-4759（符号链接子模块 RCE）（OPT-16）
-            // 必须在 try-with-resources 关闭前落盘，否则配置不会被保存。
-            git.getRepository().getConfig().setBoolean("core", null, "symlinks", false);
-            git.getRepository().getConfig().save();
+            // 句柄仅用于确保仓库资源被释放，无需再做后置处理。
+        }
+    }
+
+    /**
+     * OPT-16：在 checkout 之前把 {@code core.symlinks=false} 写入 {@code <targetDir>/.git/config}，
+     * 规避 CVE-2023-4759（在大小写不敏感文件系统上经符号链接 checkout 导致的攻击）。
+     * <p>
+     * 由 {@link CloneCommand} 的传输回调在 fetch 阶段调用，早于同一次 {@code call()} 内的
+     * checkout；JGit 的仓库配置会在读取时按文件快照自动重载，因此该值对随后的
+     * {@code DirCacheCheckout} 立即可见。
+     */
+    private static void disableSymlinks(Path targetDir) {
+        try {
+            File cfgFile = targetDir.resolve(".git").resolve("config").toFile();
+            if (!cfgFile.isFile()) {
+                return;
+            }
+            FileBasedConfig cfg = new FileBasedConfig(cfgFile, FS.DETECTED);
+            cfg.load();
+            cfg.setBoolean("core", null, "symlinks", false);
+            cfg.save();
+        } catch (Exception e) {
+            log.warn("[OPT-16] 写入 core.symlinks=false 失败: {}", e.getMessage());
         }
     }
 
