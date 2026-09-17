@@ -84,6 +84,11 @@ public class JavacCompileService {
             args.add(classes.toString());
             args.add("-encoding");
             args.add("UTF-8");
+            // 禁用注解处理器：classpath 由被分析工程里的 jar 拼成，javac 默认会按
+            // META-INF/services/javax.annotation.processing.Processor 自动发现并在本工具 JVM 内执行
+            // 这些处理器 —— 被分析工程里放一个投毒 jar 即等于任意代码执行。
+            // 本工具只读字节码，永远不需要注解处理。
+            args.add("-proc:none");
             if (!libJars.isEmpty()) {
                 String cp = libJars.stream().map(Path::toString)
                         .collect(Collectors.joining(File.pathSeparator));
