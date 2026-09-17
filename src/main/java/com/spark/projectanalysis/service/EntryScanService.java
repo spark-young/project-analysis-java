@@ -110,7 +110,8 @@ public class EntryScanService {
         Job job = new Job("sync", projectPath);
         runScan(job, profile);
         if (job.error != null) {
-            throw new AnalysisException(HttpStatus.INTERNAL_SERVER_ERROR, job.error);
+            // 状态码由失败点决定：入参问题（空路径/路径不存在）是 400，内部异常才是 500
+            throw new AnalysisException(job.errorStatus, job.error);
         }
         return job.result;
     }
@@ -248,6 +249,11 @@ public class EntryScanService {
             this.state = s;
             this.progress = Math.min(100, Math.max(0, p));
             this.step = step;
+        }
+
+        void fail(String err, HttpStatus status) {
+            this.errorStatus = status == null ? HttpStatus.INTERNAL_SERVER_ERROR : status;
+            fail(err);
         }
 
         void fail(String err) {
