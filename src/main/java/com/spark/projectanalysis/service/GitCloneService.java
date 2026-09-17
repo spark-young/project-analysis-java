@@ -1,6 +1,7 @@
 package com.spark.projectanalysis.service;
 
 import com.jcraft.jsch.Session;
+import com.spark.projectanalysis.util.CredentialRedactor;
 import com.spark.projectanalysis.service.dto.GitRefs;
 import com.spark.projectanalysis.service.dto.GitSwitchResult;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
@@ -338,7 +339,7 @@ public class GitCloneService {
         });
 
         try (Git ignored = cmd.call()) {
-            // try-with-resources 关闭仓库句柄
+            // try-with-resources 关闭即仓库可用
         }
     }
 
@@ -389,7 +390,7 @@ public class GitCloneService {
                         authedUrl, safeBranch(branch)}, originalUrl);
                 if (output.toLowerCase().contains("fatal")) {
                     // git pull 非零退出码已在 git() 抛出；这里兜底处理输出里含 fatal 但进程成功的情况
-                    throw new IOException("增量拉取失败：\n" + output.trim());
+                    throw new IOException("增量拉取失败：\n" + CredentialRedactor.redact(output.trim()));
                 }
                 return; // 成功
             } catch (IOException e) {
@@ -431,7 +432,7 @@ public class GitCloneService {
                 if (output.toLowerCase().contains("fatal")
                         && repoDir.toFile().listFiles() == null) {
                     deleteQuietly(repoDir);
-                    throw new IOException("克隆失败：\n" + output.trim());
+                    throw new IOException("克隆失败：\n" + CredentialRedactor.redact(output.trim()));
                 }
                 return; // 成功
             } catch (IOException e) {
@@ -556,7 +557,9 @@ public class GitCloneService {
         int code = p.waitFor();
         String output = new String(buf.toByteArray(), StandardCharsets.UTF_8);
         if (code != 0) {
-            throw new IOException((output.trim() + "\n(退出码 " + code + ")").trim());
+            // 脱敏：git 报错输出里常带 authed URL（含 token），禁止回显到异常信息（OPT-10）
+            throw new IOException(CredentialRedactor.redact(
+                    (output.trim() + "\n(退出码 " + code + ")").trim()));
         }
         return output;
     }

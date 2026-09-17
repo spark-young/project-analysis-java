@@ -120,7 +120,7 @@ public class ProjectRegistry {
         public boolean existsOnDisk;  // 磁盘目录是否存在
 
         // === Git 分支/Tag 切换与远端更新检测字段（向后兼容，旧 JSON 反序列化为 null）===
-        public String gitToken;              // 认证 token（方案 A：持久化复用）
+        public String gitToken;              // 认证 token（方案 A：持久化复用），持久化到 projects.json 以供克隆/列引用复用；API 响应脱敏由 Jackson MixIn（RegisteredProjectApiMixin）负责，不影响此处持久化
         public String gitUsername;           // 配套用户名
         public String currentRef;            // 当前所在分支名或 Tag 名
         public String currentRefType;        // "BRANCH" / "TAG"

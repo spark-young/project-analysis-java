@@ -2,6 +2,7 @@ package com.spark.projectanalysis.service;
 
 import com.spark.projectanalysis.config.CallgraphPaths;
 import com.spark.projectanalysis.service.dto.GitPrepareRequest;
+import com.spark.projectanalysis.util.CredentialRedactor;
 import com.spark.projectanalysis.service.dto.GitPrepareStatus;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -138,7 +139,8 @@ public class GitPrepareService {
                 job.dir = gitCloneService.ensureLocal(repoUrl, req.getBranch(), req.getToken(), req.getUsername(), workRoot);
             } catch (Exception e) {
                 job.status = "FAILED";
-                job.message = "拉取失败：" + e.getMessage();
+                // 脱敏：克隆失败的底层异常可能带 authed URL（含 token），禁止回显到前端状态（OPT-10）
+                job.message = "拉取失败：" + CredentialRedactor.redact(e.getMessage());
                 if (job.dir != null && !Files.exists(job.dir.resolve(".git"))) {
                     deleteQuietly(job.dir);
                 }
