@@ -117,16 +117,6 @@ class AnalysisControllerTest {
     }
 
     @Test
-    void test_defaults_returnsSelfDemo() throws Exception {
-        mvc.perform(get("/api/defaults"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.className")
-                        .value("com.spark.projectanalysis.service.AnalysisService"))
-                .andExpect(jsonPath("$.methodName").value("analyze"))
-                .andExpect(jsonPath("$.projectPath").isNotEmpty());
-    }
-
-    @Test
     void test_projectInfo() throws Exception {
         mvc.perform(get("/api/project/info").param("path", demoClasses.toString()))
                 .andExpect(status().isOk())
@@ -162,41 +152,8 @@ class AnalysisControllerTest {
     }
 
     // ------------------------------------------------------------------
-    // 入口扫描 + 多入口分析
+    // 多入口分析
     // ------------------------------------------------------------------
-
-    private String scanBody(String path) {
-        return "{\"projectPath\":\"" + escapeWindows(path) + "\"}";
-    }
-
-    @Test
-    void test_scanEntries_groupedByType() throws Exception {
-        mvc.perform(post("/api/scan/entries").contentType(MediaType.APPLICATION_JSON)
-                        .content(scanBody(entriesClasses.toString())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.groups.length()").value(4))
-                .andExpect(jsonPath("$.groups[0].type").value("REST"))
-                .andExpect(jsonPath("$.groups[0].label").value("REST 接口"))
-                .andExpect(jsonPath("$.groups[0].entries.length()").value(3))
-                .andExpect(jsonPath("$.groups[0].entries[0].className").value("com.demo.OrderController"))
-                .andExpect(jsonPath("$.groups[1].type").value("DUBBO"))
-                .andExpect(jsonPath("$.groups[1].entries.length()").value(2))
-                .andExpect(jsonPath("$.groups[1].entries[0].className").value("com.demo.PayRpcImpl"))
-                .andExpect(jsonPath("$.groups[2].type").value("ELASTIC_JOB"))
-                .andExpect(jsonPath("$.groups[2].entries.length()").value(1))
-                .andExpect(jsonPath("$.groups[2].entries[0].className").value("com.demo.OrderSyncJob"))
-                .andExpect(jsonPath("$.groups[3].type").value("MAIN"))
-                .andExpect(jsonPath("$.groups[3].entries.length()").value(1))
-                .andExpect(jsonPath("$.groups[3].entries[0].className").value("com.demo.Launcher"));
-    }
-
-    @Test
-    void test_scanEntries_badPath_rejected() throws Exception {
-        mvc.perform(post("/api/scan/entries").contentType(MediaType.APPLICATION_JSON)
-                        .content(scanBody("X:/no/such/dir")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").exists());
-    }
 
     @Test
     void test_analyzeSelectedEntries_multiRoots() throws Exception {

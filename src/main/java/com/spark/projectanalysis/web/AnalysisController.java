@@ -5,20 +5,16 @@ import com.spark.projectanalysis.service.AnalysisCacheService;
 import com.spark.projectanalysis.service.AnalysisException;
 import com.spark.projectanalysis.service.AnalysisService;
 import com.spark.projectanalysis.service.BatchAnalyzeService;
-import com.spark.projectanalysis.service.EntryScanService;
 import com.spark.projectanalysis.service.GitPrepareService;
 import com.spark.projectanalysis.service.JavacCompileService;
 import com.spark.projectanalysis.service.MavenCompileService;
 import com.spark.projectanalysis.service.dto.AnalyzeRequest;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
 import com.spark.projectanalysis.service.dto.BatchAnalyzeStatus;
-import com.spark.projectanalysis.service.dto.EntryScanResult;
-import com.spark.projectanalysis.service.dto.EntryScanStatus;
 import com.spark.projectanalysis.service.dto.GitPrepareRequest;
 import com.spark.projectanalysis.service.dto.GitPrepareStatus;
 import com.spark.projectanalysis.service.dto.ProjectExcelRequest;
 import com.spark.projectanalysis.service.dto.ProjectInfo;
-import com.spark.projectanalysis.service.dto.ScanRequest;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -35,7 +31,6 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -52,7 +47,6 @@ public class AnalysisController {
 
     private final AnalysisService analysisService;
     private final ExcelReportGenerator excelReportGenerator;
-    private final EntryScanService entryScanService;
     private final GitPrepareService gitPrepareService;
     private final MavenCompileService mavenCompileService;
     private final JavacCompileService javacCompileService;
@@ -60,22 +54,16 @@ public class AnalysisController {
     private final AnalysisCacheService cacheService;
 
     public AnalysisController(AnalysisService analysisService, ExcelReportGenerator excelReportGenerator,
-                              EntryScanService entryScanService, GitPrepareService gitPrepareService,
+                              GitPrepareService gitPrepareService,
                               MavenCompileService mavenCompileService, JavacCompileService javacCompileService,
                               BatchAnalyzeService batchAnalyzeService, AnalysisCacheService cacheService) {
         this.analysisService = analysisService;
         this.excelReportGenerator = excelReportGenerator;
-        this.entryScanService = entryScanService;
         this.gitPrepareService = gitPrepareService;
         this.mavenCompileService = mavenCompileService;
         this.javacCompileService = javacCompileService;
         this.batchAnalyzeService = batchAnalyzeService;
         this.cacheService = cacheService;
-    }
-
-    @GetMapping("/defaults")
-    public AnalyzeRequest defaults() {
-        return analysisService.demoDefaults();
     }
 
     @GetMapping("/project/info")
@@ -125,50 +113,6 @@ public class AnalysisController {
             throw new AnalysisException(HttpStatus.NOT_FOUND, "任务不存在或已过期: " + jobId);
         }
         return status;
-    }
-
-    @PostMapping("/scan/entries")
-    public EntryScanResult scanEntries(@RequestBody ScanRequest req) {
-        String path = req == null ? null : req.getProjectPath();
-        if (path != null && !path.trim().isEmpty()) {
-            compileIfNeeded(Paths.get(path.trim()), false);
-        }
-        return entryScanService.scan(path);
-    }
-
-    /** 异步启动入口扫描，返回 jobId */
-    @PostMapping("/scan/entries/async")
-    public Map<String, String> scanEntriesAsync(@RequestBody ScanRequest req) {
-        String path = req == null ? null : req.getProjectPath();
-        if (path != null && !path.trim().isEmpty()) {
-            compileIfNeeded(Paths.get(path.trim()), false);
-        }
-        String jobId = entryScanService.startAsync(path);
-        Map<String, String> result = new HashMap<>();
-        result.put("jobId", jobId);
-        return result;
-    }
-
-    /** 查询扫描进度 */
-    @GetMapping("/scan/entries/progress/{jobId}")
-    public EntryScanStatus scanEntriesProgress(@PathVariable String jobId) {
-        EntryScanStatus status = entryScanService.status(jobId);
-        if (status == null) {
-            throw new AnalysisException(HttpStatus.NOT_FOUND, "任务不存在或已过期: " + jobId);
-        }
-        return status;
-    }
-
-    /** 单独的编译接口：前端"重新分析"可先手动触发编译；force=true 时做 clean compile */
-    @PostMapping("/ensure-compile")
-    public String ensureCompile(@RequestBody ScanRequest req,
-                                @RequestParam(value = "force", required = false, defaultValue = "false") boolean force) {
-        String path = req == null ? null : req.getProjectPath();
-        if (path == null || path.trim().isEmpty()) {
-            return "路径不能为空";
-        }
-        compileIfNeeded(Paths.get(path.trim()), force);
-        return "ok";
     }
 
     /**
