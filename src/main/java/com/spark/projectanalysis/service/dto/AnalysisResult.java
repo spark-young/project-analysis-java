@@ -20,6 +20,14 @@ public class AnalysisResult {
     private CallGraph graph = new CallGraph();
     private Stats stats = new Stats();
     private List<MethodFrequency> methodFrequency = new ArrayList<>();
+    /**
+     * 缓存新鲜度指纹（项目指纹 + 入口 + 分析参数的哈希）。
+     * 落盘时写入，读取时重算比对；为空或不一致说明代码/参数已变更或缓存太旧，需重新分析。
+     */
+    private String fingerprint;
+
+    public String getFingerprint() { return fingerprint; }
+    public void setFingerprint(String fingerprint) { this.fingerprint = fingerprint; }
 
     public static class Stats {
         private int entryCount;
