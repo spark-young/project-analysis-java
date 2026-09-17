@@ -28,6 +28,45 @@ final class MethodCallExtractor {
 
     private MethodCallExtractor() {}
 
+    // ------------------------------------------------------------------
+    // jar ZipFile 会话级缓存：同一 jar 的多个类复用同一个 ZipFile，避免每类重开一次
+    // ------------------------------------------------------------------
+    /** 会话嵌套深度（按线程） */
+    private static final ThreadLocal<Integer> SESSION_DEPTH = new ThreadLocal<>();
+    /** 当前会话内 已打开 jar 路径 → ZipFile（按线程隔离，线程间不共享、不互相关闭） */
+    private static final ThreadLocal<Map<Path, ZipFile>> JAR_SESSION = new ThreadLocal<>();
+
+    /** 开启一次解析会话（可嵌套：最外层开启时初始化缓存） */
+    static void beginSession() {
+        int depth = SESSION_DEPTH.get() == null ? 0 : SESSION_DEPTH.get();
+        if (depth == 0) JAR_SESSION.set(new HashMap<>());
+        SESSION_DEPTH.set(depth + 1);
+    }
+
+    /** 结束会话：最外层结束时关闭本线程缓存的全部 ZipFile（遍历中不关闭，保证读取完整） */
+    static void endSession() {
+        int depth = SESSION_DEPTH.get() == null ? 0 : SESSION_DEPTH.get();
+        if (depth > 1) {
+            SESSION_DEPTH.set(depth - 1);
+            return;
+        }
+        SESSION_DEPTH.remove();
+        Map<Path, ZipFile> jars = JAR_SESSION.get();
+        JAR_SESSION.remove();
+        closeAll(jars);
+    }
+
+    private static void closeAll(Map<Path, ZipFile> jars) {
+        if (jars == null) return;
+        for (ZipFile z : jars.values()) {
+            try {
+                z.close();
+            } catch (IOException ignored) {
+                // 关闭失败忽略
+            }
+        }
+    }
+
     /**
      * 解析 location（classes 目录或 jar 文件）中 internalName 的方法体。
      *
@@ -92,12 +131,27 @@ final class MethodCallExtractor {
             if (!Files.exists(file)) return null;
             return Files.readAllBytes(file);
         }
-        try (ZipFile zip = new ZipFile(location.toFile())) {
-            ZipEntry entry = zip.getEntry(internalName + ".class");
-            if (entry == null) return null;
-            try (InputStream in = zip.getInputStream(entry)) {
-                return readAll(in);
+        Map<Path, ZipFile> jars = JAR_SESSION.get();
+        if (jars == null) {
+            // 无会话（直接单次调用）：即用即关，保持改前语义，避免文件句柄泄漏
+            try (ZipFile zip = new ZipFile(location.toFile())) {
+                return readEntry(zip, internalName);
             }
+        }
+        Path key = location.toAbsolutePath().normalize();
+        ZipFile zip = jars.get(key);
+        if (zip == null) {
+            zip = new ZipFile(location.toFile());
+            jars.put(key, zip);
+        }
+        return readEntry(zip, internalName);
+    }
+
+    private static byte[] readEntry(ZipFile zip, String internalName) throws IOException {
+        ZipEntry entry = zip.getEntry(internalName + ".class");
+        if (entry == null) return null;
+        try (InputStream in = zip.getInputStream(entry)) {
+            return readAll(in);
         }
     }
 
