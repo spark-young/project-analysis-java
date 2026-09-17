@@ -181,6 +181,78 @@
       "rules": [
         {"id": "r1", "name": "query", "methodPattern": "^query$", "classPattern": "", "source": "ALL", "paramCount": 1, "enabled": true}
       ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"all\" 视作 ALL（不限来源）→ 命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "小写 all", "methodPattern": ".*", "classPattern": "", "source": "all", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"Project\" 对方法 PROJECT 命中（equalsIgnoreCase）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "混合大小写", "methodPattern": ".*", "classPattern": "", "source": "Project", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"Project\" 对方法 EXTERNAL 不命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "混合大小写", "methodPattern": ".*", "classPattern": "", "source": "Project", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-2 方法名正则仅空白：按字面编译 find → 不命中（不再视为匹配全部）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "空白方法名", "methodPattern": " ", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-3 类名正则仅空白：按字面编译 find → 不命中（不再视为不限类）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "空白类名", "methodPattern": ".*", "classPattern": " ", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "来源为空串 → 不限来源（与后端 isEmpty 同口径）",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "空来源", "methodPattern": ".*", "classPattern": "", "source": "", "paramCount": null, "enabled": true}
+      ]
     }
   ]
 }

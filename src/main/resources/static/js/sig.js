@@ -11,8 +11,9 @@
  * 本模块把原先散落在 app.js 各处的 8 份签名解析/格式化实现收敛为**唯一来源**，
  * 同时被浏览器（window.Sig）与 Node（module.exports）加载，供前后端契约测试共用。
  *
- * OPT-24：COMMIT 1 阶段本文件**镜像 app.js 现有行为**，不改任何界面输出；
- * COMMIT 2 阶段 app.js 各处改为调用本模块，删除重复实现。
+ * OPT-24 演进：COMMIT 1 本文件镜像 app.js 现有行为（不改界面输出）；COMMIT 2 app.js 各处
+ * 改为调用本模块、删除重复实现；D3 起噪声判定严格对齐后端权威
+ * NoiseRuleService.isNoiseOnRules（source 大小写不敏感；仅 null/空串 pattern 才视为"不限"）。
  */
 (function (root, factory) {
     'use strict';
@@ -252,9 +253,14 @@
     // 样板（噪声）规则匹配：与后端 NoiseRuleService.isNoiseOnRules 同口径
     // ------------------------------------------------------------------
 
-    /** 编译正则：空/未填 → null（匹配全部）；非法 → false（永不匹配） */
+    /**
+     * 编译正则——口径与后端 NoiseRuleService.matches 完全一致：
+     *   - pattern 为 null 或空串（真正未填）→ null（视为"不限"，匹配全部）；
+     *   - 否则（**含仅空白**，如 " "）→ 按字面编译，find 语义；非法正则 → false（永不匹配）。
+     * 注意：**不以 trim() 判空** —— 后端仅在 isEmpty()（长度 0）时才视作不限。
+     */
     function compileRegex(pattern) {
-        if (!pattern || pattern.trim() === '') return null;
+        if (pattern == null || pattern === '') return null;
         try {
             return new RegExp(pattern);
         } catch (e) {
@@ -264,13 +270,14 @@
 
     /**
      * 预编译规则列表 → 判定用结构。
-     * 仅保留 enabled 规则；source 缺省补 'ALL'；正则此处的编译一次，判定热路径只 test()。
+     * 仅保留 enabled 规则；正则此处的编译一次，判定热路径只 test()。
+     * source 保持原值（含 ""、null、"all" 等），判定时再按后端 equalsIgnoreCase 口径处理。
      */
     function compileRules(rules) {
         var enabled = (rules || []).filter(function (r) { return r && r.enabled; });
         return enabled.map(function (r) {
             return {
-                source: r.source || 'ALL',
+                source: r.source != null ? r.source : null,
                 paramCount: r.paramCount != null ? r.paramCount : null,
                 methodRe: compileRegex(r.methodPattern),
                 classRe: compileRegex(r.classPattern)
@@ -278,12 +285,25 @@
         });
     }
 
-    /** 按预编译规则判定是否命中（任一命中即噪声）。语义与后端 isNoiseOnRules 一致。 */
+    /** 大小写不敏感相等（对齐后端 String.equalsIgnoreCase） */
+    function equalsIgnoreCase(a, b) {
+        return String(a).toLowerCase() === String(b).toLowerCase();
+    }
+
+    /**
+     * 按预编译规则判定是否命中（任一命中即噪声）。语义严格对齐后端 NoiseRuleService.isNoiseOnRules：
+     *   - 来源：null/空串 或 任意大小写 "ALL" → 不限来源；否则大小写不敏感比较；
+     *   - 方法名正则：null/空 → 不限；非法 → 永不命中；否则 test；
+     *   - 类名正则：null/空 → 不限类；否则 test；
+     *   - paramCount：null → 不限；否则严格相等。
+     */
     function matchCompiledRules(compiled, src, className, methodName, paramCount) {
         compiled = compiled || [];
         for (var i = 0; i < compiled.length; i++) {
             var cr = compiled[i];
-            if (cr.source !== 'ALL' && cr.source !== src) continue;
+            if (cr.source != null && cr.source !== '' && !equalsIgnoreCase(cr.source, 'ALL')) {
+                if (!equalsIgnoreCase(cr.source, src)) continue;
+            }
             if (cr.methodRe === false) continue;                     // 非法正则 → 永不匹配
             if (cr.methodRe && !cr.methodRe.test(methodName)) continue;
             if (cr.classRe === false) continue;
