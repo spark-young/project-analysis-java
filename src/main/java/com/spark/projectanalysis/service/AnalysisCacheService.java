@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.spark.projectanalysis.service.dto.CacheFileInfo;
+import org.springframework.http.HttpStatus;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -251,11 +252,27 @@ public class AnalysisCacheService {
         return loadByFileName(projectPath, list.get(0).fileName);
     }
 
-    /** 按具体文件名加载（用于下拉切换） */
+    /**
+     * 按具体文件名加载（用于下拉切换）。
+     * <p>
+     * 安全约束：fileName 来自请求参数，必须是缓存目录内的相对文件名。
+     * 绝对跨盘符路径（如 C:\...\x.json）会被 Path.resolve 直接当作结果返回，
+     * 等于任意文件读；".." 则可穿越出缓存目录。因此这里先归一化再逐段校验，
+     * 非法输入一律 400。
+     */
     public Optional<AnalysisResult> loadByFileName(String projectPath, String fileName) {
+        Path root = cacheDir(projectPath).normalize();
         Path file;
         try {
-            file = cacheDir(projectPath).resolve(fileName);
+            file = root.resolve(safeRelativeFileName(fileName)).normalize();
+        } catch (IllegalArgumentException e) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        // 兜底：任何逃逸出缓存目录的结果都拒绝（覆盖 normalize 未消解的写法）
+        if (!file.startsWith(root)) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST, "非法的缓存文件名: " + fileName);
+        }
+        try {
             if (!Files.isRegularFile(file)) {
                 log.warn("[缓存] 文件不存在: {}", file);
                 return Optional.empty();
@@ -265,6 +282,35 @@ public class AnalysisCacheService {
             return Optional.empty();
         }
         return loadCached(file, fileName);
+    }
+
+    /**
+     * 校验缓存文件名：必须是非空的相对路径，且不含 ".." 穿越段。
+     *
+     * @throws IllegalArgumentException 非法输入（调用方转为 400）
+     */
+    private static Path safeRelativeFileName(String fileName) {
+        if (fileName == null || fileName.trim().isEmpty()) {
+            throw new IllegalArgumentException("缓存文件名不能为空");
+        }
+        Path name;
+        try {
+            name = Paths.get(fileName.trim()).normalize();
+        } catch (java.nio.file.InvalidPathException e) {
+            throw new IllegalArgumentException("非法的缓存文件名: " + fileName);
+        }
+        if (name.isAbsolute()) {
+            throw new IllegalArgumentException("缓存文件名必须是相对文件名，不接受绝对路径: " + fileName);
+        }
+        if (name.getFileName() == null || name.getNameCount() == 0) {
+            throw new IllegalArgumentException("非法的缓存文件名: " + fileName);
+        }
+        for (Path part : name) {
+            if ("..".equals(part.toString())) {
+                throw new IllegalArgumentException("缓存文件名不允许包含路径穿越段 ..: " + fileName);
+            }
+        }
+        return name;
     }
 
     // ------------------------------------------------------------------
