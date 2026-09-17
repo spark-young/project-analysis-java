@@ -338,8 +338,11 @@ public class GitCloneService {
             }
         });
 
-        try (Git ignored = cmd.call()) {
-            // try-with-resources 关闭即仓库可用
+        try (Git git = cmd.call()) {
+            // 加固：禁用符号链接，规避 CVE-2023-4759（符号链接子模块 RCE）（OPT-16）
+            // 必须在 try-with-resources 关闭前落盘，否则配置不会被保存。
+            git.getRepository().getConfig().setBoolean("core", null, "symlinks", false);
+            git.getRepository().getConfig().save();
         }
     }
 

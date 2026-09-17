@@ -51,6 +51,12 @@ class GitCloneServiceTest {
 
         assertTrue(Files.exists(target.resolve("pom.xml")), "克隆应包含仓库文件");
         assertTrue(Files.exists(target.resolve(".git")));
+
+        // OPT-16：克隆应禁用符号链接（core.symlinks=false），规避 CVE-2023-4759
+        try (Git git = Git.open(target.toFile())) {
+            assertFalse(git.getRepository().getConfig().getBoolean("core", null, "symlinks", true),
+                    "克隆应禁用符号链接（core.symlinks=false）");
+        }
     }
 
     @Test
