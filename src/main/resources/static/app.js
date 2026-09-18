@@ -2,266 +2,33 @@
 (function () {
     'use strict';
 
-    const $ = (sel) => document.querySelector(sel);
-
     // 请求层已抽出 js/api.js（OPT-27 拆分）：此处保留同名薄委托，
     // 调用点零改动、行为零变化（Api 由 index.html 在本文件之前加载）。
     const postJson = Api.postJson;
     const fetchJson = Api.fetchJson;
     const putJson = Api.putJson;
 
-    const els = {
-        // ---- 视图切换 + 项目列表 ----
-        navToProjects: $('#navToProjects'),
-        navToAnalyze: $('#navToAnalyze'),
-        viewProjects: $('#viewProjects'),
-        viewAnalyze: $('#viewAnalyze'),
-        btnRefreshProjects: $('#btnRefreshProjects'),
-        btnImportLocal: $('#btnImportLocal'),
-        projectsList: $('#projectsList'),
-        projectsEmpty: $('#projectsEmpty'),
-        projectsCount: $('#projectsCount'),
-        projectsImportError: $('#projectsImportError'),
-        currentProjectBadge: $('#currentProjectBadge'),
-        currentProjectName: $('#currentProjectName'),
-        currentProjectPath: $('#currentProjectPath'),
-        btnBackToProjects: $('#btnBackToProjects'),
+    // 基础 UI（els / switchView / toast / confirm / error / loading / badge / escapeHtml）
+    // 已抽出 js/ui.js（OPT-27 C2）：同样保留同名薄委托，调用点零改动。
+    // els 在 ui.js 加载时构建一次（脚本位于 </body> 前，DOM 就绪时序与原先一致）。
+    const els = Ui.els;
+    const switchView = Ui.switchView;
+    const showError = Ui.showError;
+    const clearError = Ui.clearError;
+    const showToast = Ui.showToast;
+    const showConfirm = Ui.showConfirm;
+    const settleConfirm = Ui.settleConfirm;
+    const showLoading = Ui.showLoading;
+    const loadingSetStep = Ui.loadingSetStep;
+    const hideLoading = Ui.hideLoading;
+    const badge = Ui.badge;
+    const badgeHtml = Ui.badgeHtml;
+    const escapeHtml = Ui.escapeHtml;
+    // init 注入（方案 §4.3）：switchView 内部需要通知引导刷新；
+    // guideRefresh 仍是 app.js 的函数（单一来源），在此移交给 ui.js。
+    Ui.init({ guideRefresh: guideRefresh });
 
-        // ---- Step 3 状态提示 ----
-        step3HintBar: $('#step3HintBar'),
-        step3HintIcon: $('#step3HintIcon'),
-        step3HintText: $('#step3HintText'),
-
-        // ---- Step 2 入口清单 ----
-        entryListStats: $('#entryListStats'),
-        btnEntryScan: $('#btnEntryScan'),
-        btnEntryAdd: $('#btnEntryAdd'),
-        entryConfirmedList: $('#entryConfirmedList'),
-        entryConfirmToolbar: $('#entryConfirmToolbar'),
-        entryCheckAll: $('#entryCheckAll'),
-        btnBatchExclude: $('#btnBatchExclude'),
-        batchExcludeCount: $('#batchExcludeCount'),
-        entrySelectedCount: $('#entrySelectedCount'),
-        excludeModalOverlay: $('#excludeModalOverlay'),
-        excludeModal: $('#excludeModal'),
-        excludeModalClose: $('#excludeModalClose'),
-        excludeModalCount: $('#excludeModalCount'),
-        excludeModalList: $('#excludeModalList'),
-        excludeModalCancel: $('#excludeModalCancel'),
-        excludeModalConfirm: $('#excludeModalConfirm'),
-        excludeReasonPresets: $('#excludeReasonPresets'),
-        excludeReasonText: $('#excludeReasonText'),
-        excludeReasonUnified: $('#excludeReasonUnified'),
-        excludePerItemReasons: $('#excludePerItemReasons'),
-        entryExcludedDetails: $('#entryExcludedDetails'),
-        entryExcludedCount: $('#entryExcludedCount'),
-        entryExcludedList: $('#entryExcludedList'),
-        batchAnalyzeStats: $('#batchAnalyzeStats'),
-        btnBatchAnalyze: $('#btnBatchAnalyze'),
-        batchProgress: $('#batchProgress'),
-        batchProgressBar: $('#batchProgressBar'),
-        batchProgressText: $('#batchProgressText'),
-
-        // ---- 项目创建/导入 ----
-        projectPath: $('#projectPath'),
-        btnInfo: $('#btnInfo'),
-        projectInfo: $('#projectInfo'),
-        tabLocal: $('#tabLocal'),
-        tabGit: $('#tabGit'),
-        paneLocal: $('#paneLocal'),
-        paneGit: $('#paneGit'),
-        repoUrl: $('#repoUrl'),
-        gitBranch: $('#gitBranch'),
-        gitToken: $('#gitToken'),
-        gitUsername: $('#gitUsername'),
-        btnGitPrepare: $('#btnGitPrepare'),
-        gitStatus: $('#gitStatus'),
-
-        // ---- Git 分支/Tag 切换 + 远端更新检测 ----
-        gitInfoBar: $('#gitInfoBar'),
-        gitCurrentRef: $('#gitCurrentRef'),
-        gitCurrentRefType: $('#gitCurrentRefType'),
-        gitRefSelect: $('#gitRefSelect'),
-        btnGitSwitch: $('#btnGitSwitch'),
-        btnGitCheckUpdate: $('#btnGitCheckUpdate'),
-        gitRemoteStatus: $('#gitRemoteStatus'),
-        gitLastCheck: $('#gitLastCheck'),
-        gitSwitchProgress: $('#gitSwitchProgress'),
-        gitSwitchProgressBar: $('#gitSwitchProgressBar'),
-        gitSwitchProgressText: $('#gitSwitchProgressText'),
-        gitSwitchLog: $('#gitSwitchLog'),
-        gitPrepareLog: $('#gitPrepareLog'),
-
-        maxDepth: $('#maxDepth'),
-        btnExcel: $('#btnExcel'),
-        errorBanner: $('#errorBanner'),
-        toast: $('#toast'),
-        entrySection: $('#entrySection'),
-        entryProjectName: $('#entryProjectName'),
-        entryFilter: $('#entryFilter'),
-        btnEntryAll: $('#btnEntryAll'),
-        btnEntryNone: $('#btnEntryNone'),
-        entryGroups: $('#entryGroups'),
-        entryCount: $('#entryCount'),
-        btnAnalyzeEntries: $('#btnAnalyzeEntries'),
-        resultSection: $('#resultSection'),
-        resultTitle: $('#resultTitle'),
-        statsBar: $('#statsBar'),
-        warnings: $('#warnings'),
-        tree: $('#tree'),
-        btnExpandAll: $('#btnExpandAll'),
-        btnCollapseAll: $('#btnCollapseAll'),
-        btnResultRefresh: $('#btnResultRefresh'),
-        freqSection: $('#freqSection'),
-        freqStatsBar: $('#freqStatsBar'),
-        freqFilterBar: $('#freqFilterBar'),
-        freqList: $('#freqList'),
-        btnFreqExpandAll: $('#btnFreqExpandAll'),
-        btnFreqCollapseAll: $('#btnFreqCollapseAll'),
-        btnFreqRefresh: $('#btnFreqRefresh'),
-        btnNoiseRulesProject: $('#btnNoiseRulesProject'),
-        noiseRulesOverlay: $('#noiseRulesOverlay'),
-        noiseRulesPanel: $('#noiseRulesPanel'),
-        noiseRulesList: $('#noiseRulesList'),
-        btnNoiseRulesClose: $('#btnNoiseRulesClose'),
-        btnNoiseRuleAdd: $('#btnNoiseRuleAdd'),
-        btnNoiseRuleReset: $('#btnNoiseRuleReset'),
-        btnNoiseRuleSave: $('#btnNoiseRuleSave'),
-        btnNoiseRuleSelectAll: $('#btnNoiseRuleSelectAll'),
-        btnNoiseRuleSelectNone: $('#btnNoiseRuleSelectNone'),
-        btnNoiseRuleInvert: $('#btnNoiseRuleInvert'),
-        btnNoiseRuleExport: $('#btnNoiseRuleExport'),
-        btnNoiseRuleImport: $('#btnNoiseRuleImport'),
-        noiseRuleImportFile: $('#noiseRuleImportFile'),
-
-        // ---- 全局过滤规则独立页面 ----
-        navToNoiseRules: $('#navToNoiseRules'),
-        viewNoiseRules: $('#viewNoiseRules'),
-        noiseRulesListPage: $('#noiseRulesListPage'),
-        btnNrPageAdd: $('#btnNrPageAdd'),
-        btnNrPageReset: $('#btnNrPageReset'),
-        btnNrPageSave: $('#btnNrPageSave'),
-        btnNrPageBack: $('#btnNrPageBack'),
-        btnNrPageSelectAll: $('#btnNrPageSelectAll'),
-        btnNrPageSelectNone: $('#btnNrPageSelectNone'),
-        btnNrPageInvert: $('#btnNrPageInvert'),
-        btnNrPageExport: $('#btnNrPageExport'),
-        btnNrPageImport: $('#btnNrPageImport'),
-        noiseRulePageImportFile: $('#noiseRulePageImportFile'),
-
-        // ---- 手动添加入口 Modal ----
-        addEntryOverlay: $('#addEntryOverlay'),
-        addEntryModal: $('#addEntryModal'),
-        addEntryClose: $('#addEntryClose'),
-        addEntryCancel: $('#addEntryCancel'),
-        addEntryConfirm: $('#addEntryConfirm'),
-        addEntryScanWrap: $('#addEntryScanWrap'),
-        addEntryScanStats: $('#addEntryScanStats'),
-        addEntryScanAll: $('#addEntryScanAll'),
-        addEntryScanList: $('#addEntryScanList'),
-        addEntryModalTitle: $('#addEntryModalTitle'),
-        addEntryInputArea: $('#addEntryInputArea'),
-
-        confirmOverlay: $('#confirmOverlay'),
-        confirmModal: $('#confirmModal'),
-        confirmTitle: $('#confirmTitle'),
-        confirmMessage: $('#confirmMessage'),
-        confirmOk: $('#confirmOk'),
-        confirmCancel: $('#confirmCancel'),
-        confirmClose: $('#confirmClose'),
-
-        loadingOverlay: $('#loadingOverlay'),
-        loadingOverlayText: $('#loadingOverlayText'),
-        loadingSteps: $('#loadingSteps'),
-        loadingBarWrap: $('#loadingBarWrap'),
-        loadingBar: $('#loadingBar'),
-        loadingElapsed: $('#loadingElapsed'),
-        addEntryVerify: $('#addEntryVerify'),
-        addEntryVerifyStatus: $('#addEntryVerifyStatus'),
-        addEntryClass: $('#addEntryClass'),
-        addEntryClassList: $('#addEntryClassList'),
-        addEntryMethod: $('#addEntryMethod'),
-        addEntryMethodText: $('#addEntryMethodText'),
-        addEntryPaste: $('#addEntryPaste'),
-
-        globalSearchInput: $('#globalSearchInput'),
-        globalSearchMode: $('#globalSearchMode'),
-        btnGlobalSearch: $('#btnGlobalSearch'),
-        btnGlobalSearchClear: $('#btnGlobalSearchClear'),
-        globalSearchResult: $('#globalSearchResult'),
-        globalSearchChips: $('#globalSearchChips'),
-        globalSearch: document.querySelector('.global-search'),
-        legend: document.querySelector('.legend'),
-        btnBackToList: $('#btnBackToList'),
-        projectSearch: $('#projectSearch'),
-        projectLoadState: $('#projectLoadState'),
-        projectSearchInput: $('#projectSearchInput'),
-        projectSearchMode: $('#projectSearchMode'),
-        btnProjectSearch: $('#btnProjectSearch'),
-        btnProjectSearchClear: $('#btnProjectSearchClear'),
-        projectSearchResult: $('#projectSearchResult'),
-        projectSearchNextHit: $('#btnProjectSearchNext'),
-        projectSearchPrevHit: $('#btnProjectSearchPrev'),
-
-        // ---- 扫描策略配置 ----
-        scanProfileSelect: $('#scanProfileSelect'),
-        btnScanStrategyManage: $('#btnScanStrategyManage'),
-        scanStrategyOverlay: $('#scanStrategyOverlay'),
-        scanStrategyPanel: $('#scanStrategyPanel'),
-        ssProfileList: $('#ssProfileList'),
-        btnSsProfileNew: $('#btnSsProfileNew'),
-        btnSsProfileCopy: $('#btnSsProfileCopy'),
-        btnSsProfileDelete: $('#btnSsProfileDelete'),
-        btnSsExport: $('#btnSsExport'),
-        btnSsImport: $('#btnSsImport'),
-        ssImportFile: $('#ssImportFile'),
-        ssEditorEmpty: $('#ssEditorEmpty'),
-        ssEditorBody: $('#ssEditorBody'),
-        ssProfileName: $('#ssProfileName'),
-        ssProfileDesc: $('#ssProfileDesc'),
-        ssBuiltinTag: $('#ssBuiltinTag'),
-        ssDetectors: $('#ssDetectors'),
-        btnSsRuleAdd: $('#btnSsRuleAdd'),
-        ssRuleList: $('#ssRuleList'),
-        btnSsSave: $('#btnSsSave'),
-        btnSsReset: $('#btnSsReset'),
-        btnSsClose: $('#btnSsClose'),
-        ssRuleEditorOverlay: $('#ssRuleEditorOverlay'),
-        ssRuleEditor: $('#ssRuleEditor'),
-        ssRuleEditorTitle: $('#ssRuleEditorTitle'),
-        ssRuleEditorClose: $('#ssRuleEditorClose'),
-        ssRuleName: $('#ssRuleName'),
-        ssRuleKind: $('#ssRuleKind'),
-        ssRuleDynamic: $('#ssRuleDynamic'),
-        ssRuleExcludes: $('#ssRuleExcludes'),
-        ssRuleEnabled: $('#ssRuleEnabled'),
-        ssRuleEditorCancel: $('#ssRuleEditorCancel'),
-        ssRuleEditorOk: $('#ssRuleEditorOk'),
-
-        // ---- 系统配置页面（过滤规则 / 扫描策略 tab） ----
-        scTabNoise: $('#scTabNoise'),
-        scTabScan: $('#scTabScan'),
-        scTabContentNoise: $('#scTabContentNoise'),
-        scTabContentScan: $('#scTabContentScan'),
-        // 页面版扫描策略元素
-        ssPageProfileList: $('#ssPageProfileList'),
-        btnSsPageProfileNew: $('#btnSsPageProfileNew'),
-        btnSsPageProfileCopy: $('#btnSsPageProfileCopy'),
-        btnSsPageProfileDelete: $('#btnSsPageProfileDelete'),
-        btnSsPageExport: $('#btnSsPageExport'),
-        btnSsPageImport: $('#btnSsPageImport'),
-        ssPageImportFile: $('#ssPageImportFile'),
-        ssPageEditorEmpty: $('#ssPageEditorEmpty'),
-        ssPageEditorBody: $('#ssPageEditorBody'),
-        ssPageProfileName: $('#ssPageProfileName'),
-        ssPageProfileDesc: $('#ssPageProfileDesc'),
-        ssPageBuiltinTag: $('#ssPageBuiltinTag'),
-        ssPageDetectors: $('#ssPageDetectors'),
-        btnSsPageRuleAdd: $('#btnSsPageRuleAdd'),
-        ssPageRuleList: $('#ssPageRuleList'),
-        btnSsPageSave: $('#btnSsPageSave'),
-        btnSsPageReset: $('#btnSsPageReset'),
-    };
+    // els（150+ 元素 DOM 缓存）已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
 
     let currentResult = null;
     let currentRequest = null;  // 最近一次成功分析的请求（Excel 复用）
@@ -274,7 +41,7 @@
     let currentCandidates = [];    // 本次扫描新增的候选（临时）
 
     // ---- 新手引导只读状态（guide.js 消费，不参与业务逻辑） ----
-    let currentView = 'projects';   // 当前视图：projects | analyze | noiseRules
+    // currentView 已迁入 js/state.js 的 App.state（OPT-27 C2：被 ui.js switchView 与本文件 guideState 共享）
     let guideProjectCount = null;   // 已导入项目数（null = 尚未拉到，引导先不渲染，避免闪烁）
     let guideHasResult = false;     // 是否已有可用分析结果
     let guideResultStale = false;   // 结果是否已因清单变化而过期
@@ -311,7 +78,8 @@
     let compiledActiveRules = [];    // 启用中规则的预编译结果（正则只编译一次，判定只做 test）
     let activeNoiseHash = '';        // 生效规则集指纹（规则变更时算一次，后续直接比对）
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
-    let noiseRuleMode = 'panel';     // 当前编辑模式：'panel'（弹窗）| 'page'（独立页面）
+    // noiseRuleMode 已迁入 js/state.js 的 App.state（OPT-27 C2：switchView 离开
+    // noiseRules 视图时重置 'panel'，噪声簇读写页面/弹窗模式，防"半重置"归属见 state.js 头注释）
     let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
     let gitSwitchTimer = null;       // 分支/Tag 切换任务轮询定时器
     let gitRefsCache = null;         // 最近一次分支/Tag 下拉数据 {branches, tags, defaultBranch}
@@ -327,20 +95,7 @@
     // 项目列表 / 视图切换 / 持久化项目管理
     // ==============================================================
 
-    function switchView(to) {
-        const showProjects = to === 'projects';
-        const showAnalyze = to === 'analyze';
-        const showNoiseRules = to === 'noiseRules';
-        if (!showNoiseRules) noiseRuleMode = 'panel';
-        els.viewProjects.hidden = !showProjects;
-        els.viewAnalyze.hidden = !showAnalyze;
-        els.viewNoiseRules.hidden = !showNoiseRules;
-        els.navToProjects.classList.toggle('active', showProjects);
-        els.navToAnalyze.classList.toggle('active', showAnalyze);
-        els.navToNoiseRules.classList.toggle('active', showNoiseRules);
-        currentView = to;
-        guideRefresh();
-    }
+    // switchView 已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
 
     /** 最近一次项目列表索引：进入项目时直接取用，避免重复的全量 /api/projects 请求 */
     let projectIndex = {};
@@ -608,7 +363,7 @@
     els.btnRefreshProjects.addEventListener('click', refreshProjectList);
     els.btnBackToProjects.addEventListener('click', () => {
         currentProjectId = null;
-        noiseRuleMode = 'panel';
+        App.state.noiseRuleMode = 'panel';
         els.entrySection.hidden = true;
         els.resultSection.hidden = true;
         els.freqSection.hidden = true;
@@ -620,7 +375,7 @@
         switchView('analyze');
     });
     els.navToNoiseRules.addEventListener('click', () => {
-        noiseRuleMode = 'page';
+        App.state.noiseRuleMode = 'page';
         noiseRuleScope = 'global';
         loadNoiseRules();
         renderNoiseRulesList();
@@ -634,7 +389,7 @@
         switchView('noiseRules');
     });
     els.btnNrPageBack.addEventListener('click', () => {
-        noiseRuleMode = 'panel';
+        App.state.noiseRuleMode = 'panel';
         if (currentProjectId) {
             switchView('analyze');
         } else {
@@ -673,130 +428,9 @@
     // 工具
     // ------------------------------------------------------------------
 
-    function showError(message) {
-        els.errorBanner.textContent = message;
-        els.errorBanner.hidden = false;
-    }
-    function clearError() {
-        els.errorBanner.hidden = true;
-        els.errorBanner.textContent = '';
-    }
-
-    let toastTimer = null;
-    /** 轻量提示：底部居中浮出，自动消失。type: success(默认)/error/warn */
-    function showToast(message, type, duration) {
-        els.toast.textContent = message;
-        els.toast.classList.remove('hide', 'error', 'warn');
-        if (type === 'error' || type === 'warn') els.toast.classList.add(type);
-        els.toast.hidden = false;
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => {
-            els.toast.classList.add('hide');
-            setTimeout(() => { els.toast.hidden = true; }, 250);
-        }, duration || 2200);
-    }
-
-    let confirmResolver = null;
-    /** 自定义确认弹窗（替代原生 confirm）：await showConfirm(msg) 返回 true/false */
-    function showConfirm(message, title) {
-        if (confirmResolver) confirmResolver(false); // 上一个未决确认按取消处理
-        els.confirmTitle.textContent = title || '确认操作';
-        els.confirmMessage.textContent = message;
-        els.confirmOverlay.hidden = false;
-        els.confirmModal.hidden = false;
-        return new Promise((resolve) => { confirmResolver = resolve; });
-    }
-    function settleConfirm(result) {
-        els.confirmOverlay.hidden = true;
-        els.confirmModal.hidden = true;
-        if (confirmResolver) {
-            const resolve = confirmResolver;
-            confirmResolver = null;
-            resolve(result);
-        }
-    }
-    els.confirmOk.addEventListener('click', () => settleConfirm(true));
-    els.confirmCancel.addEventListener('click', () => settleConfirm(false));
-    els.confirmClose.addEventListener('click', () => settleConfirm(false));
-    els.confirmOverlay.addEventListener('click', () => settleConfirm(false));
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && confirmResolver) settleConfirm(false);
-    });
-
-    // ------------------------------------------------------------------
-    // 全屏加载遮罩：支持「单行文案」与「分步进度」两种模式
-    //   showLoading('文案')                       单行文案
-    //   showLoading('文案', { steps: ['a','b'] }) 分步清单 + 进度条 + 耗时
-    //   loadingSetStep(i, 'active'|'done'|'error', '子状态说明')
-    //   hideLoading()
-    // ------------------------------------------------------------------
-    let loadingTick = null;
-    let loadingStartAt = 0;
-
-    function resetLoadingPanel() {
-        if (loadingTick) { clearInterval(loadingTick); loadingTick = null; }
-        els.loadingSteps.hidden = true;
-        els.loadingSteps.innerHTML = '';
-        els.loadingBarWrap.hidden = true;
-        els.loadingBar.style.width = '0%';
-        els.loadingElapsed.hidden = true;
-        els.loadingElapsed.textContent = '';
-    }
-
-    /** 展示遮罩；opts.steps 传步骤名数组时进入「分步进度」模式 */
-    function showLoading(text, opts) {
-        const o = opts || {};
-        els.loadingOverlayText.textContent = text || '正在加载...';
-        els.loadingOverlay.hidden = false;
-        if (o.steps && o.steps.length) {
-            resetLoadingPanel();
-            els.loadingSteps.hidden = false;
-            o.steps.forEach((name, i) => {
-                const row = document.createElement('div');
-                row.className = 'loading-step' + (i === 0 ? ' active' : '');
-                row.innerHTML = '<span class="ls-dot"></span><span class="ls-name"></span><span class="ls-note"></span>';
-                row.querySelector('.ls-name').textContent = (i + 1) + '. ' + name;
-                els.loadingSteps.appendChild(row);
-            });
-            els.loadingBarWrap.hidden = false;
-            loadingSetProgress(0);
-        }
-        if (!loadingTick) {
-            loadingStartAt = Date.now();
-            loadingTick = setInterval(() => {
-                const sec = Math.floor((Date.now() - loadingStartAt) / 1000);
-                if (sec < 3) return;
-                els.loadingElapsed.hidden = false;
-                els.loadingElapsed.textContent = sec >= 20
-                    ? '已用时 ' + sec + ' 秒，工程较大或正在编译，请耐心等待…'
-                    : '已用时 ' + sec + ' 秒';
-            }, 1000);
-        }
-    }
-
-    /** 标记第 idx 步：state 为 active/done/error；note 为该步的实时子状态 */
-    function loadingSetStep(idx, state, note) {
-        const rows = els.loadingSteps.querySelectorAll('.loading-step');
-        const row = rows[idx];
-        if (!row) return;
-        rows.forEach((r, i) => {
-            r.classList.remove('active');
-            if (i < idx && !r.classList.contains('error')) r.classList.add('done');
-        });
-        if (state) row.classList.add(state);
-        if (note !== undefined) row.querySelector('.ls-note').textContent = note || '';
-        loadingSetProgress(Math.round((idx / rows.length) * 100));
-    }
-
-    function loadingSetProgress(percent) {
-        if (els.loadingBarWrap.hidden) return;
-        els.loadingBar.style.width = Math.max(0, Math.min(100, percent)) + '%';
-    }
-
-    function hideLoading() {
-        resetLoadingPanel();
-        els.loadingOverlay.hidden = true;
-    }
+    // showError / clearError / showToast / showConfirm / settleConfirm / loading 系列
+    // 已抽出 js/ui.js（OPT-27 C2），见顶部薄委托；confirm 弹窗的 4 个按钮点击与
+    // Escape 键绑定随函数一同搬入 ui.js（纯监听注册，无相互依赖的监听器，时序无行为影响）。
 
     // postJson / fetchJson / putJson 已抽出 js/api.js（OPT-27），见本文件顶部薄委托。
 
@@ -2907,7 +2541,7 @@
 
     /** 弹窗固定为项目级视图（全局规则本体在系统配置页维护） */
     function openNoiseRulesPanel() {
-        noiseRuleMode = 'panel';
+        App.state.noiseRuleMode = 'panel';
         noiseRuleScope = 'project';
         updateNoiseRulesUI();
         updateNoiseRulesScopeHint();
@@ -2947,15 +2581,15 @@
 
     /** 根据当前 mode + scope 切换弹窗/页面内按钮可见性 */
     function updateNoiseRulesUI() {
-        const isGlobalPanel = noiseRuleMode === 'panel' && noiseRuleScope === 'global';
+        const isGlobalPanel = App.state.noiseRuleMode === 'panel' && noiseRuleScope === 'global';
         els.btnNoiseRuleAdd.hidden = isGlobalPanel;
-        els.btnNoiseRuleReset.hidden = noiseRuleMode === 'panel';
+        els.btnNoiseRuleReset.hidden = App.state.noiseRuleMode === 'panel';
         els.btnNoiseRuleImport.hidden = isGlobalPanel;
     }
 
     function renderNoiseRulesList() {
-        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
-        const isGlobalPanel = noiseRuleMode === 'panel' && noiseRuleScope === 'global';
+        const container = App.state.noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const isGlobalPanel = App.state.noiseRuleMode === 'panel' && noiseRuleScope === 'global';
 
         if (noiseRuleScope === 'project') {
             container.innerHTML = renderGlobalOverridesSection() + renderCustomRulesSection();
@@ -3062,7 +2696,7 @@
 
     /** 从弹窗 / 页面输入收集规则（排除覆盖区项目） */
     function collectNoiseRulesFromPanel() {
-        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const container = App.state.noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
         const items = container.querySelectorAll('.nr-item:not(.nr-override-item)');
         const out = [];
         items.forEach((item) => {
@@ -3086,7 +2720,7 @@
     /** 从面板收集全局规则覆盖配置 */
     function collectOverridesFromPanel() {
         const overrides = {};
-        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const container = App.state.noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
         container.querySelectorAll('.nr-override-item').forEach((item) => {
             const ruleId = item.dataset.ruleId;
             const val = item.querySelector('.nr-override-select').value;
@@ -3099,7 +2733,7 @@
     /** 将弹窗/页面当前输入同步到内存并实时刷新频次列表 + 调用链剪枝预览。
      *  全局只读态（Step3 弹窗的全局 Tab）不实时生效：点「保存生效」后应用 */
     function applyNoiseRulesFromPanel() {
-        if (noiseRuleMode === 'panel' && noiseRuleScope === 'global') return;
+        if (App.state.noiseRuleMode === 'panel' && noiseRuleScope === 'global') return;
         noiseRules = collectNoiseRulesFromPanel();
         if (noiseRuleScope === 'project') {
             projectRulesCache = noiseRules.slice();
@@ -3137,7 +2771,7 @@
 
     // 全选启用 / 全不选 / 反选（作用在当前可见的列表）
     function forEachNoiseRuleCheckbox(fn) {
-        const container = noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
+        const container = App.state.noiseRuleMode === 'page' ? els.noiseRulesListPage : els.noiseRulesList;
         container.querySelectorAll('.nr-enable input').forEach(fn);
     }
     els.btnNoiseRuleSelectAll.addEventListener('click', () => {
@@ -3301,7 +2935,7 @@
                 projectRulesCache = data.customRules || [];
                 noiseRules = projectRulesCache.slice();
                 recomputeActiveNoiseRules();
-                if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
+                if (App.state.noiseRuleMode === 'panel') closeNoiseRulesPanel();
                 renderNoiseRulesList();
                 refreshAllFilteredViews();
                 markNoiseConfigured();
@@ -3319,7 +2953,7 @@
             if (noiseRuleScope === 'project') projectRulesCache = noiseRules.slice();
             else globalRulesCache = noiseRules.slice();
             recomputeActiveNoiseRules();
-            if (noiseRuleMode === 'panel') closeNoiseRulesPanel();
+            if (App.state.noiseRuleMode === 'panel') closeNoiseRulesPanel();
             renderNoiseRulesList();
             refreshAllFilteredViews();
             markNoiseConfigured();
@@ -3430,23 +3064,7 @@
         return wrap;
     }
 
-    function badge(cls, text) {
-        const b = document.createElement('span');
-        b.className = 'badge ' + cls;
-        b.textContent = text;
-        return b;
-    }
-
-    /** 返回 HTML 字符串形式的徽标（用于 innerHTML 拼接，避免 DOM 对象被拼成 "[object...]"） */
-    function badgeHtml(cls, text) {
-        return '<span class="badge ' + cls + '">' + escapeHtml(text) + '</span>';
-    }
-
-    function escapeHtml(s) {
-        return s.replace(/[&<>"']/g, (c) => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-        }[c]));
-    }
+    // badge / badgeHtml / escapeHtml 已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
 
     // ------------------------------------------------------------------
     // 调用链搜索：每个方法行的 🔎，搜其子树是否调用了某方法
@@ -5042,7 +4660,7 @@
     function guideState() {
         const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
         return {
-            view: currentView,
+            view: App.state.currentView,
             projectCount: guideProjectCount,
             currentProjectId: currentProjectId,
             entryCount: confirmed.length,
