@@ -11,10 +11,13 @@ import com.spark.projectanalysis.service.GitRefService;
 import com.spark.projectanalysis.service.ProjectRegistry;
 import com.spark.projectanalysis.service.ProjectRegistry.RegisteredProject;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
+import com.spark.projectanalysis.service.dto.CacheFileResponse;
 import com.spark.projectanalysis.service.dto.EntryList;
+import com.spark.projectanalysis.service.dto.EntryOkResponse;
 import com.spark.projectanalysis.service.dto.GitRefs;
 import com.spark.projectanalysis.service.dto.ProjectInfo;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
+import com.spark.projectanalysis.service.dto.SingleCacheResponse;
 import com.spark.projectanalysis.service.dto.SwitchRequest;
 import com.spark.projectanalysis.service.dto.SwitchStatus;
 import org.slf4j.Logger;
@@ -34,7 +37,6 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Arrays;
 import java.util.EnumSet;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -399,8 +401,8 @@ public class ProjectsController {
     // --------------------------------------------------------------
 
     @PostMapping("/{id}/cache/save-single")
-    public Map<String, Object> saveSingleCache(@PathVariable String id,
-                                                 @RequestBody Map<String, Object> body) {
+    public EntryOkResponse saveSingleCache(@PathVariable String id,
+                                           @RequestBody Map<String, Object> body) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
@@ -411,13 +413,13 @@ public class ProjectsController {
         int count = entryList.getConfirmed().size();
         cacheService.saveSingle(p.projectPath, result, hash, count);
 
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("ok", true);
+        EntryOkResponse resp = new EntryOkResponse();
+        resp.setOk(true);
         return resp;
     }
 
     @GetMapping("/{id}/cache/load-single")
-    public Map<String, Object> loadSingleCache(@PathVariable String id) {
+    public SingleCacheResponse loadSingleCache(@PathVariable String id) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
@@ -425,11 +427,11 @@ public class ProjectsController {
         int currentEntryCount = entryList.getConfirmed().size();
 
         Map<String, Object> cached = cacheService.loadSingle(p.projectPath);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("currentEntryCount", currentEntryCount);
+        SingleCacheResponse resp = new SingleCacheResponse();
+        resp.setCurrentEntryCount(currentEntryCount);
 
         if (cached == null) {
-            resp.put("hasCache", false);
+            resp.setHasCache(false);
             return resp;
         }
         // 算当前清单的 hash，让前端判断是否过期
@@ -437,30 +439,30 @@ public class ProjectsController {
         String cachedHash = (String) cached.get("entryListHash");
         boolean dirty = !currentHash.equals(cachedHash);
 
-        resp.put("hasCache", true);
-        resp.put("dirty", dirty);
-        resp.put("cachedEntryCount", cached.get("entryCount"));
-        resp.put("analyzedAt", cached.get("analyzedAt"));
-        resp.put("result", cached.get("result"));
+        resp.setHasCache(true);
+        resp.setDirty(dirty);
+        resp.setCachedEntryCount((Integer) cached.get("entryCount"));
+        resp.setAnalyzedAt(((Number) cached.get("analyzedAt")).longValue());
+        resp.setResult(cached.get("result"));
         return resp;
     }
 
     /** 按缓存文件名加载单个入口的完整分析结果（批量分析展开某入口时用） */
     @GetMapping("/{id}/cache/load-file")
-    public Map<String, Object> loadCacheFile(@PathVariable String id,
-                                             @RequestParam("file") String fileName) {
+    public CacheFileResponse loadCacheFile(@PathVariable String id,
+                                           @RequestParam("file") String fileName) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
         java.util.Optional<AnalysisResult> r = cacheService.loadByFileName(p.projectPath, fileName);
-        Map<String, Object> resp = new HashMap<>();
+        CacheFileResponse resp = new CacheFileResponse();
         if (r.isEmpty()) {
-            resp.put("ok", false);
-            resp.put("error", "缓存文件不存在或已过期: " + fileName);
+            resp.setOk(false);
+            resp.setError("缓存文件不存在或已过期: " + fileName);
             return resp;
         }
-        resp.put("ok", true);
-        resp.put("result", r.get());
+        resp.setOk(true);
+        resp.setResult(r.get());
         return resp;
     }
 

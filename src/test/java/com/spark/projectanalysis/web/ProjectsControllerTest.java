@@ -198,4 +198,84 @@ class ProjectsControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error").exists());
     }
+
+    // ------------------------------------------------------------------
+    // 缓存接口 JSON 形状契约锁（OPT-28 切片4：Map → DTO 化）
+    // ------------------------------------------------------------------
+
+    @Test
+    void test_saveSingleCache_okShape() throws Exception {
+        Path project = Files.createDirectories(temp.resolve("sscache"));
+        String id = register("sscache", "LOCAL", project);
+        mvc.perform(post("/api/projects/" + id + "/cache/save-single")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"result\":{\"foo\":\"bar\"}}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true));
+    }
+
+    @Test
+    void test_loadSingleCache_noCache_shape() throws Exception {
+        Path project = Files.createDirectories(temp.resolve("lscache-empty"));
+        String id = register("lscache-empty", "LOCAL", project);
+        // 形状锁：无缓存时只有 currentEntryCount + hasCache 两个字段
+        MvcResult r = mvc.perform(get("/api/projects/" + id + "/cache/load-single"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.currentEntryCount").value(0))
+                .andExpect(jsonPath("$.hasCache").value(false))
+                .andExpect(jsonPath("$.dirty").doesNotExist())
+                .andExpect(jsonPath("$.cachedEntryCount").doesNotExist())
+                .andExpect(jsonPath("$.analyzedAt").doesNotExist())
+                .andExpect(jsonPath("$.result").doesNotExist())
+                .andReturn();
+        String json = r.getResponse().getContentAsString();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                json.matches("\\{\"currentEntryCount\":0,\"hasCache\":false\\}"),
+                "响应形状应为 {\"currentEntryCount\":0,\"hasCache\":false}: " + json);
+    }
+
+    @Test
+    void test_loadSingleCache_withCache_shape() throws Exception {
+        Path project = Files.createDirectories(temp.resolve("lscache-full"));
+        String id = register("lscache-full", "LOCAL", project);
+        mvc.perform(post("/api/projects/" + id + "/cache/save-single")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"result\":{\"foo\":\"bar\"}}"))
+                .andExpect(status().isOk());
+        mvc.perform(get("/api/projects/" + id + "/cache/load-single"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.hasCache").value(true))
+                .andExpect(jsonPath("$.dirty").value(false))
+                .andExpect(jsonPath("$.cachedEntryCount").value(0))
+                .andExpect(jsonPath("$.currentEntryCount").value(0))
+                .andExpect(jsonPath("$.analyzedAt").isNumber())
+                .andExpect(jsonPath("$.result.foo").value("bar"));
+    }
+
+    @Test
+    void test_loadCacheFile_miss_shape() throws Exception {
+        Path project = Files.createDirectories(temp.resolve("lcfile-miss"));
+        String id = register("lcfile-miss", "LOCAL", project);
+        mvc.perform(get("/api/projects/" + id + "/cache/load-file").param("file", "nope.json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.error").value("缓存文件不存在或已过期: nope.json"))
+                .andExpect(jsonPath("$.result").doesNotExist());
+    }
+
+    @Test
+    void test_loadCacheFile_hit_shape() throws Exception {
+        Path project = Files.createDirectories(temp.resolve("lcfile-hit"));
+        String id = register("lcfile-hit", "LOCAL", project);
+        // 直接往项目缓存目录（<项目>/.callgraph/cache）种一个最小 AnalysisResult JSON
+        Path cacheDir = project.resolve(".callgraph").resolve("cache");
+        Files.createDirectories(cacheDir);
+        Files.write(cacheDir.resolve("t.json"),
+                "{\"className\":\"com.demo.Foo\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        mvc.perform(get("/api/projects/" + id + "/cache/load-file").param("file", "t.json"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.result.className").value("com.demo.Foo"))
+                .andExpect(jsonPath("$.error").doesNotExist());
+    }
 }
