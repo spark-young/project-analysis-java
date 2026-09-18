@@ -214,6 +214,36 @@
 | 日期 | 事项 | Commit |
 |---|---|---|
 | 2026-09-18 | C1 `api.js` 落地（postJson/fetchJson/putJson，薄委托方案） | `199ce86` |
+| 2026-09-18 | C2 `state.js` + `ui.js` 落地（详见下方 C2 落地记录） | 见 git log（OPT-27 C2） |
+
+### C2 落地记录（state.js + ui.js）
+
+**state.js 收编字段（仅 C2 实际需要，后续簇按头注释占位扩展）：**
+
+| 字段 | 初始值 | 写入方 | 读取方 | 清零（重置）职责归属 |
+|---|---|---|---|---|
+| `currentView` | `'projects'` | ui.js `switchView`（唯一写入方） | app.js `guideState` | 无独立重置场景——switchView 每次调用整体覆盖（原 app.js:341） |
+| `noiseRuleMode` | `'panel'` | ui.js `switchView`（离开 noiseRules 视图重置 `'panel'`，原 app.js:334）；app.js 噪声簇（navToNoiseRules=`'page'`、btnBackToProjects/btnNrPageBack/openNoiseRulesPanel=`'panel'`，原行号 611/623/637/2910） | app.js 噪声簇（renderNoiseRulesList / renderGlobalOverridesSection / renderCustomRulesSection / applyNoiseRulesFromPanel / resetNoiseRules / saveNoiseRules 等） | **重置 `'panel'` 的唯一权威是 switchView**；页面→弹窗回退由 btnBackToProjects / btnNrPageBack 显式写 `'panel'`，与原行为逐字一致（防"半重置"） |
+
+**ui.js 收编函数（全部逐行搬运，仅 switchView 的 3 个标识符走共享通道）：**
+`$`、`els`（原 13-264 整块）、`switchView`（原 330-343）、`showError`/`clearError`（原 676-683）、`toastTimer`+`showToast`（原 685-697）、`confirmResolver`+`showConfirm`+`settleConfirm`（原 699-717）、**确认弹窗 4 个按钮 click + Escape keydown 绑定随函数一同搬入**（原 718-724，纯监听注册、无相互依赖的监听器，注册时点提前无行为影响）、loading 系列含 `loadingTick`/`loadingStartAt` 内部状态（原 726-799）、`badge`/`badgeHtml`/`escapeHtml`（原 3433-3449，escapeHtml 保持单一来源）。
+`resetLoadingPanel` / `loadingSetProgress` / `$` / `toastTimer` / `confirmResolver` / `loadingTick` / `loadingStartAt` 仅被 ui.js 内部使用，不导出不委托。
+
+**app.js 侧改动**：顶部新增 13 个薄委托（els/switchView/showError/clearError/showToast/showConfirm/settleConfirm/showLoading/loadingSetStep/hideLoading/badge/badgeHtml/escapeHtml）+ `Ui.init({ guideRefresh })` 注入；删除被搬代码；14 处 `noiseRuleMode` 与 1 处 `currentView` 读点改为 `App.state.*`（机械改名，同一存储，零行为差异）。
+
+**els 构建时机保证**：ui.js 由 index.html 在 app.js 之前、`</body>` 前同步加载，els 在 ui.js 工厂执行期构建一次——与原先（app.js IIFE 执行期）处于同一段 DOM 就绪时序，元素全部位于脚本标签上方，只构建一次。
+
+**init 注入顺序（对应 QA 补充第 3 点）**：ui.js 自建 els 等价于「Ui.init(els) 先于一切使用」；app.js 顶部即调 `Ui.init({ guideRefresh })`（guideRefresh 是提升的函数声明，注入先于任何 switchView 调用——首次调用在 app.js 末尾 init 段）；app.js 其余绑定按原行号顺序不变。已知偏差：confirm 弹窗 5 处绑定随函数提前到 ui.js 执行，因其仅依赖 els+内部状态且与其他监听器无先后依赖（Escape 各 handler 互不干扰、无 stopPropagation），无行为影响。
+
+**C2 人工冒烟清单（⚠️ 需用户在浏览器实测——本沙箱无浏览器，DOM 行为契约测试覆盖不到）：**
+1. 顶部导航三个入口（项目/分析/过滤规则）切换，active 高亮正确、视图 hidden 切换正确。
+2. 项目卡片「进入项目」→「返回项目列表」往返，面包屑徽标正确。
+3. 删除项目弹出确认框 → 取消（不删）→ 再点 → 确定（删除）；确认框打开时按 Escape 等价于取消。
+4. 触发一次失败请求（如填不存在的路径点检查）→ 顶部错误条出现且文案正确；成功操作后错误条清除。
+5. 任意成功/失败操作的 toast 提示浮出、约 2.2s 自动消失（error/warn 有样式区分）；连续触发只显示最后一条。
+6. 进入项目触发 loading 遮罩：单行文案模式；批量分析触发分步模式（步骤点亮、进度条推进、>3s 出现"已用时 N 秒"、>20s 出现耐心等待文案）；完成后遮罩隐藏。
+7. 结果树内徽标（badge）渲染正常、无 HTML 转义破版（含引号/尖括号的方法名）。
+8. 独立过滤规则页面进入/返回，模式在弹窗（panel）与页面（page）间切换后再次进项目弹窗模式正确（验证 noiseRuleMode 重置归属）。
 
 ---
 
