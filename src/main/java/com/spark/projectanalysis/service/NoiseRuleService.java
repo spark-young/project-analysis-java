@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.spark.projectanalysis.service.dto.NoiseProjectDetail;
 import com.spark.projectanalysis.service.dto.NoiseRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -351,12 +352,12 @@ public class NoiseRuleService {
      * 项目级配置详情（新版结构）：globalRules + globalOverrides + customRules。
      * 前端"项目级 Tab"用它同时渲染"全局规则覆盖区"和"自定义规则区"。
      */
-    public Map<String, Object> getProjectDetail(String projectPath) {
+    public NoiseProjectDetail getProjectDetail(String projectPath) {
         ProjectRuleSet rs = projectRuleSet(projectPath);
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("globalRules", getRules());
-        detail.put("globalOverrides", new LinkedHashMap<>(rs.overrides));
-        detail.put("customRules", new ArrayList<>(rs.customRules));
+        NoiseProjectDetail detail = new NoiseProjectDetail();
+        detail.setGlobalRules(getRules());
+        detail.setGlobalOverrides(new LinkedHashMap<>(rs.overrides));
+        detail.setCustomRules(new ArrayList<>(rs.customRules));
         return detail;
     }
 

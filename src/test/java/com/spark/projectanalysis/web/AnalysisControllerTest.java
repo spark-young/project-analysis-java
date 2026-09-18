@@ -208,6 +208,26 @@ class AnalysisControllerTest {
     }
 
     // ------------------------------------------------------------------
+    // 批量分析启动（OPT-28 切片5：Map → BatchJobStartResponse DTO 化）
+    // ------------------------------------------------------------------
+
+    /** 形状锁：响应只有 jobId 一个字段（前端 app.js:5042 消费 const { jobId }） */
+    @Test
+    void test_analyzeBatch_returnsJobIdOnly() throws Exception {
+        String entriesBody = "{\"projectPath\":\"" + escapeWindows(entriesClasses.toString()) + "\",\"entries\":["
+                + "{\"className\":\"com.demo.Launcher\",\"methodName\":\"main\"}"
+                + "]}";
+        MvcResult result = mvc.perform(post("/api/analyze/batch")
+                        .contentType(MediaType.APPLICATION_JSON).content(entriesBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").isString())
+                .andReturn();
+        String json = result.getResponse().getContentAsString();
+        assertTrue(json.matches("\\{\"jobId\":\"[^\"]+\"\\}"),
+                "响应形状应为 {\"jobId\":\"...\"}: " + json);
+    }
+
+    // ------------------------------------------------------------------
     // GET /api/classes/verify（OPT-28 切片1：Map → EntryVerifyResult DTO 化，
     // 以下断言为 JSON 形状契约锁：字段名/出现条件与 Map 版本逐字一致）
     // ------------------------------------------------------------------

@@ -11,6 +11,7 @@ import com.spark.projectanalysis.service.MavenCompileService;
 import com.spark.projectanalysis.service.dto.AnalyzeRequest;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
 import com.spark.projectanalysis.service.dto.BatchAnalyzeStatus;
+import com.spark.projectanalysis.service.dto.BatchJobStartResponse;
 import com.spark.projectanalysis.service.dto.EntryVerifyResult;
 import com.spark.projectanalysis.service.dto.GitPrepareRequest;
 import com.spark.projectanalysis.service.dto.GitPrepareStatus;
@@ -33,7 +34,6 @@ import java.net.URLEncoder;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -94,10 +94,10 @@ public class AnalysisController {
 
     /** 按交易入口清单批量分析（异步）：返回 jobId，前端轮询进度 */
     @PostMapping("/analyze/batch")
-    public Map<String, String> analyzeBatch(@RequestBody AnalyzeRequest req) {
+    public BatchJobStartResponse analyzeBatch(@RequestBody AnalyzeRequest req) {
         String jobId = batchAnalyzeService.startAsync(req);
-        Map<String, String> resp = new HashMap<>();
-        resp.put("jobId", jobId);
+        BatchJobStartResponse resp = new BatchJobStartResponse();
+        resp.setJobId(jobId);
         return resp;
     }
 

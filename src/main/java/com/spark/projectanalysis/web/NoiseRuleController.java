@@ -3,6 +3,7 @@ package com.spark.projectanalysis.web;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.spark.projectanalysis.service.NoiseRuleService;
+import com.spark.projectanalysis.service.dto.NoiseProjectDetail;
 import com.spark.projectanalysis.service.dto.NoiseRule;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -64,7 +65,7 @@ public class NoiseRuleController {
      * 返回 { globalRules, globalOverrides, customRules }。
      */
     @GetMapping("/project-detail")
-    public Map<String, Object> projectDetail(@RequestParam("projectPath") String projectPath) {
+    public NoiseProjectDetail projectDetail(@RequestParam("projectPath") String projectPath) {
         return noiseRuleService.getProjectDetail(projectPath);
     }
 
