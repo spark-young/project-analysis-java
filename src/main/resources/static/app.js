@@ -38,6 +38,22 @@
     const currentProjectPath = Projects.currentProjectPath;
     const renderGitStatus = Projects.renderGitStatus;
     const pollGitStatus = Projects.pollGitStatus;
+
+    // 入口清单视图（渲染/勾选/过滤/发起分析/Excel）已抽出 js/entries.js（OPT-27 C4）：
+    // 同样保留同名薄委托，调用点零改动；Entries.init 注入未搬簇函数与 C6 状态活读 getter。
+    const entryKey = Entries.entryKey;
+    const renderEntryList = Entries.renderEntryList;
+    const updateEntryToolbar = Entries.updateEntryToolbar;
+    const downloadProjectExcel = Entries.downloadProjectExcel;
+    Entries.init({
+        renderResult: renderResult,
+        guideRefresh: guideRefresh,
+        readableFullSig: readableFullSig,
+        sigHtmlFromString: sigHtmlFromString,
+        getFreqFilter: () => freqFilter,
+        getBatchModel: () => batchModel,
+    });
+
     Projects.init({
         guideRefresh: guideRefresh,
         loadNoiseRules: loadNoiseRules,
@@ -51,7 +67,7 @@
     // App.state.currentResult / App.state.currentRequest / App.state.currentBatchSummary / App.state.currentCacheFileName /
     // App.state.currentEntryList / App.state.currentCandidates 已迁入 App.state（OPT-27 C3：
     // projects.js 的 enterProject/autoLoad* 写入，写入方/清零归属见 js/state.js 头注释）。
-    let currentExcelMode = 'entry';  // 'entry' 单入口导出 | 'project' 项目级导出
+    // currentExcelMode 已迁入 App.state（OPT-27 C4：C6 视图切换写入、entries.js btnExcel 读取）
     let batchRowStates = [];         // 批量清单每行的行内展开状态 { open,rendered,result,roots,body,rowEl,entry }
     // Step 2 入口清单状态
 
@@ -70,8 +86,8 @@
         if (projectRulesCache && projectRulesCache.length > 0) return true;
         return !!(globalOverrides && Object.keys(globalOverrides).length > 0);
     }
-    let entrySelKeys = new Set();  // 清单中勾选待排除的入口 key 集合
-    let excludeModalItems = [];    // 批量排除弹窗当前承载的条目
+    // entrySelKeys 已迁入 App.state（OPT-27 C4：C4 渲染读 + C8 桥接绑定写，清零归属见 state.js）
+    let excludeModalItems = [];    // 批量排除弹窗当前承载的条目（C8 弹窗状态，本簇外零引用，随 C8 外搬）
     let expandFns = [];      // 全部展开/收起用
     let searchTimer = null;
     const nodeRegistry = new Map();  // 数据节点 → { rowEl, setExpanded }
@@ -188,247 +204,12 @@
     // ------------------------------------------------------------------
 
     // ------------------------------------------------------------------
-    // 交易入口扫描 + 勾选分析
+    // 交易入口扫描 + 勾选分析（renderEntries/collectCheckedEntries/buildEntryRequest/
+    // analyzeCheckedEntries/updateEntryCount/applyEntryFilter）与 Excel 下载
+    // （btnExcel 绑定/downloadProjectExcel）已抽出 js/entries.js（OPT-27 C4），见顶部薄委托；
+    // entryItems 为该模块私有（含 DOM 引用，本簇外零引用，不进 App.state）；
+    // currentExcelMode 迁入 App.state（写入方=C6 视图切换，归属见 js/state.js 头注释）。
     // ------------------------------------------------------------------
-
-    // 旧的 scanEntries + pollScanProgress 已删除，Step2 扫描直接用同步 API
-    // （见 btnEntryScan.addEventListener）
-
-    let entryItems = [];  // { dto, rowEl, checkEl }
-
-    function renderEntries(result) {
-        entryItems = [];
-        els.entryGroups.innerHTML = '';
-        els.entryProjectName.textContent = result.projectName
-            ? '· ' + result.projectName : '';
-        els.entryFilter.value = '';
-
-        let total = 0;
-        result.groups.forEach((g) => {
-            const box = document.createElement('div');
-            box.className = 'entry-group';
-            const head = document.createElement('div');
-            head.className = 'entry-group-head';
-            const title = document.createElement('span');
-            title.className = 'entry-group-title';
-            title.textContent = g.label + '（' + g.entries.length + '）';
-            const typeBadge = document.createElement('span');
-            typeBadge.className = 'badge entry-type-' + g.type.toLowerCase();
-            typeBadge.textContent = g.type;
-            const checkAll = document.createElement('button');
-            checkAll.type = 'button';
-            checkAll.className = 'btn small';
-            checkAll.textContent = '选组';
-            head.appendChild(title);
-            head.appendChild(typeBadge);
-            head.appendChild(checkAll);
-            box.appendChild(head);
-
-            const list = document.createElement('div');
-            list.className = 'entry-list';
-            g.entries.forEach((dto) => {
-                const row = document.createElement('label');
-                row.className = 'entry-row';
-                const check = document.createElement('input');
-                check.type = 'checkbox';
-                const disp = document.createElement('span');
-                disp.className = 'entry-display';
-                disp.textContent = dto.display;
-                const cls = document.createElement('span');
-                cls.className = 'entry-class';
-                cls.textContent = dto.className + '.' + dto.methodName;
-                row.appendChild(check);
-                row.appendChild(disp);
-                row.appendChild(cls);
-                list.appendChild(row);
-                entryItems.push({ dto, rowEl: row, checkEl: check });
-                total++;
-            });
-            checkAll.addEventListener('click', () => {
-                const allOn = g.entries.every((dto) => {
-                    const it = entryItems.find((i) => i.dto === dto);
-                    return it && it.checkEl.checked;
-                });
-                g.entries.forEach((dto) => {
-                    const it = entryItems.find((i) => i.dto === dto);
-                    if (it) it.checkEl.checked = !allOn;
-                });
-                updateEntryCount();
-            });
-            box.appendChild(list);
-            els.entryGroups.appendChild(box);
-        });
-
-        if (total === 0) {
-            els.entryGroups.innerHTML = '<div class="hint">未发现交易入口（REST / Dubbo / ElasticJob / main），可改用手动填类名分析</div>';
-        }
-        updateEntryCount();
-        els.entrySection.hidden = false;
-        els.entrySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    function collectCheckedEntries() {
-        return entryItems.filter((i) => i.checkEl.checked);
-    }
-
-    function buildEntryRequest(checked, skipCache) {
-        return {
-            projectPath: currentProjectPath(),
-            maxDepth: parseInt(els.maxDepth.value, 10),
-            skipCache: !!skipCache,
-            entries: checked.map((i) => ({
-                className: i.dto.className,
-                methodName: i.dto.methodName,
-                methodDescriptor: i.dto.methodDescriptor,
-            })),
-        };
-    }
-
-    async function analyzeCheckedEntries(checked, skipCache) {
-        const req = buildEntryRequest(checked, skipCache);
-        showLoading('正在分析 ' + checked.length + ' 个入口的调用链……');
-        els.resultSection.hidden = true;
-        try {
-            const result = await postJson('/api/analyze', req);
-            App.state.currentResult = result;
-            App.state.currentRequest = req;
-            renderResult(result);
-        } catch (e) {
-            showError(e.message);
-        } finally {
-            hideLoading();
-        }
-    }
-
-    function updateEntryCount() {
-        const checked = entryItems.filter((i) => i.checkEl.checked).length;
-        els.entryCount.textContent = '已勾选 ' + checked + ' / ' + entryItems.length + ' 个入口';
-    }
-
-    function applyEntryFilter() {
-        const q = els.entryFilter.value.trim().toLowerCase();
-        entryItems.forEach((it) => {
-            const hit = !q
-                || it.dto.display.toLowerCase().indexOf(q) >= 0
-                || it.dto.className.toLowerCase().indexOf(q) >= 0
-                || it.dto.methodName.toLowerCase().indexOf(q) >= 0;
-            it.rowEl.style.display = hit ? '' : 'none';
-        });
-    }
-
-    els.entryFilter.addEventListener('input', applyEntryFilter);
-    els.btnEntryAll.addEventListener('click', () => {
-        entryItems.forEach((it) => { it.checkEl.checked = true; });
-        updateEntryCount();
-    });
-    els.btnEntryNone.addEventListener('click', () => {
-        entryItems.forEach((it) => { it.checkEl.checked = false; });
-        updateEntryCount();
-    });
-
-    els.btnAnalyzeEntries.addEventListener('click', async () => {
-        clearError();
-        const checked = collectCheckedEntries();
-        if (checked.length === 0) { showError('请至少勾选一个交易入口'); return; }
-        await analyzeCheckedEntries(checked);
-    });
-
-    // ------------------------------------------------------------------
-    // Excel 下载
-    // ------------------------------------------------------------------
-
-    els.btnExcel.addEventListener('click', async () => {
-        // 批量清单视图 → 项目级导出（全部入口）
-        if (currentExcelMode === 'project') {
-            await downloadProjectExcel();
-            return;
-        }
-        if (!App.state.currentResult || !App.state.currentRequest) return;
-        clearError();
-        showLoading('正在生成 Excel 报告……');
-        try {
-            // 导出时带上当前来源筛选 + 批量展开的入口缓存文件名，Excel 与页面展示保持一致
-            const exportReq = Object.assign({}, App.state.currentRequest, {
-                freqSourceFilter: freqFilter,
-                cacheFileName: App.state.currentCacheFileName || '',
-            });
-            const resp = await fetch('/api/report/excel', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(exportReq),
-            });
-            if (!resp.ok) {
-                const data = await resp.json().catch(() => ({}));
-                throw new Error(data.error || ('下载失败: HTTP ' + resp.status));
-            }
-            const blob = await resp.blob();
-            const disposition = resp.headers.get('Content-Disposition') || '';
-            let filename = 'callgraph.xlsx';
-            const starIdx = disposition.indexOf("filename*=UTF-8''");
-            if (starIdx >= 0) {
-                filename = decodeURIComponent(disposition.substring(starIdx + 17));
-            }
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(a.href);
-        } catch (e) {
-            showError(e.message);
-        } finally {
-            hideLoading();
-        }
-    });
-
-    /** 项目级 Excel：把所有已加载入口的缓存文件名 + 当前来源筛选发给后端，聚合导出 */
-    async function downloadProjectExcel() {
-        const files = (batchModel && batchModel.entries || [])
-            .filter((s) => s.result)
-            .map((s) => s.entry && s.entry.fileName)
-            .filter(Boolean);
-        if (!files.length) {
-            showError('没有已加载的入口，请等待全量加载完成后再导出');
-            return;
-        }
-        clearError();
-        showLoading('正在生成项目级 Excel 报告……');
-        try {
-            const resp = await fetch('/api/report/excel-project', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    projectPath: currentProjectPath(),
-                    cacheFiles: files,
-                    freqSourceFilter: freqFilter,
-                }),
-            });
-            if (!resp.ok) {
-                const data = await resp.json().catch(() => ({}));
-                throw new Error(data.error || ('下载失败: HTTP ' + resp.status));
-            }
-            const blob = await resp.blob();
-            const disposition = resp.headers.get('Content-Disposition') || '';
-            let filename = 'callgraph_project.xlsx';
-            const starIdx = disposition.indexOf("filename*=UTF-8''");
-            if (starIdx >= 0) {
-                filename = decodeURIComponent(disposition.substring(starIdx + 17));
-            }
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(a.href);
-        } catch (e) {
-            showError(e.message);
-        } finally {
-            hideLoading();
-        }
-    }
-
     // ------------------------------------------------------------------
     // 结果渲染
     // ------------------------------------------------------------------
@@ -524,7 +305,7 @@
         els.freqSection.hidden = true;
         els.resultSection.hidden = false;
         // 批量清单：可直接导出整个项目的 Excel 报告
-        currentExcelMode = 'project';
+        App.state.currentExcelMode = 'project';
         els.btnExcel.disabled = false;
         els.btnExcel.title = '导出整个项目的 Excel 报告（全部入口调用链 + 项目级方法频率）';
         // 清单视图无树可展开/收起
@@ -1297,7 +1078,7 @@
         els.resultSection.hidden = false;
         els.freqSection.hidden = false;
         els.btnExcel.disabled = false;
-        currentExcelMode = 'entry';
+        App.state.currentExcelMode = 'entry';
         els.btnExcel.title = '导出当前入口的 Excel 报告';
         els.btnExpandAll.style.display = '';
         els.btnCollapseAll.style.display = '';
@@ -2738,97 +2519,10 @@
     });
 
     // ==================================================================
-    // Step 2: 已确认的交易入口清单 —— 渲染 + 操作
+    // Step 2: 已确认的交易入口清单 —— 渲染（entryKey/renderEntryList/renderEntryRow/
+    // updateEntryToolbar）已抽出 js/entries.js（OPT-27 C4），见顶部薄委托；
+    // entrySelKeys 迁入 App.state（C4 渲染读 + C8 桥接绑定写，清零归属见 js/state.js 头注释）。
     // ==================================================================
-
-    // 后端 JSON 返回的是普通 Object，没有 Java 里的 key() 方法
-    function entryKey(item) {
-        return item.className + '#' + (item.methodName || '') + '#' + (item.descriptor || '');
-    }
-
-    function renderEntryList() {
-        if (!App.state.currentEntryList) App.state.currentEntryList = { confirmed: [], excluded: [] };
-        const confirmed = App.state.currentEntryList.confirmed || [];
-        const excluded = App.state.currentEntryList.excluded || [];
-
-        // 统计
-        els.entryListStats.textContent = confirmed.length + ' 个已确认'
-            + (excluded.length > 0 ? ' · ' + excluded.length + ' 个已排除' : '');
-        els.batchAnalyzeStats.textContent = confirmed.length + ' 个入口待分析';
-
-        // confirmed 主体
-        if (confirmed.length === 0) {
-            els.entryConfirmedList.innerHTML =
-                '<div class="entry-empty">还没有已确认的入口 → 点上面的「🔍 补充扫描」或「➕ 手动添加」来建清单</div>';
-        } else {
-            els.entryConfirmedList.innerHTML = confirmed.map((item, i) => renderEntryRow(item, 'confirmed', i + 1)).join('');
-        }
-
-        // excluded 折叠区
-        if (excluded.length > 0) {
-            els.entryExcludedDetails.hidden = false;
-            els.entryExcludedCount.textContent = '(' + excluded.length + ')';
-            els.entryExcludedList.innerHTML = excluded.map((item, i) => renderEntryRow(item, 'excluded', i + 1)).join('');
-        } else {
-            els.entryExcludedDetails.hidden = true;
-        }
-        updateEntryToolbar();
-        // 清单为空时给一次性的就地提示（只出现一次）
-        if (confirmed.length === 0 && App.state.currentProjectId && window.Guide) {
-            Guide.tipOnce('empty-entries', els.entryConfirmedList,
-                '清单是分析的输入：「🔍 自动扫描加入清单」会按扫描策略自动识别 Controller / Job 等入口，识别不准的可以「➕ 手动添加」。');
-        }
-        guideRefresh();
-    }
-
-    /** 渲染清单行；num 为纯展示序号（1、2、3…），不与方法绑定 */
-    function renderEntryRow(item, mode, num) {
-        const fullCls = item.className || '';
-        const method = item.methodName || '';
-        const desc = item.descriptor || '';
-        const groupBadge = item.group ? `<span class="entry-badge group-${item.group}">${item.group}</span>` : '';
-        const sourceBadge = item.source === 'MANUAL'
-            ? '<span class="entry-badge group-MANUAL">手动</span>'
-            : '';
-
-        // 完整签名（统一可读格式）：全限定类名#方法名(参数类型短名列表)
-        const fullSig = readableFullSig(fullCls, method, desc) || fullCls;
-
-        if (mode === 'excluded') {
-            const reason = item.excludeReason;
-            return `<div class="entry-ex-row">
-                <div class="entry-row" data-key="${entryKey(item)}">
-                    <span class="entry-idx" title="序号">${num}</span>
-                    ${sourceBadge}${groupBadge}
-                    <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
-                    <button class="entry-restore-btn">恢复</button>
-                </div>
-                ${reason ? `<div class="entry-reason" title="${escapeHtml(reason)}">排除原因：${escapeHtml(reason)}</div>` : ''}
-            </div>`;
-        }
-        const checked = entrySelKeys.has(entryKey(item)) ? ' checked' : '';
-        return `<div class="entry-row${checked ? ' selected' : ''}" data-key="${entryKey(item)}">
-            <span class="entry-idx" title="序号">${num}</span>
-            <input type="checkbox" class="entry-cb"${checked}>
-            ${sourceBadge}${groupBadge}
-            <span class="entry-sig" title="${escapeHtml(fullSig)}">${sigHtmlFromString(fullSig)}</span>
-            <button class="entry-exclude-btn">排除</button>
-        </div>`;
-    }
-
-    /** 刷新清单顶部操作栏：全选态 / 已选数量 / 批量排除按钮可用性 */
-    function updateEntryToolbar() {
-        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
-        const has = confirmed.length > 0;
-        els.entryConfirmToolbar.hidden = !has;
-        if (!has) { entrySelKeys.clear(); return; }
-        const sel = confirmed.filter(i => entrySelKeys.has(entryKey(i))).length;
-        els.entrySelectedCount.textContent = sel > 0 ? '已选 ' + sel + ' 个' : '';
-        els.batchExcludeCount.textContent = sel > 0 ? ' (' + sel + ')' : '';
-        els.btnBatchExclude.disabled = sel === 0;
-        els.entryCheckAll.checked = sel > 0 && sel === confirmed.length;
-        els.entryCheckAll.indeterminate = sel > 0 && sel < confirmed.length;
-    }
 
     // ==============================================================
     // 扫描策略配置（自动扫描方案管理）
@@ -3860,7 +3554,7 @@
         const row = e.target.closest('.entry-row');
         if (!row) return;
         const key = row.dataset.key;
-        if (e.target.checked) entrySelKeys.add(key); else entrySelKeys.delete(key);
+        if (e.target.checked) App.state.entrySelKeys.add(key); else App.state.entrySelKeys.delete(key);
         row.classList.toggle('selected', e.target.checked);
         updateEntryToolbar();
     });
@@ -3870,7 +3564,7 @@
         const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         const checked = els.entryCheckAll.checked;
         confirmed.forEach(it => {
-            if (checked) entrySelKeys.add(entryKey(it)); else entrySelKeys.delete(entryKey(it));
+            if (checked) App.state.entrySelKeys.add(entryKey(it)); else App.state.entrySelKeys.delete(entryKey(it));
         });
         els.entryConfirmedList.querySelectorAll('.entry-row').forEach(row => {
             const cb = row.querySelector('.entry-cb');
@@ -3882,7 +3576,7 @@
     /** 打开批量排除弹窗 */
     els.btnBatchExclude.addEventListener('click', () => {
         const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
-        const items = confirmed.filter(it => entrySelKeys.has(entryKey(it)));
+        const items = confirmed.filter(it => App.state.entrySelKeys.has(entryKey(it)));
         if (items.length === 0) return;
         openExcludeModal(items);
     });
@@ -3959,7 +3653,7 @@
         try {
             const resp = await postJson('/api/projects/' + App.state.currentProjectId + '/entries/exclude/batch', payload);
             closeExcludeModal();
-            entrySelKeys.clear();
+            App.state.entrySelKeys.clear();
             await autoLoadEntryList(App.state.currentProjectId);
             const n = resp && resp.excluded != null ? resp.excluded : payload.length;
             showError('✓ 已排除 ' + n + ' 个入口，可在「已排除的入口」中恢复', true);

@@ -104,15 +104,33 @@
  *     读取：app.js guideState
  *     清零职责：updateStep3Hint 每次整体覆盖（原 :308）。
  *
- * —— 有意**不**迁入 App.state 的 C3 内部状态（最小化共享面）——
+ * —— C4 迁入字段（entries 入口清单视图簇，OPT-27）——
+ *
+ *   currentExcelMode  初始 'entry'   // 'entry' 单入口导出 | 'project' 项目级导出
+ *     写入：app.js C6 结果簇（renderBatchSummary 写 'project'、renderSingleEntryResult
+ *           写 'entry'，随视图切换整体覆盖）；entries.js 不写、只在 btnExcel 中读分支
+ *     读取：entries.js btnExcel 绑定（决定走 downloadProjectExcel 还是单入口导出）
+ *     清零职责：无独立清零场景——视图切换时整体覆盖（原 app.js:54 声明）。
+ *
+ *   entrySelKeys  初始 new Set()   // 清单中勾选待排除的入口 key 集合
+ *     写入：app.js C8 桥接绑定（entryConfirmedList change 增删、entryCheckAll 全选增删、
+ *           excludeModalConfirm 成功后 clear）；entries.js updateEntryToolbar（清单空时 clear）
+ *     读取：entries.js renderEntryRow（勾选回显）/ updateEntryToolbar（已选数统计）、
+ *           app.js btnBatchExclude（取已选项打开排除弹窗）
+ *     清零职责：**唯一 clear 权威 = updateEntryToolbar（清单为空时）与 excludeModalConfirm
+ *           成功提交后**（原 app.js:73 声明）；Set 就地增删，无整体重赋值场景。
+ *
+ * —— 有意**不**迁入 App.state 的 C3/C4 内部状态（最小化共享面）——
  *   projectIndex   仅 projects.js 内部使用（refreshProjectList 建索引、enterProject 查询）
  *   gitSwitchTimer 【句柄】仅 Git 分支切换轮询内部使用：创建=startGitSwitch（原 :786）、
  *                  唯一清理点=stopGitSwitchPoll（原 :709，判空后 clear 置 null，可安全重复
  *                  调用；hideGitInfoBar/切换终态/提交失败均会调用，重入无泄漏）
  *   gitRefsCache   仅 loadGitRefs 写入（原 :636），当前无读取方（下拉数据直写 DOM）
+ *   entryItems     仅 entries.js 内部使用（renderEntries 建行模型、勾选/过滤/统计读取；
+ *                  含 rowEl/checkEl DOM 引用，grep 确认本簇外零引用，与 gitSwitchTimer 同判例）
+ *   excludeModalItems 仅 app.js C8 批量排除弹窗区使用（本簇外零引用；C8 外搬时随簇走）
  *
  * 后续簇预期（占位说明，迁入时再真正添加字段）：
- *   C4 entries：     entryItems / entrySelKeys / excludeModalItems
  *   C5 result：      nodeRegistry / hitRows / activeSearch / expandFns
  *   C6 batch+freq：  batchModel / batchRowStates / freqFilter / freqViewMode / projSearch*
  *   C7 noise：       noiseRules / globalRulesCache / projectRulesCache / globalOverrides /
@@ -149,7 +167,10 @@
             currentCandidates: [],            // 原 app.js:41 逐字迁入
             guideProjectCount: null,          // 原 app.js:45 逐字迁入
             guideHasResult: false,            // 原 app.js:46 逐字迁入
-            guideResultStale: false           // 原 app.js:47 逐字迁入
+            guideResultStale: false,          // 原 app.js:47 逐字迁入
+            // ---- C4 迁入（entries 入口清单视图簇） ----
+            currentExcelMode: 'entry',        // 原 app.js:54 逐字迁入（含初始值）
+            entrySelKeys: new Set()           // 原 app.js:73 逐字迁入（Set 就地增删，见头注释 clear 归属）
         }
     };
 });
