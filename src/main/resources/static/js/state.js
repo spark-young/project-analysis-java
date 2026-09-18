@@ -120,6 +120,31 @@
  *     清零职责：**唯一 clear 权威 = updateEntryToolbar（清单为空时）与 excludeModalConfirm
  *           成功提交后**（原 app.js:73 声明）；Set 就地增删，无整体重赋值场景。
  *
+ * —— C6 迁入字段（batch+freq 批量与频次簇，OPT-27）——
+ *
+ *   batchModel  初始 null   // 批量全量加载模型 {batch,projectId,entries,done,total,failed,loaded,projectFreq}
+ *     写入：batch.js resetBatchModel（换批次整体重建，唯一重赋值点）/ loadAllBatchEntries
+ *           （重建 entries 槽位、写 done/total/failed）/ finalizeBatchLoad（写 loaded/projectFreq）
+ *     读取：batch.js 内部多处 + app.js C5（computeBatchFilteredStats 统计条）+
+ *           entries.js getBatchModel hook（项目级 Excel 取已加载入口）
+ *     清零职责：resetBatchModel 是唯一重建权威（原 app.js:98 声明，:419 重赋值）；
+ *           renderBatchSummary 判断 batch !== batchModel.batch 决定重建或复用，无置 null 场景。
+ *
+ *   batchRowStates  初始 []   // 批量清单每行的行内展开状态 { idx,entry,open,rendered,result,roots,body,rowEl }
+ *     写入：batch.js renderBatchSummary（length=0 就地清空 + 逐行填充，含 rowEl/body DOM 引用）
+ *     读取：batch.js（toggleEntryBody/buildEntryBodySync/revealHitPath/markEntryRows）+
+ *           app.js C5（reapplyFilterToTree / updateFilteredStats）
+ *     清零职责：renderBatchSummary 重绘清单时 length=0 就地清空（原 app.js:71 声明，:281）——
+ *           与旧 DOM 行同生命周期，无其他独立清零场景。
+ *
+ *   freqFilter  初始 'ALL'   // 频次来源筛选：ALL/PROJECT/DEPENDENCY/EXTERNAL
+ *     写入：batch.js（showProjectPanels / renderFreqAnalysis 重置 'ALL'、freqList 委托绑定
+ *           的 chip 切换赋值）
+ *     读取：batch.js renderFreqList / updateFreqFilterChips + entries.js getFreqFilter hook
+ *           （Excel 导出带上当前来源筛选）
+ *     清零职责：重置 'ALL' 的权威 = showProjectPanels（展示项目面板）与 renderFreqAnalysis
+ *           （每次新分析）（原 app.js:96 声明，:511/:1245）；chip 切换为用户显式赋值。
+ *
  * —— 有意**不**迁入 App.state 的 C3/C4 内部状态（最小化共享面）——
  *   projectIndex   仅 projects.js 内部使用（refreshProjectList 建索引、enterProject 查询）
  *   gitSwitchTimer 【句柄】仅 Git 分支切换轮询内部使用：创建=startGitSwitch（原 :786）、
@@ -129,10 +154,12 @@
  *   entryItems     仅 entries.js 内部使用（renderEntries 建行模型、勾选/过滤/统计读取；
  *                  含 rowEl/checkEl DOM 引用，grep 确认本簇外零引用，与 gitSwitchTimer 同判例）
  *   excludeModalItems 仅 app.js C8 批量排除弹窗区使用（本簇外零引用；C8 外搬时随簇走）
+ *   freqViewMode / projSearchMarks / projSearchOrder / projSearchCursor / _freqRows /
+ *                  _freqPage   仅 batch.js 内部使用（频次视图切换、项目级搜索定位、频次分页；
+ *                  grep 确认本簇外零引用，模块私有）
  *
  * 后续簇预期（占位说明，迁入时再真正添加字段）：
  *   C5 result：      nodeRegistry / hitRows / activeSearch / expandFns
- *   C6 batch+freq：  batchModel / batchRowStates / freqFilter / freqViewMode / projSearch*
  *   C7 noise：       noiseRules / globalRulesCache / projectRulesCache / globalOverrides /
  *                    activeNoiseRules / compiledActiveRules / activeNoiseHash / noiseRuleScope
  *   C8 strategy：    scanStrategy / globalScanStrategy / ss* / dsContext
@@ -170,7 +197,11 @@
             guideResultStale: false,          // 原 app.js:47 逐字迁入
             // ---- C4 迁入（entries 入口清单视图簇） ----
             currentExcelMode: 'entry',        // 原 app.js:54 逐字迁入（含初始值）
-            entrySelKeys: new Set()           // 原 app.js:73 逐字迁入（Set 就地增删，见头注释 clear 归属）
+            entrySelKeys: new Set(),          // 原 app.js:73 逐字迁入（Set 就地增删，见头注释 clear 归属）
+            // ---- C6 迁入（batch+freq 批量与频次簇） ----
+            batchModel: null,                 // 原 app.js:98 逐字迁入（含初始值；重建权威=resetBatchModel）
+            batchRowStates: [],               // 原 app.js:71 逐字迁入（含 rowEl/body DOM 引用，length=0 就地清空）
+            freqFilter: 'ALL'                 // 原 app.js:96 逐字迁入（重置 'ALL' 权威=showProjectPanels/renderFreqAnalysis）
         }
     };
 });
