@@ -1,6 +1,0 @@
-﻿app.js = 5133 lines
-js\sig.js = 336 lines
-guide.js = 221 lines
-index.html = 725 lines
-style.css = 2544 lines
-node = C:\Users\lenovo\.workbuddy\binaries\node\versions\22.22.2-3\node.exe
