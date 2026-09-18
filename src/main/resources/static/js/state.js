@@ -1,5 +1,5 @@
 /*
- * state.js —— app.js 拆分的共享状态通道（OPT-27 C2 首批字段）
+ * state.js —— app.js 拆分的共享状态通道（OPT-27 C2/C3 批次字段）
  * ==================================================
  *
  * 背景：app.js 是单 IIFE，约 50 个顶层 let 为各簇闭包共享。逐簇外搬时，
@@ -9,7 +9,7 @@
  * 每个字段必须写明「写入方 / 读取方 / 清零（重置）职责归属」，防止"半重置"
  * （一簇重置了另一簇不知道）。
  *
- * 当前字段（均为 C2 迁入）：
+ * —— C2 迁入字段 ——
  *
  *   currentView   初始 'projects'
  *     写入：ui.js switchView（唯一写入方，视图切换即整体覆盖）
@@ -26,10 +26,94 @@
  *     清零职责：**重置 'panel' 的唯一权威是 switchView**；页面→弹窗的回退由
  *           btnBackToProjects / btnNrPageBack 显式写 'panel'，与原行为逐字一致。
  *
+ * —— C3 迁入字段（projects + Git 簇，OPT-27）——
+ *
+ *   currentProjectId  初始 null   // 当前选中项目 id
+ *     写入：projects.js enterProject（进入时赋值）、deleteProject（删除当前项目置 null）、
+ *           btnBackToProjects / navToAnalyze 绑定（读写）；
+ *           app.js 未搬簇大量只读引用（清单/结果/噪声/策略簇，原 :83 声明）
+ *     读取：app.js guideState / guideAction 以及各未搬簇（约 40 处）
+ *     清零职责：置 null 的唯一场景 = deleteProject 删除当前项目、btnBackToProjects
+ *           返回项目列表（原 :342/:365）；enterProject 每次进入整体覆盖。无定时器职责。
+ *
+ *   sourceMode  初始 'local'   // 'local' | 'git'（项目来源）
+ *     写入：projects.js enterProject（按项目 type 赋值）、setSourceMode（唯一模式切换权威，
+ *           同步 tab 高亮与双 pane 显隐）；app.js 页面加载恢复块（/api/git/latest 恢复时写 'git'）
+ *     读取：projects.js currentProjectPath / setSourceMode
+ *     清零职责：无独立清零场景——enterProject / setSourceMode / 恢复块每次整体覆盖。
+ *
+ *   gitProjectPath  初始 null   // Git 拉取编译完成后的本地目录
+ *     写入：projects.js enterProject（GIT 项目赋值 / 本地项目置 null）、
+ *           pollGitStatus DONE 时赋值、btnGitPrepare 开始新任务时置 null；
+ *           app.js 恢复块（/api/git/latest DONE 时赋值）
+ *     读取：projects.js currentProjectPath（git 模式下返回此值）
+ *     清零职责：btnGitPrepare 提交新任务前显式置 null（原 :564）——防旧路径残留误导
+ *           currentProjectPath；enterProject 进入本地项目时也置 null。
+ *
+ *   gitPollTimer  初始 null   // 【句柄类状态】Git 拉取任务轮询 setInterval 句柄
+ *     写入（创建）：projects.js btnGitPrepare 绑定（提交任务成功后启动，原 :575）；
+ *           app.js 页面加载恢复块（在途任务继续轮询，原 :3348）——两处创建互斥
+ *           （恢复块仅页面加载执行一次；btnGitPrepare 启动前先调 stopGitPoll）
+ *     清理（clearInterval）：**唯一清理点 = projects.js stopGitPoll**（pollGitStatus 遇
+ *           终态 DONE/FAILED、请求异常、轮询失败时调用，原 :526）。stopGitPoll 先判空再
+ *           clear 并置 null，**可安全重复调用**；btnGitPrepare 重入（用户连续提交任务）
+ *           前也先调 stopGitPoll（原 :563），旧句柄必被处置，无泄漏。
+ *     读取：无（句柄只被写/清，不读）。
+ *
+ *   currentResult  初始 null   // 最近一次成功分析的结果 DTO
+ *     写入：projects.js enterProject（进入新项目时重置 null）、autoLoadCacheForProject
+ *           （命中缓存时赋值）；app.js C5 结果簇（正常分析完成后赋值）
+ *     读取：app.js C5 结果簇（renderResult / Excel 导出等）
+ *     清零职责：enterProject 项目切换时重置 null（原 :212）——防上个项目结果串场。
+ *
+ *   currentRequest  初始 null   // 最近一次成功分析的请求（Excel 复用）
+ *     写入：projects.js enterProject（重置 null）；app.js 分析簇
+ *     清零职责：同上（原 :213）。
+ *
+ *   currentBatchSummary  初始 null   // 批量分析轻量索引（清单视图）
+ *     写入：projects.js enterProject（重置 null）；app.js C6 批量簇
+ *     清零职责：同上（原 :214）。
+ *
+ *   currentCacheFileName  初始 null   // 批量中当前展开入口的缓存文件名（Excel 用）
+ *     写入：projects.js enterProject（重置 null）；app.js C6 批量簇
+ *     清零职责：同上（原 :215）。
+ *
+ *   currentEntryList  初始 null   // EntryList DTO（confirmed + excluded）
+ *     写入：projects.js autoLoadEntryList（拉取成功赋值 / 失败置 {confirmed:[],excluded:[]}）、
+ *           enterProject 不直接写；app.js C4 清单簇（增删改后重新赋值）
+ *     读取：app.js C4 清单簇 + guideState
+ *     清零职责：autoLoadEntryList 失败兜底置空对象（原 :274）；无其他独立清零。
+ *
+ *   currentCandidates  初始 []   // 本次扫描新增的候选（临时）
+ *     写入：projects.js autoLoadEntryList（每次拉取后置 []）；app.js C4 扫描簇
+ *     清零职责：autoLoadEntryList 每次执行重置（原 :268/:41）。
+ *
+ *   guideProjectCount  初始 null   // 已导入项目数（null = 尚未拉到，引导先不渲染避免闪烁）
+ *     写入：projects.js renderProjectList（= list.length）、refreshProjectList
+ *           （请求失败时置 0）；app.js 未搬簇无写入
+ *     读取：app.js guideState（只读渲染）
+ *     清零职责：无独立清零——每次列表刷新整体覆盖；失败兜底置 0（原 :107/:114）。
+ *
+ *   guideHasResult  初始 false   // 是否已有可用分析结果
+ *     写入：projects.js updateStep3Hint（= !!cacheInfo.hasCache）
+ *     读取：app.js guideState
+ *     清零职责：updateStep3Hint 每次整体覆盖（原 :307）。
+ *
+ *   guideResultStale  初始 false   // 结果是否已因清单变化而过期
+ *     写入：projects.js updateStep3Hint（= !!cacheInfo.dirty）
+ *     读取：app.js guideState
+ *     清零职责：updateStep3Hint 每次整体覆盖（原 :308）。
+ *
+ * —— 有意**不**迁入 App.state 的 C3 内部状态（最小化共享面）——
+ *   projectIndex   仅 projects.js 内部使用（refreshProjectList 建索引、enterProject 查询）
+ *   gitSwitchTimer 【句柄】仅 Git 分支切换轮询内部使用：创建=startGitSwitch（原 :786）、
+ *                  唯一清理点=stopGitSwitchPoll（原 :709，判空后 clear 置 null，可安全重复
+ *                  调用；hideGitInfoBar/切换终态/提交失败均会调用，重入无泄漏）
+ *   gitRefsCache   仅 loadGitRefs 写入（原 :636），当前无读取方（下拉数据直写 DOM）
+ *
  * 后续簇预期（占位说明，迁入时再真正添加字段）：
- *   C3 projects+Git：sourceMode / gitProjectPath / gitPollTimer / gitSwitchTimer / gitRefsCache
- *   C4 entries：     entryItems / entrySelKeys / excludeModalItems / currentEntryList / currentCandidates
- *   C5 result：      currentResult / nodeRegistry / hitRows / activeSearch / expandFns
+ *   C4 entries：     entryItems / entrySelKeys / excludeModalItems
+ *   C5 result：      nodeRegistry / hitRows / activeSearch / expandFns
  *   C6 batch+freq：  batchModel / batchRowStates / freqFilter / freqViewMode / projSearch*
  *   C7 noise：       noiseRules / globalRulesCache / projectRulesCache / globalOverrides /
  *                    activeNoiseRules / compiledActiveRules / activeNoiseHash / noiseRuleScope
@@ -42,15 +126,30 @@
         module.exports = App;                 // Node
     }
     if (root) {
-        root.App = App;                       // 浏览器（ui.js / app.js 之前加载）
+        root.App = App;                       // 浏览器（ui.js / projects.js / app.js 之前加载）
     }
 })(typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : this), function () {
     'use strict';
 
     return {
         state: {
-            currentView: 'projects',          // 原 app.js:277 逐字迁入（含初始值）
-            noiseRuleMode: 'panel'            // 原 app.js:314 逐字迁入（含初始值）
+            // ---- C2 迁入（原 app.js 行号见头注释） ----
+            currentView: 'projects',
+            noiseRuleMode: 'panel',
+            // ---- C3 迁入（projects + Git 簇） ----
+            currentProjectId: null,           // 原 app.js:83 逐字迁入（含初始值）
+            sourceMode: 'local',              // 原 app.js:406 逐字迁入（含初始值）
+            gitProjectPath: null,             // 原 app.js:407 逐字迁入（含初始值）
+            gitPollTimer: null,               // 原 app.js:408 逐字迁入（句柄类，见头注释 clear 责任）
+            currentResult: null,              // 原 app.js:33 逐字迁入
+            currentRequest: null,             // 原 app.js:34 逐字迁入
+            currentBatchSummary: null,        // 原 app.js:35 逐字迁入
+            currentCacheFileName: null,       // 原 app.js:36 逐字迁入
+            currentEntryList: null,           // 原 app.js:40 逐字迁入
+            currentCandidates: [],            // 原 app.js:41 逐字迁入
+            guideProjectCount: null,          // 原 app.js:45 逐字迁入
+            guideHasResult: false,            // 原 app.js:46 逐字迁入
+            guideResultStale: false           // 原 app.js:47 逐字迁入
         }
     };
 });

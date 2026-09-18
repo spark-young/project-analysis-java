@@ -28,23 +28,36 @@
     // guideRefresh 仍是 app.js 的函数（单一来源），在此移交给 ui.js。
     Ui.init({ guideRefresh: guideRefresh });
 
+    // 项目列表/进入/删除 + Git 拉取轮询与分支切换已抽出 js/projects.js（OPT-27 C3）：
+    // 同样保留同名薄委托，调用点零改动；Projects.init 注入未搬簇函数（晚绑定，方案 §4.3）。
+    const refreshProjectList = Projects.refreshProjectList;
+    const enterProject = Projects.enterProject;
+    const autoLoadEntryList = Projects.autoLoadEntryList;
+    const autoLoadCacheForProject = Projects.autoLoadCacheForProject;
+    const setSourceMode = Projects.setSourceMode;
+    const currentProjectPath = Projects.currentProjectPath;
+    const renderGitStatus = Projects.renderGitStatus;
+    const pollGitStatus = Projects.pollGitStatus;
+    Projects.init({
+        guideRefresh: guideRefresh,
+        loadNoiseRules: loadNoiseRules,
+        loadScanStrategy: loadScanStrategy,
+        renderEntryList: renderEntryList,
+        renderResult: renderResult,
+    });
+
     // els（150+ 元素 DOM 缓存）已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
 
-    let currentResult = null;
-    let currentRequest = null;  // 最近一次成功分析的请求（Excel 复用）
-    let currentBatchSummary = null; // 批量分析轻量索引（清单视图）
-    let currentCacheFileName = null; // 批量中当前展开入口的缓存文件名（Excel 用）
+    // App.state.currentResult / App.state.currentRequest / App.state.currentBatchSummary / App.state.currentCacheFileName /
+    // App.state.currentEntryList / App.state.currentCandidates 已迁入 App.state（OPT-27 C3：
+    // projects.js 的 enterProject/autoLoad* 写入，写入方/清零归属见 js/state.js 头注释）。
     let currentExcelMode = 'entry';  // 'entry' 单入口导出 | 'project' 项目级导出
     let batchRowStates = [];         // 批量清单每行的行内展开状态 { open,rendered,result,roots,body,rowEl,entry }
     // Step 2 入口清单状态
-    let currentEntryList = null;   // EntryList DTO（confirmed + excluded）
-    let currentCandidates = [];    // 本次扫描新增的候选（临时）
 
     // ---- 新手引导只读状态（guide.js 消费，不参与业务逻辑） ----
-    // currentView 已迁入 js/state.js 的 App.state（OPT-27 C2：被 ui.js switchView 与本文件 guideState 共享）
-    let guideProjectCount = null;   // 已导入项目数（null = 尚未拉到，引导先不渲染，避免闪烁）
-    let guideHasResult = false;     // 是否已有可用分析结果
-    let guideResultStale = false;   // 结果是否已因清单变化而过期
+    // currentView / guideProjectCount / guideHasResult / guideResultStale 已迁入
+    // js/state.js 的 App.state（OPT-27 C2/C3：projects.js 写入、guideState 只读）
 
     /** 通知引导刷新（引导未加载时静默跳过） */
     function guideRefresh() {
@@ -80,9 +93,9 @@
     let noiseRuleScope = 'global';   // 当前查看/编辑的层级：'global' | 'project'
     // noiseRuleMode 已迁入 js/state.js 的 App.state（OPT-27 C2：switchView 离开
     // noiseRules 视图时重置 'panel'，噪声簇读写页面/弹窗模式，防"半重置"归属见 state.js 头注释）
-    let currentProjectId = null;     // 当前选中的项目 id（null = 未选中）
-    let gitSwitchTimer = null;       // 分支/Tag 切换任务轮询定时器
-    let gitRefsCache = null;         // 最近一次分支/Tag 下拉数据 {branches, tags, defaultBranch}
+    // currentProjectId / gitSwitchTimer / gitRefsCache 已迁出（OPT-27 C3）：
+    // currentProjectId 进 App.state（多簇共享）；gitSwitchTimer/gitRefsCache 为
+    // projects.js 模块私有（不进 App.state，理由见 state.js 头注释）
     // 扫描策略状态
     let scanStrategy = null;         // 当前项目的有效扫描策略（ScanStrategy DTO）
     let ssEditingProfileId = null;   // 管理弹窗中正在编辑的方案 id
@@ -92,288 +105,12 @@
     let ssPageEditingProfileId = null; // 页面版正在编辑的方案 id
 
     // ==============================================================
-    // 项目列表 / 视图切换 / 持久化项目管理
+    // 项目列表 / 进入 / 删除（refreshProjectList / renderProjectList / projectCardHtml /
+    // enterProject / autoLoadEntryList / autoLoadCacheForProject / updateStep3Hint /
+    // deleteProject）及其事件绑定（btnImportLocal/btnRefreshProjects/btnBackToProjects/
+    // navToProjects/navToAnalyze）已抽出 js/projects.js（OPT-27 C3），见顶部薄委托；
+    // projectIndex / gitSwitchTimer / gitRefsCache 为该模块私有（不进 App.state）。
     // ==============================================================
-
-    // switchView 已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
-
-    /** 最近一次项目列表索引：进入项目时直接取用，避免重复的全量 /api/projects 请求 */
-    let projectIndex = {};
-
-    async function refreshProjectList() {
-        try {
-            const resp = await fetch('/api/projects');
-            if (!resp.ok) {
-                if (guideProjectCount == null) guideProjectCount = 0;
-                guideRefresh();
-                return;
-            }
-            const list = await resp.json();
-            renderProjectList(list);
-        } catch (e) {
-            if (guideProjectCount == null) guideProjectCount = 0;
-            guideRefresh();
-        }
-    }
-
-    function renderProjectList(list) {
-        list = list || [];
-        projectIndex = {};
-        list.forEach((p) => { projectIndex[p.id] = p; });
-        guideProjectCount = list.length;
-        els.projectsCount.textContent = list.length + ' 个';
-        if (list.length === 0) {
-            els.projectsEmpty.hidden = false;
-            els.projectsList.innerHTML = '';
-            guideRefresh();
-            return;
-        }
-        els.projectsEmpty.hidden = true;
-        els.projectsList.innerHTML = list.map((p) => projectCardHtml(p)).join('');
-        els.projectsList.querySelectorAll('.pc-enter').forEach((btn) => {
-            btn.addEventListener('click', () => enterProject(btn.dataset.id));
-        });
-        els.projectsList.querySelectorAll('.pc-delete').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                const name = btn.dataset.name;
-                if (!confirm('确定从列表删除项目"' + name + '"？\n（只移除记录，不删除磁盘文件）')) return;
-                deleteProject(btn.dataset.id);
-            });
-        });
-        guideRefresh();
-    }
-
-    function projectCardHtml(p) {
-        const typeLabel = p.type === 'GIT' ? 'GIT' : 'LOCAL';
-        const time = p.lastOpenedAt ? new Date(p.lastOpenedAt).toLocaleString()
-                   : (p.createdAt ? new Date(p.createdAt).toLocaleString() : '');
-        let extraInfo = '';
-        if (p.type === 'GIT' && p.gitUrl) extraInfo = '<div class="pc-path">🔗 ' + escapeHtml(p.gitUrl) + '</div>';
-
-        // 状态徽章
-        let statusBadge = '';
-        const cs = p.changeStatus || 'UP_TO_DATE';
-        const hint = p.changeHint || '';
-        const statusConfig = {
-            UP_TO_DATE:     { cls: 'status-ok',    icon: '✓', label: '已就绪' },
-            NEEDS_COMPILE:  { cls: 'status-warn',  icon: '⚠', label: '需编译' },
-            NEEDS_ANALYZE:  { cls: 'status-info',  icon: '⚡', label: '待分析' },
-            MISSING:        { cls: 'status-bad',   icon: '✗', label: '已丢失' },
-            ERROR:          { cls: 'status-bad',   icon: '✗', label: '异常' }
-        };
-        const cfg = statusConfig[cs] || statusConfig.UP_TO_DATE;
-        statusBadge = '<span class="pc-status ' + cfg.cls + '" title="' + escapeHtml(hint) + '">'
-            + cfg.icon + ' ' + cfg.label + '</span>';
-
-        const cardClass = cs === 'MISSING' ? 'project-card card-missing' : 'project-card';
-
-        return '<div class="' + cardClass + '">'
-            + '<div class="pc-head">'
-            + '<span class="pc-type ' + typeLabel + '">' + typeLabel + '</span>'
-            + statusBadge
-            + '<span class="pc-name">' + escapeHtml(p.name || '(未命名)') + '</span>'
-            + '</div>'
-            + '<div class="pc-path">📁 ' + escapeHtml(p.projectPath || '') + '</div>'
-            + extraInfo
-            + (hint && cs !== 'UP_TO_DATE' ? '<div class="pc-hint">' + escapeHtml(hint) + '</div>' : '')
-            + '<div class="pc-meta"><span>' + escapeHtml(time) + '</span>'
-            + '<span class="hint">id: ' + escapeHtml(p.id ? p.id.slice(0, 8) : '') + '</span></div>'
-            + '<div class="pc-actions">'
-            + '<button type="button" class="btn small primary pc-enter" data-id="' + escapeHtml(p.id) + '">进入分析</button>'
-            + '<button type="button" class="btn small pc-delete" data-id="' + escapeHtml(p.id) + '" data-name="' + escapeHtml(p.name || '') + '">移除</button>'
-            + '</div>'
-            + '</div>';
-    }
-
-    async function enterProject(id) {
-        let p = projectIndex[id];
-        if (!p) {
-            // 索引未命中（页面直开 / 刚切换分支）：兜底拉一次列表
-            try {
-                const listResp = await fetch('/api/projects');
-                const list = await listResp.json();
-                list.forEach((x) => { projectIndex[x.id] = x; });
-                p = projectIndex[id];
-            } catch (e) { /* 忽略，下面统一报错 */ }
-        }
-        if (!p) { alert('项目不存在或已被删除'); refreshProjectList(); return; }
-
-        const isGit = p.type === 'GIT';
-        const steps = ['读取项目信息', '同步过滤规则与扫描策略'];
-        if (isGit) steps.push('加载 Git 分支信息');
-        steps.push('加载交易入口清单');
-        const iGit = isGit ? 2 : -1;
-        const iEntries = isGit ? 3 : 2;
-        showLoading('正在进入项目…（工程较大时首次加载会慢一些）', { steps: steps });
-        try {
-            loadingSetStep(0, 'active', '打开项目');
-            await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
-            currentProjectId = id;
-            currentResult = null;
-            currentRequest = null;
-            currentBatchSummary = null;
-            currentCacheFileName = null;
-            if (isGit) {
-                gitProjectPath = p.projectPath;
-                sourceMode = 'git';
-            } else {
-                gitProjectPath = null;
-                sourceMode = 'local';
-                els.projectPath.value = p.projectPath || '';
-            }
-            setSourceMode(sourceMode);
-            els.currentProjectBadge.textContent = p.type || 'LOCAL';
-            els.currentProjectBadge.className = 'badge source-' + (isGit ? 'dependency' : 'project').toLowerCase();
-            els.currentProjectName.textContent = p.name || '(未命名)';
-            els.currentProjectPath.textContent = p.projectPath || '';
-
-            // 项目切换后先同步两层过滤规则（项目路径变化，项目层规则需重新拉取），再加载清单
-            loadingSetStep(1, 'active');
-            await loadNoiseRules();
-            await loadScanStrategy();
-
-            if (isGit) {
-                loadingSetStep(iGit, 'active', '读取远程分支');
-                showGitInfoBar(p);
-                await loadGitRefs(id);
-                // 远端更新检查要打 git ls-remote（最长 15s），放后台跑，不阻塞进入
-                checkGitRemoteStatus(id, true);
-            } else {
-                hideGitInfoBar();
-            }
-
-            els.entrySection.hidden = true;
-            els.resultSection.hidden = true;
-            els.freqSection.hidden = true;
-            clearError();
-            switchView('analyze');
-
-            // Step2 已确认的交易入口清单（主体，进来即可见）
-            // 其内部再触发 autoLoadCacheForProject（加载批量索引 / 单入口结果）
-            loadingSetStep(iEntries, 'active', '读取入口清单');
-            await autoLoadEntryList(id, (note) => loadingSetStep(iEntries, 'active', note));
-            loadingSetStep(iEntries, 'done');
-        } finally {
-            hideLoading();
-        }
-    }
-
-    /** 加载项目级已确认的交易入口清单（Step 2）。onNote 可选，用于回吐子阶段说明 */
-    async function autoLoadEntryList(projectId, onNote) {
-        try {
-            if (onNote) onNote('读取入口清单');
-            const resp = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/entries');
-            if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            currentEntryList = await resp.json();
-            currentCandidates = [];
-            renderEntryList();
-            // Step2 清单变了 → 刷新 Step3 提示（让后端重新算 currentEntryCount + dirty）
-            await autoLoadCacheForProject(projectId, onNote);
-        } catch (e) {
-            console.warn('[Step2] 入口清单加载失败:', e);
-            currentEntryList = { confirmed: [], excluded: [] };
-            renderEntryList();
-        }
-    }
-
-    /** 加载单份缓存 + 更新 Step3 状态提示条 */
-    async function autoLoadCacheForProject(projectId, onNote) {
-        try {
-            if (onNote) onNote('读取上次分析结果');
-            const resp = await fetch('/api/projects/' + encodeURIComponent(projectId) + '/cache/load-single');
-            if (!resp.ok) return;
-            const data = await resp.json();
-
-            if (data.hasCache) {
-                currentResult = data.result;
-                renderResult(data.result);
-            }
-
-            // 更新 Step3 统一提示条
-            updateStep3Hint({
-                hasCache: data.hasCache,
-                dirty: data.dirty,
-                cachedEntryCount: data.cachedEntryCount,
-                currentEntryCount: data.currentEntryCount,
-            });
-        } catch (e) {
-            console.warn('[缓存] 自动加载失败:', e);
-        }
-    }
-
-    /** Step3 统一状态提示：整合 清单变更 + Git 更新 + 暂无缓存 */
-    function updateStep3Hint(cacheInfo) {
-        // cacheInfo: { hasCache, dirty, cachedEntryCount, currentEntryCount }
-        guideHasResult = !!cacheInfo.hasCache;
-        guideResultStale = !!cacheInfo.dirty;
-        // 额外检查：Git 是否有更新（由后端 changeStatus 字段决定）
-        const hints = [];
-        let icon = 'ℹ️';
-
-        if (!cacheInfo.hasCache) {
-            if ((cacheInfo.currentEntryCount || 0) === 0) {
-                icon = '📝';
-                hints.push('Step2 清单为空，请先补充交易入口');
-            } else {
-                icon = '▶️';
-                hints.push(`清单已就绪（${cacheInfo.currentEntryCount} 个入口），点击下方按钮开始分析`);
-            }
-        } else {
-            if (cacheInfo.dirty) {
-                icon = '⚠️';
-                hints.push(`清单已调整（上次 ${cacheInfo.cachedEntryCount} 个，当前 ${cacheInfo.currentEntryCount} 个），结果可能过期，建议重新分析`);
-            } else {
-                icon = '✅';
-                hints.push(`已缓存分析结果（${cacheInfo.cachedEntryCount} 个入口，清单一致），如需最新可重新分析`);
-            }
-        }
-
-        els.step3HintIcon.textContent = icon;
-        els.step3HintText.textContent = hints.join(' · ');
-        els.step3HintBar.hidden = false;
-        guideRefresh();
-    }
-
-    async function deleteProject(id) {
-        try {
-            const resp = await fetch('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' });
-            if (!resp.ok) { const d = await resp.json(); throw new Error(d.error || '删除失败'); }
-            if (currentProjectId === id) {
-                currentProjectId = null;
-                switchView('projects');
-            }
-            refreshProjectList();
-        } catch (e) { alert(e.message); }
-    }
-
-    els.btnImportLocal.addEventListener('click', async () => {
-        const path = els.projectPath.value.trim();
-        if (!path) { els.projectsImportError.textContent = '请填写项目路径'; els.projectsImportError.hidden = false; return; }
-        els.projectsImportError.hidden = true;
-        showLoading('正在识别项目……');
-        try {
-            const p = await postJson('/api/projects/local', { path: path });
-            await enterProject(p.id);
-        } catch (e) {
-            els.projectsImportError.textContent = e.message;
-            els.projectsImportError.hidden = false;
-        } finally { hideLoading(); }
-    });
-
-    els.btnRefreshProjects.addEventListener('click', refreshProjectList);
-    els.btnBackToProjects.addEventListener('click', () => {
-        currentProjectId = null;
-        App.state.noiseRuleMode = 'panel';
-        els.entrySection.hidden = true;
-        els.resultSection.hidden = true;
-        els.freqSection.hidden = true;
-        switchView('projects');
-    });
-    els.navToProjects.addEventListener('click', () => { switchView('projects'); refreshProjectList(); });
-    els.navToAnalyze.addEventListener('click', () => {
-        if (!currentProjectId) { alert('请先在项目列表中选择一个项目'); switchView('projects'); return; }
-        switchView('analyze');
-    });
     els.navToNoiseRules.addEventListener('click', () => {
         App.state.noiseRuleMode = 'page';
         noiseRuleScope = 'global';
@@ -390,7 +127,7 @@
     });
     els.btnNrPageBack.addEventListener('click', () => {
         App.state.noiseRuleMode = 'panel';
-        if (currentProjectId) {
+        if (App.state.currentProjectId) {
             switchView('analyze');
         } else {
             switchView('projects');
@@ -399,30 +136,9 @@
 
     // 旧缓存批次切换 UI + 重新分析按钮 已移除（改为单份缓存 + Step3 状态提示）
 
-    // ------------------------------------------------------------------
-    // 项目来源切换：本地路径 / Git 仓库
-    // ------------------------------------------------------------------
-
-    let sourceMode = 'local';   // 'local' | 'git'
-    let gitProjectPath = null;  // Git 拉取编译完成后的本地目录
-    let gitPollTimer = null;
-
-    function setSourceMode(mode) {
-        sourceMode = mode;
-        els.tabLocal.classList.toggle('active', mode === 'local');
-        els.tabGit.classList.toggle('active', mode === 'git');
-        els.paneLocal.hidden = mode !== 'local';
-        els.paneGit.hidden = mode !== 'git';
-    }
-
-    els.tabLocal.addEventListener('click', () => setSourceMode('local'));
-    els.tabGit.addEventListener('click', () => setSourceMode('git'));
-
-    /** 当前生效的项目路径：Git 模式取拉取编译产物，本地模式取输入框 */
-    function currentProjectPath() {
-        if (sourceMode === 'git') return gitProjectPath;
-        return els.projectPath.value.trim();
-    }
+    // 项目来源切换（sourceMode/gitProjectPath 状态、setSourceMode/currentProjectPath、
+    // tabLocal/tabGit 绑定）已抽出 js/projects.js（OPT-27 C3）；
+    // sourceMode/gitProjectPath 迁入 App.state（归属见 js/state.js 头注释）。
 
     // ------------------------------------------------------------------
     // 工具
@@ -462,344 +178,14 @@
     });
 
     // ------------------------------------------------------------------
-    // Git 拉取 + 编译（异步任务轮询）
+    // Git 拉取 + 编译轮询（GIT_STATUS_LABEL/renderJobLog/renderGitStatus/stopGitPoll/
+    // pollGitStatus/btnGitPrepare 绑定）与 分支/Tag 切换 + 远端更新检测（formatCheckTime/
+    // GIT_REMOTE_STATUS_LABEL/showGitInfoBar/hideGitInfoBar/renderGitRemoteBadge/loadGitRefs/
+    // checkGitRemoteStatus/renderGitSwitchProgress/setGitSwitchBusy/stopGitSwitchPoll/
+    // onGitSwitchDone/pollGitSwitchStatus/startGitSwitch/btnGitSwitch/btnGitCheckUpdate 绑定）
+    // 已抽出 js/projects.js（OPT-27 C3），见顶部薄委托；
+    // gitPollTimer 句柄迁入 App.state（clear 责任见 js/state.js 头注释）。
     // ------------------------------------------------------------------
-
-    const GIT_STATUS_LABEL = {
-        PENDING: '排队中',
-        CLONING: '正在克隆仓库',
-        COMPILING: '正在 mvn 编译',
-        DONE: '完成',
-        FAILED: '失败',
-    };
-
-    /**
-     * 任务日志框：展示 mvn 编译等实时输出。
-     * 只在内容变化时更新（避免每次轮询重置滚动位置）；原本停在底部时自动跟随最新一行。
-     */
-    function renderJobLog(el, lines) {
-        if (!el) return;
-        const arr = Array.isArray(lines) ? lines : [];
-        if (arr.length === 0) {
-            el.hidden = true;
-            el.textContent = '';
-            return;
-        }
-        const text = arr.join('\n');
-        if (el.textContent === text) return;
-        const followTail = el.hidden || (el.scrollHeight - el.scrollTop - el.clientHeight) < 24;
-        el.textContent = text;
-        el.hidden = false;
-        if (followTail) el.scrollTop = el.scrollHeight;
-    }
-
-    function renderGitStatus(st) {
-        els.gitStatus.hidden = false;
-        els.gitStatus.className = 'git-status '
-            + (st.status === 'DONE' ? 'ok' : st.status === 'FAILED' ? 'err' : 'busy');
-        let html = '<div class="git-status-line"><b>' + (GIT_STATUS_LABEL[st.status] || st.status) + '</b>'
-            + (st.projectName ? ' · ' + escapeHtml(st.projectName) : '');
-        // 步骤文字 + 进度条
-        if (st.status !== 'DONE' && st.status !== 'FAILED') {
-            const pct = Math.max(0, Math.min(100, st.progress || 0));
-            const stepText = st.step || st.message || '处理中...';
-            html += '<div class="git-progress-wrap">'
-                + '<div class="git-progress-bar" style="width:' + pct + '%"></div>'
-                + '<span class="git-progress-text">' + escapeHtml(stepText) + ' · ' + pct + '%</span>'
-                + '</div>';
-        } else if (st.message) {
-            html += '<span class="git-status-msg">' + escapeHtml(st.message) + '</span>';
-        }
-        html += '</div>';
-        if (st.message && (st.status === 'DONE' || st.status === 'FAILED')) {
-            html += '<div class="git-status-msg">' + escapeHtml(st.message) + '</div>';
-        }
-        if (st.status === 'DONE' && st.projectPath) {
-            html += '<div class="git-status-msg">已就绪: <code>' + escapeHtml(st.projectPath) + '</code></div>';
-        }
-        els.gitStatus.innerHTML = html;
-        // mvn 编译的实时输出（独立节点，避免每次轮询重建导致滚动位置丢失）
-        renderJobLog(els.gitPrepareLog, st.compileLog);
-    }
-
-    function stopGitPoll() {
-        if (gitPollTimer) { clearInterval(gitPollTimer); gitPollTimer = null; }
-        els.btnGitPrepare.disabled = false;
-    }
-
-    async function pollGitStatus(jobId) {
-        try {
-            const resp = await fetch('/api/git/prepare/' + encodeURIComponent(jobId));
-            const st = await resp.json();
-            if (!resp.ok) {
-                stopGitPoll();
-                renderGitStatus({ status: 'FAILED', message: st.error || '轮询失败' });
-                return;
-            }
-            renderGitStatus(st);
-            if (st.status === 'DONE') {
-                stopGitPoll();
-                gitProjectPath = st.projectPath;
-                // Git 项目已自动注册到项目列表，刷新显示让用户自己选择
-                refreshProjectList();
-                // 给个提示，告诉用户导入成功、可以从列表里点进去
-                renderGitStatus({
-                    status: 'DONE',
-                    message: '✓ 项目已导入，请从项目列表中点击"进入分析"'
-                });
-            } else if (st.status === 'FAILED') {
-                stopGitPoll();
-            }
-        } catch (e) {
-            stopGitPoll();
-            renderGitStatus({ status: 'FAILED', message: '网络异常: ' + e.message });
-        }
-    }
-
-    els.btnGitPrepare.addEventListener('click', async () => {
-        clearError();
-        const repoUrl = els.repoUrl.value.trim();
-        if (!repoUrl) { showError('请填写仓库地址'); return; }
-        stopGitPoll();
-        gitProjectPath = null;
-        els.btnGitPrepare.disabled = true;
-        renderGitStatus({ status: 'PENDING', message: '提交任务……', projectName: '' });
-        try {
-            const st = await postJson('/api/git/prepare', {
-                repoUrl: repoUrl,
-                branch: els.gitBranch.value.trim() || null,
-                token: els.gitToken.value.trim() || null,
-                username: els.gitUsername.value.trim() || null,
-            });
-            renderGitStatus(st);
-            gitPollTimer = setInterval(() => pollGitStatus(st.jobId), 2000);
-        } catch (e) {
-            stopGitPoll();
-            renderGitStatus({ status: 'FAILED', message: e.message });
-        }
-    });
-
-    // ------------------------------------------------------------------
-    // Git 分支/Tag 切换 + 远端更新检测
-    // ------------------------------------------------------------------
-
-    function formatCheckTime(ms) {
-        if (!ms) return '';
-        const d = new Date(ms);
-        const pad = (n) => (n < 10 ? '0' + n : '' + n);
-        return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
-            + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
-    }
-
-    const GIT_REMOTE_STATUS_LABEL = {
-        UP_TO_DATE: '✓ 已是最新',
-        BEHIND: '▼ 远端有更新',
-        UNKNOWN: '未知',
-    };
-
-    function showGitInfoBar(p) {
-        els.gitInfoBar.hidden = false;
-        els.gitCurrentRef.textContent = p.currentRef || '—';
-        if (p.currentRefType) {
-            els.gitCurrentRefType.hidden = false;
-            els.gitCurrentRefType.textContent = p.currentRefType === 'TAG' ? 'TAG' : 'BRANCH';
-        } else {
-            els.gitCurrentRefType.hidden = true;
-        }
-        // 先用注册表里上次检查结果占位，随后被实时检查覆盖
-        renderGitRemoteBadge(p.remoteUpdateStatus, null);
-        els.gitLastCheck.textContent = p.lastCheckTime ? ('最近检查: ' + formatCheckTime(p.lastCheckTime)) : '';
-        els.gitSwitchProgress.hidden = true;
-        els.gitRefSelect.innerHTML = '';
-        els.gitRefSelect.disabled = false;
-        els.btnGitSwitch.disabled = true;
-        els.btnGitCheckUpdate.disabled = false;
-    }
-
-    function hideGitInfoBar() {
-        els.gitInfoBar.hidden = true;
-        stopGitSwitchPoll();
-    }
-
-    function renderGitRemoteBadge(status, hint) {
-        const badge = els.gitRemoteStatus;
-        const key = (status || 'UNKNOWN').toUpperCase();
-        const label = GIT_REMOTE_STATUS_LABEL[key] || status || '';
-        badge.className = 'badge git-remote-status ' + key.toLowerCase();
-        badge.textContent = label + (hint ? ' · ' + hint : '');
-        badge.hidden = false;
-    }
-
-    async function loadGitRefs(projectId) {
-        try {
-            const refs = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/refs');
-            gitRefsCache = refs;
-            const sel = els.gitRefSelect;
-            sel.innerHTML = '';
-            const branches = refs.branches || [];
-            const tags = refs.tags || [];
-            if (branches.length) {
-                const og = document.createElement('optgroup');
-                og.label = '分支';
-                branches.forEach((b) => {
-                    const o = document.createElement('option');
-                    o.value = b;
-                    o.dataset.refType = 'BRANCH';
-                    o.textContent = b;
-                    og.appendChild(o);
-                });
-                sel.appendChild(og);
-            }
-            if (tags.length) {
-                const og = document.createElement('optgroup');
-                og.label = 'Tag';
-                tags.forEach((t) => {
-                    const o = document.createElement('option');
-                    o.value = t;
-                    o.dataset.refType = 'TAG';
-                    o.textContent = t;
-                    og.appendChild(o);
-                });
-                sel.appendChild(og);
-            }
-            if (!branches.length && !tags.length) {
-                const o = document.createElement('option');
-                o.value = '';
-                o.textContent = '（无可用分支/Tag）';
-                sel.appendChild(o);
-            }
-            els.btnGitSwitch.disabled = sel.selectedOptions.length === 0;
-        } catch (e) {
-            els.btnGitSwitch.disabled = true;
-            console.warn('[Git] 分支/Tag 列表加载失败:', e);
-        }
-    }
-
-    async function checkGitRemoteStatus(projectId, silent) {
-        if (!silent) {
-            els.gitRemoteStatus.hidden = true;
-            els.gitLastCheck.textContent = '检查中...';
-        }
-        try {
-            const st = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/remote-status');
-            renderGitRemoteBadge(st.status, st.hint);
-            els.gitLastCheck.textContent = st.checkedAt ? ('最近检查: ' + formatCheckTime(st.checkedAt)) : '';
-        } catch (e) {
-            renderGitRemoteBadge('UNKNOWN', null);
-            els.gitLastCheck.textContent = '';
-            if (!silent) console.warn('[Git] 远端更新检查失败:', e);
-        }
-    }
-
-    function renderGitSwitchProgress(st) {
-        els.gitSwitchProgress.hidden = false;
-        const pct = Math.max(0, Math.min(100, st.progress || 0));
-        els.gitSwitchProgressBar.style.width = pct + '%';
-        els.gitSwitchProgressText.textContent = (st.step || st.message || '处理中...') + ' · ' + pct + '%';
-        renderJobLog(els.gitSwitchLog, st.compileLog);
-    }
-
-    function setGitSwitchBusy(busy) {
-        els.btnGitSwitch.disabled = busy;
-        els.btnGitCheckUpdate.disabled = busy;
-        els.gitRefSelect.disabled = busy;
-    }
-
-    function stopGitSwitchPoll() {
-        if (gitSwitchTimer) { clearInterval(gitSwitchTimer); gitSwitchTimer = null; }
-        els.btnGitSwitch.disabled = false;
-        els.btnGitCheckUpdate.disabled = false;
-        els.gitRefSelect.disabled = false;
-    }
-
-    async function onGitSwitchDone(projectId, st) {
-        stopGitSwitchPoll();
-        // DONE 时进度条还停留在最后一次编译快照，这里刷新为完成态
-        els.gitSwitchProgress.hidden = false;
-        els.gitSwitchProgressBar.style.width = '100%';
-        els.gitSwitchProgressText.textContent = '✓ 切换完成 · 100%';
-        const kind = st.refType === 'TAG' ? 'Tag' : '分支';
-        let msg = '✓ 已切换到' + kind + '「' + st.ref + '」';
-        let type = 'success';
-        let duration = 2200;
-        if (st.stashed) {
-            msg += '\n本地未提交改动已自动 stash';
-            duration = 3500;
-        }
-        if (st.conflict) {
-            msg += '\n⚠ stash pop 冲突：改动仍保留在 stash 中未恢复，请手动处理';
-            type = 'warn';
-            duration = 6000;
-        }
-        showToast(msg, type, duration);
-        await enterProject(projectId);
-    }
-
-    async function pollGitSwitchStatus(jobId, projectId) {
-        try {
-            const st = await fetchJson('/api/projects/' + encodeURIComponent(projectId) + '/git/switch/' + encodeURIComponent(jobId));
-            renderGitSwitchProgress(st);
-            if (st.status === 'DONE') {
-                await onGitSwitchDone(projectId, st);
-            } else if (st.status === 'FAILED') {
-                stopGitSwitchPoll();
-                els.gitSwitchProgressText.textContent = '切换失败: ' + (st.message || '未知错误');
-                showToast('✕ 切换失败: ' + (st.message || '未知错误'), 'error', 5000);
-            }
-        } catch (e) {
-            stopGitSwitchPoll();
-            els.gitSwitchProgressText.textContent = '轮询异常: ' + e.message;
-            showToast('✕ 切换状态查询失败: ' + e.message, 'error', 5000);
-        }
-    }
-
-    async function startGitSwitch(projectId) {
-        const sel = els.gitRefSelect;
-        const opt = sel.selectedOptions && sel.selectedOptions[0];
-        if (!opt || !opt.value) { showToast('请先选择要切换的分支或 Tag', 'warn'); return; }
-        const ref = opt.value;
-        const refType = opt.dataset.refType || 'BRANCH';
-        const label = refType === 'TAG' ? 'Tag' : '分支';
-        if (ref === els.gitCurrentRef.textContent) {
-            if (!(await showConfirm('当前已在该' + label + '上，切换将重新拉取远端最新代码。\n确定继续？', '切换版本'))) return;
-        } else if (!(await showConfirm('确定切换到' + label + '「' + ref + '」？\n将自动 stash 未提交改动，切换后重新编译并刷新分析结果。', '切换版本'))) {
-            return;
-        }
-        setGitSwitchBusy(true);
-        els.gitSwitchProgress.hidden = false;
-        els.gitSwitchProgressBar.style.width = '2%';
-        els.gitSwitchProgressText.textContent = '提交任务...';
-        renderJobLog(els.gitSwitchLog, []);   // 清掉上一次的编译输出
-        try {
-            const st = await postJson('/api/projects/' + encodeURIComponent(projectId) + '/git/switch', { ref: ref, refType: refType });
-            renderGitSwitchProgress(st);
-            if (st.status === 'DONE') {
-                await onGitSwitchDone(projectId, st);
-                return;
-            }
-            if (st.status === 'FAILED') {
-                stopGitSwitchPoll();
-                els.gitSwitchProgressText.textContent = '切换失败: ' + (st.message || '未知错误');
-                showToast('✕ 切换失败: ' + (st.message || '未知错误'), 'error', 5000);
-                return;
-            }
-            gitSwitchTimer = setInterval(() => pollGitSwitchStatus(st.jobId, projectId), 2000);
-        } catch (e) {
-            stopGitSwitchPoll();
-            els.gitSwitchProgressText.textContent = '提交失败: ' + e.message;
-            showToast('✕ 切换提交失败: ' + e.message, 'error', 5000);
-        }
-    }
-
-    els.btnGitSwitch.addEventListener('click', () => {
-        if (!currentProjectId) return;
-        startGitSwitch(currentProjectId);
-    });
-
-    els.btnGitCheckUpdate.addEventListener('click', async () => {
-        if (!currentProjectId) return;
-        await checkGitRemoteStatus(currentProjectId, false);
-    });
 
     // ------------------------------------------------------------------
     // 交易入口扫描 + 勾选分析
@@ -904,8 +290,8 @@
         els.resultSection.hidden = true;
         try {
             const result = await postJson('/api/analyze', req);
-            currentResult = result;
-            currentRequest = req;
+            App.state.currentResult = result;
+            App.state.currentRequest = req;
             renderResult(result);
         } catch (e) {
             showError(e.message);
@@ -957,14 +343,14 @@
             await downloadProjectExcel();
             return;
         }
-        if (!currentResult || !currentRequest) return;
+        if (!App.state.currentResult || !App.state.currentRequest) return;
         clearError();
         showLoading('正在生成 Excel 报告……');
         try {
             // 导出时带上当前来源筛选 + 批量展开的入口缓存文件名，Excel 与页面展示保持一致
-            const exportReq = Object.assign({}, currentRequest, {
+            const exportReq = Object.assign({}, App.state.currentRequest, {
                 freqSourceFilter: freqFilter,
-                cacheFileName: currentCacheFileName || '',
+                cacheFileName: App.state.currentCacheFileName || '',
             });
             const resp = await fetch('/api/report/excel', {
                 method: 'POST',
@@ -1054,8 +440,8 @@
     };
 
     function renderResult(result) {
-        guideHasResult = true;
-        guideResultStale = false;
+        App.state.guideHasResult = true;
+        App.state.guideResultStale = false;
         guideRefresh();
         // 批量分析结果 = 轻量清单索引（kind === 'batch'）→ 渲染入口清单视图
         if (result && result.kind === 'batch') {
@@ -1076,7 +462,7 @@
 
     /** 批量结果清单视图：显示所有入口 + 每入口摘要，点击某行加载该入口的完整调用链 */
     function renderBatchSummary(batch) {
-        currentBatchSummary = batch;
+        App.state.currentBatchSummary = batch;
         const entries = batch.entries || [];
         const done = entries.filter((e) => !e.failed).length;
         const failedCount = entries.length - done;
@@ -1230,11 +616,11 @@
         }
         try {
             showLoading('正在加载该入口的完整调用链...');
-            const data = await fetchJson('/api/projects/' + encodeURIComponent(currentProjectId)
+            const data = await fetchJson('/api/projects/' + encodeURIComponent(App.state.currentProjectId)
                 + '/cache/load-file?file=' + encodeURIComponent(fileName));
             if (!data.ok) { showError(data.error || '加载失败'); return; }
-            currentResult = data.result;
-            currentCacheFileName = fileName;
+            App.state.currentResult = data.result;
+            App.state.currentCacheFileName = fileName;
             renderSingleEntryResult(data.result, fileName);
         } catch (e) {
             showError(e.message);
@@ -1251,7 +637,7 @@
     function resetBatchModel(batch) {
         batchModel = {
             batch,
-            projectId: currentProjectId,
+            projectId: App.state.currentProjectId,
             // 预播种为与原清单 entries 顺序一致的槽位（下标即行号），失败的标记 err 但保留占位
             entries: (batch.entries || []).map((entry) => ({
                 entry, result: null, status: entry && entry.failed ? 'err' : 'pending', err: null,
@@ -1268,7 +654,7 @@
     }
 
     async function fetchEntryFile(fileName) {
-        return fetchJson('/api/projects/' + encodeURIComponent(currentProjectId)
+        return fetchJson('/api/projects/' + encodeURIComponent(App.state.currentProjectId)
             + '/cache/load-file?file=' + encodeURIComponent(fileName));
     }
 
@@ -1463,15 +849,15 @@
     /** 频率区数据源：项目级聚合 或 当前单入口的 methodFrequency */
     function currentFreqData() {
         if (freqViewMode === 'project' && batchModel && batchModel.projectFreq) return batchModel.projectFreq;
-        return (currentResult && currentResult.methodFrequency) || [];
+        return (App.state.currentResult && App.state.currentResult.methodFrequency) || [];
     }
 
     /** 规则变更后刷新频次列表：自动按当前视图取数（项目级聚合 / 单入口） */
     function refreshFreqView() {
         if (freqViewMode === 'project') {
             if (batchModel && batchModel.projectFreq) renderFreqList(batchModel.projectFreq);
-        } else if (currentResult) {
-            renderFreqList(currentResult.methodFrequency || []);
+        } else if (App.state.currentResult) {
+            renderFreqList(App.state.currentResult.methodFrequency || []);
         }
     }
 
@@ -1822,10 +1208,10 @@
         }
 
         // 单入口视图（非批量清单）：整树重绘
-        if (!inBatchList && els.tree && els.tree.children.length > 0 && currentResult) {
+        if (!inBatchList && els.tree && els.tree.children.length > 0 && App.state.currentResult) {
             clearSearchHits();
             els.tree.innerHTML = '';
-            rootsOf(currentResult).forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
+            rootsOf(App.state.currentResult).forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
         }
     }
 
@@ -1918,7 +1304,7 @@
         els.legend.style.display = '';
         els.globalSearch.style.display = '';
         // 批量模式下显示「返回清单」
-        if (fileName && currentBatchSummary) {
+        if (fileName && App.state.currentBatchSummary) {
             els.btnBackToList.hidden = false;
         } else {
             els.btnBackToList.hidden = true;
@@ -1927,10 +1313,10 @@
 
     /** 回到批量清单视图 */
     function backToBatchList() {
-        if (!currentBatchSummary) return;
-        currentResult = currentBatchSummary;
-        currentCacheFileName = null;
-        renderBatchSummary(currentBatchSummary);
+        if (!App.state.currentBatchSummary) return;
+        App.state.currentResult = App.state.currentBatchSummary;
+        App.state.currentCacheFileName = null;
+        renderBatchSummary(App.state.currentBatchSummary);
     }
 
     function hideBatchEntryHeader() {
@@ -2042,14 +1428,14 @@
 
     /** 依据当前生效规则刷新统计条：单入口重算；批量清单重算聚合 + 已展开行的行内统计 */
     function updateFilteredStats() {
-        if (!currentResult) return;
+        if (!App.state.currentResult) return;
         if (els.tree && els.tree.querySelector('.bt-row')) {
             batchRowStates.forEach((st) => {
                 if (st && st.rendered && st.result) updateBatchRowStats(st);
             });
             return;
         }
-        renderStats(computeFilteredStats(currentResult));
+        renderStats(computeFilteredStats(App.state.currentResult));
     }
 
     /** 上次已整体刷新所依据的规则指纹（用于跳过无变化的重算） */
@@ -2101,7 +1487,7 @@
 
     /** methodId → 可读方法签名（从当前单入口结果的节点表 graph.methods 解析） */
     function resolveFreqSignature(id) {
-        const g = currentResult && currentResult.graph;
+        const g = App.state.currentResult && App.state.currentResult.graph;
         const methods = g && g.methods;
         if (methods && id != null && methods[id]) {
             const m = methods[id];
@@ -2282,7 +1668,7 @@
         if (freqViewMode === 'project' && batchModel && batchModel.entries) {
             return batchModel.entries.map((s) => s && s.result).filter(Boolean);
         }
-        return currentResult ? [currentResult] : [];
+        return App.state.currentResult ? [App.state.currentResult] : [];
     }
 
     /** 图上方法的标准签名（与列表展示同口径） */
@@ -2357,7 +1743,7 @@
     /** 保存地址：有项目 → 项目层；否则全局层 */
     function noiseRulesSaveTarget() {
         const pp = currentProjectPath();
-        if (currentProjectId && pp) {
+        if (App.state.currentProjectId && pp) {
             return { url: 'api/noise-rules?projectPath=' + encodeURIComponent(pp), project: true };
         }
         return { url: 'api/noise-rules', project: false };
@@ -2481,7 +1867,7 @@
 
     /** 实际生效的过滤规则集 = 全局层（套用项目覆盖）+ 项目自定义层（未选项目时仅全局） */
     function recomputeActiveNoiseRules() {
-        if (currentProjectId && currentProjectPath()) {
+        if (App.state.currentProjectId && currentProjectPath()) {
             const overriddenGlobal = globalRulesCache.map(r => {
                 if (r.id && globalOverrides.hasOwnProperty(r.id)) {
                     return Object.assign({}, r, { enabled: globalOverrides[r.id] });
@@ -2519,7 +1905,7 @@
     function loadNoiseRules() {
         const pp = currentProjectPath();
         const gReq = fetch('api/noise-rules').then((r) => r.json()).catch(() => []);
-        const pReq = (currentProjectId && pp)
+        const pReq = (App.state.currentProjectId && pp)
             ? fetch('api/noise-rules/project-detail?projectPath=' + encodeURIComponent(pp))
                 .then((r) => r.json()).catch(() => null)
             : Promise.resolve(null);
@@ -3231,12 +2617,12 @@
         els.globalSearchChips.innerHTML = '';
         els.globalSearchResult.textContent = '';
         els.globalSearchResult.className = 'search-result';
-        if (!term || !currentResult) return;
+        if (!term || !App.state.currentResult) return;
 
         const exact = els.globalSearchMode.value === 'exact';
 
         // 每个入口：入口自身 + 其子树内全部命中
-        const roots = rootsOf(currentResult);
+        const roots = rootsOf(App.state.currentResult);
         const perRoot = [];
         roots.forEach((root) => {
             const matches = [];
@@ -3333,9 +2719,9 @@
         // 自动切到 Git tab，让用户立刻看到进度条
         setSourceMode('git');
         if (st.status === 'DONE') {
-            // 已完成：恢复 gitProjectPath，用户可以直接进入分析
-            gitProjectPath = st.projectPath;
-            sourceMode = 'git';
+            // 已完成：恢复 App.state.gitProjectPath，用户可以直接进入分析
+            App.state.gitProjectPath = st.projectPath;
+            App.state.sourceMode = 'git';
             renderGitStatus({
                 status: 'DONE',
                 message: (st.message || '✓ 项目已导入') + ' —— 请从项目列表中点击"进入分析"'
@@ -3345,7 +2731,7 @@
             renderGitStatus(st);
         } else {
             // 在途中（PENDING/CLONING），继续轮询
-            gitPollTimer = setInterval(() => pollGitStatus(st.jobId), 2000);
+            App.state.gitPollTimer = setInterval(() => pollGitStatus(st.jobId), 2000);
             renderGitStatus(st);
             els.btnGitPrepare.disabled = true;
         }
@@ -3361,9 +2747,9 @@
     }
 
     function renderEntryList() {
-        if (!currentEntryList) currentEntryList = { confirmed: [], excluded: [] };
-        const confirmed = currentEntryList.confirmed || [];
-        const excluded = currentEntryList.excluded || [];
+        if (!App.state.currentEntryList) App.state.currentEntryList = { confirmed: [], excluded: [] };
+        const confirmed = App.state.currentEntryList.confirmed || [];
+        const excluded = App.state.currentEntryList.excluded || [];
 
         // 统计
         els.entryListStats.textContent = confirmed.length + ' 个已确认'
@@ -3388,7 +2774,7 @@
         }
         updateEntryToolbar();
         // 清单为空时给一次性的就地提示（只出现一次）
-        if (confirmed.length === 0 && currentProjectId && window.Guide) {
+        if (confirmed.length === 0 && App.state.currentProjectId && window.Guide) {
             Guide.tipOnce('empty-entries', els.entryConfirmedList,
                 '清单是分析的输入：「🔍 自动扫描加入清单」会按扫描策略自动识别 Controller / Job 等入口，识别不准的可以「➕ 手动添加」。');
         }
@@ -3432,7 +2818,7 @@
 
     /** 刷新清单顶部操作栏：全选态 / 已选数量 / 批量排除按钮可用性 */
     function updateEntryToolbar() {
-        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         const has = confirmed.length > 0;
         els.entryConfirmToolbar.hidden = !has;
         if (!has) { entrySelKeys.clear(); return; }
@@ -3465,16 +2851,16 @@
             ruleListEl: page ? els.ssPageRuleList : els.ssRuleList,
             ruleAddEl: page ? els.btnSsPageRuleAdd : els.btnSsRuleAdd,
             deleteBtn: page ? els.btnSsPageProfileDelete : els.btnSsProfileDelete,
-            saveUrl: page ? '/api/scan-strategy/global' : '/api/scan-strategy/project/' + currentProjectId,
-            resetUrl: page ? '/api/scan-strategy/global/reset' : '/api/scan-strategy/project/' + currentProjectId + '/reset',
+            saveUrl: page ? '/api/scan-strategy/global' : '/api/scan-strategy/project/' + App.state.currentProjectId,
+            resetUrl: page ? '/api/scan-strategy/global/reset' : '/api/scan-strategy/project/' + App.state.currentProjectId + '/reset',
         };
     }
 
     /** 从后端加载当前项目的扫描策略并渲染下拉 */
     async function loadScanStrategy() {
-        if (!currentProjectId) return;
+        if (!App.state.currentProjectId) return;
         try {
-            scanStrategy = await fetchJson('/api/scan-strategy/project/' + currentProjectId);
+            scanStrategy = await fetchJson('/api/scan-strategy/project/' + App.state.currentProjectId);
             renderScanProfileSelect();
         } catch (e) {
             console.warn('[ScanStrategy] 加载失败:', e);
@@ -3812,12 +3198,12 @@
 
     // 下拉选择 → 立即切换生效（先取服务端最新数据，避免混入未保存的编辑）
     els.scanProfileSelect.addEventListener('change', async () => {
-        if (!currentProjectId || !scanStrategy) return;
+        if (!App.state.currentProjectId || !scanStrategy) return;
         const newId = els.scanProfileSelect.value;
         try {
-            const fresh = await fetchJson('/api/scan-strategy/project/' + currentProjectId);
+            const fresh = await fetchJson('/api/scan-strategy/project/' + App.state.currentProjectId);
             fresh.activeProfileId = newId;
-            await putJson('/api/scan-strategy/project/' + currentProjectId, fresh);
+            await putJson('/api/scan-strategy/project/' + App.state.currentProjectId, fresh);
             scanStrategy = fresh;
             renderScanProfileSelect();
             showToast('已切换扫描方案', 'success');
@@ -4142,7 +3528,7 @@
 
     // 🔍 自动扫描 → diff → 弹窗展示候选（可勾选）→ 用户确认后批量加入
     els.btnEntryScan.addEventListener('click', async () => {
-        if (!currentProjectId) { showError('请先进入项目'); return; }
+        if (!App.state.currentProjectId) { showError('请先进入项目'); return; }
         clearError();
         const profile = scanStrategy && scanStrategy.profiles
             ? scanStrategy.profiles.find(p => p.id === (scanStrategy.activeProfileId || 'builtin-standard'))
@@ -4151,7 +3537,7 @@
         showLoading('正在按「' + profileLabel + '」扫描交易入口，需解析项目字节码，请稍候…');
         try {
             const resp = await postJson(
-                '/api/projects/' + currentProjectId + '/entries/scan',
+                '/api/projects/' + App.state.currentProjectId + '/entries/scan',
                 { profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined) });
             hideLoading();
             const candidates = resp.candidates || [];
@@ -4353,7 +3739,7 @@
 
     // 🔎 扫描按钮：调用 scan-manual，渲染扫描结果列表
     els.addEntryVerify.addEventListener('click', async () => {
-        if (!currentProjectId) { showError('请先进入项目'); return; }
+        if (!App.state.currentProjectId) { showError('请先进入项目'); return; }
         const input = readAddEntryInput();
         if (!input.className) { setVerifyStatus('请先填类名', 'err'); return; }
 
@@ -4364,7 +3750,7 @@
         setVerifyStatus('扫描中...', '');
         currentScanCandidates = [];
         try {
-            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/scan-manual', {
+            const resp = await postJson('/api/projects/' + App.state.currentProjectId + '/entries/scan-manual', {
                 className: input.className,
                 methodName: input.methodName || '',
                 profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined)
@@ -4406,7 +3792,7 @@
 
     // 确定加入：收集勾选的方法 → 批量提交
     els.addEntryConfirm.addEventListener('click', async () => {
-        if (!currentProjectId) { showError('请先进入项目'); closeAddEntryModal(); return; }
+        if (!App.state.currentProjectId) { showError('请先进入项目'); closeAddEntryModal(); return; }
         const checkedItems = [];
         els.addEntryScanList.querySelectorAll('.scan-item-cb:checked').forEach(cb => {
             const key = cb.dataset.key;
@@ -4418,9 +3804,9 @@
             return;
         }
         try {
-            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/add-batch', checkedItems);
+            const resp = await postJson('/api/projects/' + App.state.currentProjectId + '/entries/add-batch', checkedItems);
             closeAddEntryModal();
-            await autoLoadEntryList(currentProjectId);
+            await autoLoadEntryList(App.state.currentProjectId);
             let msg = '✓ ' + resp.added + ' 个添加成功';
             if (resp.existed > 0) msg += '，' + resp.existed + ' 个已存在（自动跳过）';
             showError(msg, true);
@@ -4434,17 +3820,17 @@
     const entryActions = {
         /** 排除（confirmed → excluded）：单条入口也走统一弹窗，便于选原因 */
         exclude(key) {
-            if (!currentProjectId) return;
-            const items = ((currentEntryList && currentEntryList.confirmed) || [])
+            if (!App.state.currentProjectId) return;
+            const items = ((App.state.currentEntryList && App.state.currentEntryList.confirmed) || [])
                 .filter(it => entryKey(it) === key);
             if (items.length === 0) return;
             openExcludeModal(items);
         },
         /** 恢复（excluded → confirmed） */
         restore(key) {
-            if (!currentProjectId) return;
-            postJson('/api/projects/' + currentProjectId + '/entries/restore', { key: key })
-                .then(() => autoLoadEntryList(currentProjectId))
+            if (!App.state.currentProjectId) return;
+            postJson('/api/projects/' + App.state.currentProjectId + '/entries/restore', { key: key })
+                .then(() => autoLoadEntryList(App.state.currentProjectId))
                 .catch(e => showError('恢复失败: ' + e.message));
         },
     };
@@ -4481,7 +3867,7 @@
 
     /** 全选 / 全不选 */
     els.entryCheckAll.addEventListener('change', () => {
-        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         const checked = els.entryCheckAll.checked;
         confirmed.forEach(it => {
             if (checked) entrySelKeys.add(entryKey(it)); else entrySelKeys.delete(entryKey(it));
@@ -4495,7 +3881,7 @@
 
     /** 打开批量排除弹窗 */
     els.btnBatchExclude.addEventListener('click', () => {
-        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         const items = confirmed.filter(it => entrySelKeys.has(entryKey(it)));
         if (items.length === 0) return;
         openExcludeModal(items);
@@ -4562,7 +3948,7 @@
 
     // 确认排除（批量提交）
     els.excludeModalConfirm.addEventListener('click', async () => {
-        if (!currentProjectId || excludeModalItems.length === 0) return;
+        if (!App.state.currentProjectId || excludeModalItems.length === 0) return;
         const unified = els.excludeReasonUnified.checked;
         const perItemInputs = els.excludePerItemReasons.querySelectorAll('.ex-reason-item input');
         const payload = excludeModalItems.map((item, idx) => {
@@ -4571,10 +3957,10 @@
         });
         els.excludeModalConfirm.disabled = true;
         try {
-            const resp = await postJson('/api/projects/' + currentProjectId + '/entries/exclude/batch', payload);
+            const resp = await postJson('/api/projects/' + App.state.currentProjectId + '/entries/exclude/batch', payload);
             closeExcludeModal();
             entrySelKeys.clear();
-            await autoLoadEntryList(currentProjectId);
+            await autoLoadEntryList(App.state.currentProjectId);
             const n = resp && resp.excluded != null ? resp.excluded : payload.length;
             showError('✓ 已排除 ' + n + ' 个入口，可在「已排除的入口」中恢复', true);
         } catch (e) {
@@ -4604,8 +3990,8 @@
     document.querySelector('.depth-preset[data-depth="20"]')?.classList.add('active');
 
     els.btnBatchAnalyze.addEventListener('click', async () => {
-        if (!currentProjectId) return;
-        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        if (!App.state.currentProjectId) return;
+        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         if (confirmed.length === 0) {
             showError('清单为空，请先在 Step 2 确认入口');
             return;
@@ -4643,8 +4029,8 @@
             }
 
             // 后端已完成并落盘轻量索引，这里加载并渲染（批量清单视图）
-            currentRequest = req;
-            await autoLoadCacheForProject(currentProjectId);
+            App.state.currentRequest = req;
+            await autoLoadCacheForProject(App.state.currentProjectId);
         } catch (e) {
             els.batchProgressBar.style.width = '100%';
             els.batchProgressText.textContent = '✗ 分析失败';
@@ -4658,14 +4044,14 @@
     // 新手引导：app.js 只提供只读状态 + 导航动作，渲染全在 guide.js
     // ------------------------------------------------------------------
     function guideState() {
-        const confirmed = (currentEntryList && currentEntryList.confirmed) || [];
+        const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];
         return {
             view: App.state.currentView,
-            projectCount: guideProjectCount,
-            currentProjectId: currentProjectId,
+            projectCount: App.state.guideProjectCount,
+            currentProjectId: App.state.currentProjectId,
             entryCount: confirmed.length,
-            hasResult: guideHasResult,
-            resultStale: guideResultStale,
+            hasResult: App.state.guideHasResult,
+            resultStale: App.state.guideResultStale,
             noiseConfigured: guideNoiseConfigured(),
         };
     }
@@ -4685,18 +4071,18 @@
                 scrollTo(els.projectsList);
                 break;
             case 'fixEntries':
-                if (!currentProjectId) { switchView('projects'); break; }
+                if (!App.state.currentProjectId) { switchView('projects'); break; }
                 switchView('analyze');
                 scrollTo(els.btnEntryScan);
                 break;
             case 'analyze':
             case 'reanalyze':
-                if (!currentProjectId) { switchView('projects'); break; }
+                if (!App.state.currentProjectId) { switchView('projects'); break; }
                 switchView('analyze');
                 scrollTo(els.btnBatchAnalyze);
                 break;
             case 'noiseRules':
-                if (currentProjectId) openNoiseRulesPanel();
+                if (App.state.currentProjectId) openNoiseRulesPanel();
                 else switchView('noiseRules');
                 break;
         }
