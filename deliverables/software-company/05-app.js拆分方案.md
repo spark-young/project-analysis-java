@@ -215,7 +215,8 @@
 |---|---|---|
 | 2026-09-18 | C1 `api.js` 落地（postJson/fetchJson/putJson，薄委托方案） | `199ce86` |
 | 2026-09-18 | C2 `state.js` + `ui.js` 落地（详见下方 C2 落地记录） | `83fd601` |
-| 2026-09-20 | C3 `projects.js` 落地（详见下方 C3 落地记录，state.js 扩至 15 字段） | 见 git log（OPT-27 C3） |
+| 2026-09-20 | C3 `projects.js` 落地（详见下方 C3 落地记录，state.js 扩至 15 字段） | `6d836c6` |
+| 2026-09-21 | C4 `entries.js` 落地（详见下方 C4 落地记录，state.js 扩至 17 字段） | 见 git log（OPT-27 C4） |
 
 ### C2 落地记录（state.js + ui.js）
 
@@ -277,6 +278,35 @@
 6. Git 分支/Tag：下拉加载、切换确认弹窗、进度条、DONE toast、自动重新进入项目；stash/冲突提示文案正确。
 7. 「检查更新」→ 远端状态徽标（已最新/有更新/未知）与最近检查时间。
 8. 返回项目列表 → currentProjectId 置空 → 点导航「分析」被拦截并回列表（验证 currentProjectId 清零归属）。
+
+### C4 落地记录（state.js 扩展 + entries.js）
+
+**state.js 收编字段（C4 批次 2 个，归属见 state.js 头注释）：**
+
+| 字段 | 初始值 | 归属要点 |
+|---|---|---|
+| `currentExcelMode` | `'entry'` | 写=app.js C6（renderBatchSummary→'project'、renderSingleEntryResult→'entry'，视图切换整体覆盖）；读=entries.js btnExcel 分支；无独立清零场景 |
+| `entrySelKeys` | `new Set()` | 写=app.js C8 桥接绑定（change/全选/确认排除后 clear）+ entries.js updateEntryToolbar（清单空 clear）；读=entries.js renderEntryRow/updateEntryToolbar + app.js btnBatchExclude；**clear 权威=updateEntryToolbar（空清单）与 excludeModalConfirm 成功后**，Set 就地增删无重赋值 |
+
+**entryItems 归属判断（QA 点名项）**：grep 全文件确认 `entryItems` 的全部 11 处读写（原 :197-325）均落在本次搬出的 C4 代码块内（renderEntries 建模型、勾选/过滤/统计/全选按钮读取），本簇外（C5~C8）**零引用** → 与 C3 `gitSwitchTimer` 同判例，**留在 entries.js 模块私有**，不进 App.state。
+**excludeModalItems 归属修正**：方案 §二 原把它列在 C4，但 grep 显示其全部 5 处使用都在 C8 批量排除弹窗区、C4 代码零引用 → **留在 app.js，随 C8 外搬**（勘误 §二）。
+**currentExcelMode 归属修正**：方案原未列出，但 C4 的 btnExcel 读它、C6 的两处视图切换写它 → 跨簇，迁入 App.state。
+
+**entries.js 收编函数（逐行搬运）**：勾选分析段 = `renderEntries`/`collectCheckedEntries`/`buildEntryRequest`/`analyzeCheckedEntries`/`updateEntryCount`/`applyEntryFilter` + 4 个绑定（entryFilter/btnEntryAll/btnEntryNone/btnAnalyzeEntries）；Excel 段 = `btnExcel` 绑定 + `downloadProjectExcel`；Step2 清单段 = `entryKey`/`renderEntryList`/`renderEntryRow`/`updateEntryToolbar`。注：`renderEntries` 当前在 app.js 中已无调用方（历史遗留），按清单原样搬运、保持无调用状态。
+
+**晚绑定 hooks（Entries.init 注入）**：`renderResult`（C5）、`guideRefresh`（app.js 单一来源）、`readableFullSig`/`sigHtmlFromString`（C5 签名渲染）、`getFreqFilter`/`getBatchModel`（C6 状态活读 getter——btnExcel 与 downloadProjectExcel 在执行期读取，保持活读语义，非注入时快照）。已搬簇走命名空间：`Projects.currentProjectPath()`。
+
+**app.js 侧改动**：顶部 4 个薄委托（entryKey/renderEntryList/updateEntryToolbar/downloadProjectExcel）+ `Entries.init`（置于 Projects.init 之前，因 Projects.init 的 renderEntryList 接线引用该委托）；删除两段被搬代码；`currentExcelMode`（2 处）与 `entrySelKeys`（4 处）机械改名 App.state.*；C8 桥接绑定 3 个（entryConfirmedList change/entryCheckAll/btnBatchExclude）留在 app.js（引用 C8 的 openExcludeModal）。
+
+**C4 人工冒烟清单（⚠️ 需用户在浏览器实测）：**
+1. 进入项目 → Step2 清单渲染（已确认/已排除统计、行序号、组徽标、手动徽标、完整签名格式）。
+2. 过滤输入框实时过滤行显示；清空恢复。
+3. 行勾选 → 已选计数与批量排除按钮可用性；全选框三态（全选/半选/未选）正确。
+4. 勾选后点「分析」→ loading → 结果渲染（analyzeCheckedEntries → renderResult 链路）。
+5. 单入口结果视图点 Excel → 单入口报告下载（entry 模式）。
+6. 批量清单视图点 Excel → 项目级聚合报告下载（project 模式，验证 currentExcelMode 切换）。
+7. 勾选 → 批量排除弹窗 → 排除成功 → 清单刷新且勾选集清空（entrySelKeys clear 归属）。
+8. 已排除区「恢复」→ 回到已确认清单。
 
 ---
 
