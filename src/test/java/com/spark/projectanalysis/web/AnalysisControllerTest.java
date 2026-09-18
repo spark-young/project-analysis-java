@@ -206,4 +206,165 @@ class AnalysisControllerTest {
         mvc.perform(get("/api/analyze"))
                 .andExpect(status().isMethodNotAllowed());
     }
+
+    // ------------------------------------------------------------------
+    // GET /api/classes/verify（OPT-28 切片1：Map → EntryVerifyResult DTO 化，
+    // 以下断言为 JSON 形状契约锁：字段名/出现条件与 Map 版本逐字一致）
+    // ------------------------------------------------------------------
+
+    /** 类名为空：ok=false, reason=类名不能为空，其余字段不应出现（non_null 省略 = 原 Map 无该键） */
+    @Test
+    void test_verify_blankClassName() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", " "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("类名不能为空"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 类不存在：ok=false, reason 前缀固定，无附加字段 */
+    @Test
+    void test_verify_classNotFound() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.nosuch.Foo"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("项目中未找到类: com.nosuch.Foo"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 简单名重复（entries 夹具 2 个 Service）：ok=false + candidates（2 项全限定名，顺序不敏感） */
+    @Test
+    void test_verify_duplicateSimpleName_returnsCandidates() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", entriesClasses.toString())
+                        .param("class", "Service"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason")
+                        .value("找到 2 个同名类，请填全限定名"))
+                .andExpect(jsonPath("$.candidates.length()").value(2))
+                .andExpect(jsonPath("$.candidates", org.hamcrest.Matchers.hasItem(
+                        "com.alibaba.dubbo.config.annotation.Service")))
+                .andExpect(jsonPath("$.candidates", org.hamcrest.Matchers.hasItem(
+                        "org.apache.dubbo.config.annotation.Service")))
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 类存在、未传 method：ok=true + reason=类存在: xxx，无其他字段 */
+    @Test
+    void test_verify_classOnly() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason").value("类存在: com.demo.OrderService"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 方法不存在：ok=false + available 列出可选方法名（去重后集合，顺序不敏感） */
+    @Test
+    void test_verify_methodNotFound_returnsAvailable() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "noSuchMethod"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("类存在但方法 noSuchMethod 不存在"))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("place")))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("pay")))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("loop")))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 唯一重载：ok=true + descriptor 给出建议值，无 multipleOverloads */
+    @Test
+    void test_verify_uniqueOverload_returnsDescriptor() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "place"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 已匹配唯一重载，建议 descriptor: ()V"))
+                .andExpect(jsonPath("$.descriptor").value("()V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 多重载：ok=true + multipleOverloads 共 2 个 descriptor，无 descriptor 字段 */
+    @Test
+    void test_verify_multipleOverloads() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 方法存在但有 2 个重载，建议指定 descriptor 精确匹配"))
+                .andExpect(jsonPath("$.multipleOverloads.length()").value(2))
+                .andExpect(jsonPath("$.multipleOverloads", org.hamcrest.Matchers.hasItem(
+                        "(Ljava/lang/String;)V")))
+                .andExpect(jsonPath("$.multipleOverloads", org.hamcrest.Matchers.hasItem("(I)V")))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist());
+    }
+
+    /** class+method+descriptor 完整匹配：ok=true, reason 前缀 ✓ 完整匹配 */
+    @Test
+    void test_verify_exactDescriptorMatch() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay")
+                        .param("descriptor", "(I)V"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 完整匹配: com.demo.OrderService#pay(I)V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** descriptor 不匹配：ok=false, reason=类存在，但未找到方法 ...，无附加字段 */
+    @Test
+    void test_verify_descriptorMismatch() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay")
+                        .param("descriptor", "(Z)V"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason")
+                        .value("类存在，但未找到方法 pay(Z)V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
 }

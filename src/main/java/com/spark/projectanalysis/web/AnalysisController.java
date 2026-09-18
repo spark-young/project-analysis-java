@@ -11,6 +11,7 @@ import com.spark.projectanalysis.service.MavenCompileService;
 import com.spark.projectanalysis.service.dto.AnalyzeRequest;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
 import com.spark.projectanalysis.service.dto.BatchAnalyzeStatus;
+import com.spark.projectanalysis.service.dto.EntryVerifyResult;
 import com.spark.projectanalysis.service.dto.GitPrepareRequest;
 import com.spark.projectanalysis.service.dto.GitPrepareStatus;
 import com.spark.projectanalysis.service.dto.ProjectExcelRequest;
@@ -79,10 +80,10 @@ public class AnalysisController {
     }
 
     @GetMapping("/classes/verify")
-    public Map<String, Object> verify(@RequestParam("path") String path,
-                                      @RequestParam("class") String cls,
-                                      @RequestParam(value = "method", required = false) String method,
-                                      @RequestParam(value = "descriptor", required = false, defaultValue = "") String descriptor) {
+    public EntryVerifyResult verify(@RequestParam("path") String path,
+                                    @RequestParam("class") String cls,
+                                    @RequestParam(value = "method", required = false) String method,
+                                    @RequestParam(value = "descriptor", required = false, defaultValue = "") String descriptor) {
         return analysisService.verifyEntry(path, cls, method, descriptor);
     }
 

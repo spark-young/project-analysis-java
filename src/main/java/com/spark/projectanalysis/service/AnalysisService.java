@@ -14,6 +14,7 @@ import com.spark.projectanalysis.engine.model.SourceType;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
 import com.spark.projectanalysis.service.dto.AnalyzeRequest;
 import com.spark.projectanalysis.service.dto.EntryRef;
+import com.spark.projectanalysis.service.dto.EntryVerifyResult;
 import com.spark.projectanalysis.service.dto.MethodCaller;
 import com.spark.projectanalysis.service.dto.MethodFrequency;
 import com.spark.projectanalysis.service.dto.ProjectInfo;
@@ -190,10 +191,10 @@ public class AnalysisService {
     }
 
     /** 验证 className + methodName + descriptor 是否在项目中真实存在 */
-    public Map<String, Object> verifyEntry(String path, String className, String methodName, String descriptor) {
-        Map<String, Object> resp = new HashMap<>();
+    public EntryVerifyResult verifyEntry(String path, String className, String methodName, String descriptor) {
+        EntryVerifyResult resp = new EntryVerifyResult();
         if (className == null || className.trim().isEmpty()) {
-            resp.put("ok", false); resp.put("reason", "类名不能为空"); return resp;
+            resp.setOk(false); resp.setReason("类名不能为空"); return resp;
         }
         ClassMetadataRegistry registry = obtainRegistry(path).registry;
         String internalName = className.trim().replace('.', '/');
@@ -203,22 +204,22 @@ public class AnalysisService {
             String simple = internalName.substring(internalName.lastIndexOf('/') + 1);
             var candidates = registry.classesBySimpleName(simple);
             if (candidates == null || candidates.isEmpty()) {
-                resp.put("ok", false); resp.put("reason", "项目中未找到类: " + className); return resp;
+                resp.setOk(false); resp.setReason("项目中未找到类: " + className); return resp;
             }
             if (candidates.size() == 1) {
                 ci = registry.get(candidates.iterator().next());
             } else {
-                resp.put("ok", false);
-                resp.put("reason", "找到 " + candidates.size() + " 个同名类，请填全限定名");
+                resp.setOk(false);
+                resp.setReason("找到 " + candidates.size() + " 个同名类，请填全限定名");
                 List<String> fullNames = new ArrayList<>();
                 for (String cn : candidates) fullNames.add(cn.replace('/', '.'));
-                resp.put("candidates", fullNames);
+                resp.setCandidates(fullNames);
                 return resp;
             }
         }
         // class 存在
         if (methodName == null || methodName.trim().isEmpty()) {
-            resp.put("ok", true); resp.put("reason", "类存在: " + ci.getInternalName().replace('/', '.'));
+            resp.setOk(true); resp.setReason("类存在: " + ci.getInternalName().replace('/', '.'));
             return resp;
         }
         // method 验证
@@ -232,29 +233,29 @@ public class AnalysisService {
                 if (mk.getName().equals(mname)) { found = true; descs.add(mk.getDescriptor()); }
             }
             if (!found) {
-                resp.put("ok", false);
-                resp.put("reason", "类存在但方法 " + mname + " 不存在");
-                resp.put("available", ci.methodKeys().stream().map(mk -> mk.getName()).distinct().collect(Collectors.toList()));
+                resp.setOk(false);
+                resp.setReason("类存在但方法 " + mname + " 不存在");
+                resp.setAvailable(ci.methodKeys().stream().map(mk -> mk.getName()).distinct().collect(Collectors.toList()));
                 return resp;
             }
             if (descs.size() == 1) {
-                resp.put("ok", true);
-                resp.put("descriptor", descs.get(0));
-                resp.put("reason", "✓ 已匹配唯一重载，建议 descriptor: " + descs.get(0));
+                resp.setOk(true);
+                resp.setDescriptor(descs.get(0));
+                resp.setReason("✓ 已匹配唯一重载，建议 descriptor: " + descs.get(0));
             } else {
-                resp.put("ok", true);
-                resp.put("multipleOverloads", descs);
-                resp.put("reason", "✓ 方法存在但有 " + descs.size() + " 个重载，建议指定 descriptor 精确匹配");
+                resp.setOk(true);
+                resp.setMultipleOverloads(descs);
+                resp.setReason("✓ 方法存在但有 " + descs.size() + " 个重载，建议指定 descriptor 精确匹配");
             }
             return resp;
         }
         // descriptor 也指定了
         if (ci.hasOwnMethod(mname, desc)) {
-            resp.put("ok", true);
-            resp.put("reason", "✓ 完整匹配: " + className + "#" + mname + desc);
+            resp.setOk(true);
+            resp.setReason("✓ 完整匹配: " + className + "#" + mname + desc);
         } else {
-            resp.put("ok", false);
-            resp.put("reason", "类存在，但未找到方法 " + mname + desc);
+            resp.setOk(false);
+            resp.setReason("类存在，但未找到方法 " + mname + desc);
         }
         return resp;
     }
