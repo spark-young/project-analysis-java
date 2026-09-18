@@ -214,7 +214,8 @@
 | 日期 | 事项 | Commit |
 |---|---|---|
 | 2026-09-18 | C1 `api.js` 落地（postJson/fetchJson/putJson，薄委托方案） | `199ce86` |
-| 2026-09-18 | C2 `state.js` + `ui.js` 落地（详见下方 C2 落地记录） | 见 git log（OPT-27 C2） |
+| 2026-09-18 | C2 `state.js` + `ui.js` 落地（详见下方 C2 落地记录） | `83fd601` |
+| 2026-09-20 | C3 `projects.js` 落地（详见下方 C3 落地记录，state.js 扩至 15 字段） | 见 git log（OPT-27 C3） |
 
 ### C2 落地记录（state.js + ui.js）
 
@@ -244,6 +245,38 @@
 6. 进入项目触发 loading 遮罩：单行文案模式；批量分析触发分步模式（步骤点亮、进度条推进、>3s 出现"已用时 N 秒"、>20s 出现耐心等待文案）；完成后遮罩隐藏。
 7. 结果树内徽标（badge）渲染正常、无 HTML 转义破版（含引号/尖括号的方法名）。
 8. 独立过滤规则页面进入/返回，模式在弹窗（panel）与页面（page）间切换后再次进项目弹窗模式正确（验证 noiseRuleMode 重置归属）。
+
+### C3 落地记录（state.js 扩展 + projects.js）
+
+**state.js 收编字段（C3 批次 13 个，写入方/读取方/清零归属见 state.js 头注释）：**
+
+| 字段 | 初始值 | 归属要点 |
+|---|---|---|
+| `currentProjectId` | `null` | 写=projects.js（enterProject/deleteProject/btnBackToProjects/navToAnalyze）；读=各未搬簇约 40 处；置 null 权威=deleteProject 删当前项目 / btnBackToProjects |
+| `sourceMode` | `'local'` | 写=projects.js（enterProject/setSourceMode）+ app.js 恢复块；读=projects.js currentProjectPath；setSourceMode 为唯一模式切换权威 |
+| `gitProjectPath` | `null` | 写=projects.js（enterProject/pollGitStatus/btnGitPrepare 置 null）+ app.js 恢复块；重置权威=btnGitPrepare 提交新任务前显式置 null |
+| `gitPollTimer` | `null` | **句柄类**：创建=projects.js btnGitPrepare / app.js 恢复块（互斥）；**唯一清理点=stopGitPoll**（判空后 clear+置 null，可安全重复调用；btnGitPrepare 重入前先调 stopGitPoll，无泄漏） |
+| `currentResult`/`currentRequest`/`currentBatchSummary`/`currentCacheFileName` | `null` | 写=projects.js enterProject（切换项目整体重置 null）+ app.js C5/C6；清零权威=enterProject |
+| `currentEntryList`/`currentCandidates` | `null`/`[]` | 写=projects.js autoLoadEntryList（含失败兜底置 `{confirmed:[],excluded:[]}`）+ app.js C4 |
+| `guideProjectCount`/`guideHasResult`/`guideResultStale` | `null`/`false`/`false` | 写=projects.js（renderProjectList/refreshProjectList 失败兜底/updateStep3Hint）；读=app.js guideState 只读渲染 |
+
+**有意不迁入 App.state（最小化共享面）**：`projectIndex`（仅 projects.js 内部）、`gitSwitchTimer`（句柄仅 Git 切换轮询内部：创建=startGitSwitch、唯一清理点=stopGitSwitchPoll，判空可重复 clear）、`gitRefsCache`（仅 loadGitRefs 写，无读取方）。
+
+**projects.js 收编函数（逐行搬运，async/await 语法原样保留）**：projects 段 = `refreshProjectList`/`renderProjectList`/`projectCardHtml`/`enterProject`/`autoLoadEntryList`/`autoLoadCacheForProject`/`updateStep3Hint`/`deleteProject`；Git 段 = `setSourceMode`/`currentProjectPath`/`GIT_STATUS_LABEL`/`renderJobLog`/`renderGitStatus`/`stopGitPoll`/`pollGitStatus`/`formatCheckTime`/`GIT_REMOTE_STATUS_LABEL`/`showGitInfoBar`/`hideGitInfoBar`/`renderGitRemoteBadge`/`loadGitRefs`/`checkGitRemoteStatus`/`renderGitSwitchProgress`/`setGitSwitchBusy`/`stopGitSwitchPoll`/`onGitSwitchDone`/`pollGitSwitchStatus`/`startGitSwitch`；事件绑定 10 个随 `init()` 收编（注册顺序 = 原行号顺序 349/363/364/372/373/418/419/559/794/799）。
+
+**晚绑定 hooks（Projects.init 注入）**：`guideRefresh`（app.js 单一来源）+ `loadNoiseRules`/`loadScanStrategy`/`renderEntryList`/`renderResult`（未搬的 C4/C5/C7/C8 函数，函数声明提升保证注入点可用）。
+
+**app.js 侧改动**：顶部 8 个薄委托（refreshProjectList/enterProject/autoLoadEntryList/autoLoadCacheForProject/setSourceMode/currentProjectPath/renderGitStatus/pollGitStatus）+ `Projects.init(...)`；删除两段被搬代码；12 个状态名机械改名 `App.state.*`（约 55 处，含恢复块 :2723-2734）；navToNoiseRules/btnNrPageBack/btnInfo 绑定**留在 app.js**（属 C6 噪声簇/项目检查行为，避免为 C3 提前搬 C6 的 noiseRuleScope）。
+
+**C3 人工冒烟清单（⚠️ 需用户在浏览器实测）：**
+1. 项目列表加载/刷新，卡片状态徽标（已就绪/需编译/待分析/已丢失）正确。
+2. 点「进入分析」→ loading 分步推进 → 进入分析视图；本地项目路径回填输入框。
+3. 项目卡片「移除」→ 原生 confirm → 当前项目被删时自动回项目列表视图。
+4. 本地路径导入：填路径 → 识别 → loading → 自动进入。
+5. Git 拉取：填仓库地址提交 → 进度条/编译日志实时滚动跟随 → DONE 后提示从列表进入；页面刷新后在途任务恢复继续轮询（gitPollTimer 重建）。
+6. Git 分支/Tag：下拉加载、切换确认弹窗、进度条、DONE toast、自动重新进入项目；stash/冲突提示文案正确。
+7. 「检查更新」→ 远端状态徽标（已最新/有更新/未知）与最近检查时间。
+8. 返回项目列表 → currentProjectId 置空 → 点导航「分析」被拦截并回列表（验证 currentProjectId 清零归属）。
 
 ---
 
