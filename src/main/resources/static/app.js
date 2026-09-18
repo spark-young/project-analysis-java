@@ -4,6 +4,12 @@
 
     const $ = (sel) => document.querySelector(sel);
 
+    // 请求层已抽出 js/api.js（OPT-27 拆分）：此处保留同名薄委托，
+    // 调用点零改动、行为零变化（Api 由 index.html 在本文件之前加载）。
+    const postJson = Api.postJson;
+    const fetchJson = Api.fetchJson;
+    const putJson = Api.putJson;
+
     const els = {
         // ---- 视图切换 + 项目列表 ----
         navToProjects: $('#navToProjects'),
@@ -792,40 +798,7 @@
         els.loadingOverlay.hidden = true;
     }
 
-    async function postJson(url, body) {
-        const resp = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-            throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
-        }
-        return data;
-    }
-
-    async function fetchJson(url) {
-        const resp = await fetch(url);
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-            throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
-        }
-        return data;
-    }
-
-    async function putJson(url, body) {
-        const resp = await fetch(url, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-        });
-        const data = await resp.json().catch(() => ({}));
-        if (!resp.ok) {
-            throw new Error(data.error || ('请求失败: HTTP ' + resp.status));
-        }
-        return data;
-    }
+    // postJson / fetchJson / putJson 已抽出 js/api.js（OPT-27），见本文件顶部薄委托。
 
     // buildRequest / validateForm / className 补全 已移除（路径 A/B 按钮已删）
 
