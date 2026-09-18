@@ -217,6 +217,7 @@
 | 2026-09-18 | C2 `state.js` + `ui.js` 落地（详见下方 C2 落地记录） | `83fd601` |
 | 2026-09-20 | C3 `projects.js` 落地（详见下方 C3 落地记录，state.js 扩至 15 字段） | `6d836c6` |
 | 2026-09-21 | C4 `entries.js` 落地（详见下方 C4 落地记录，state.js 扩至 17 字段） | 见 git log（OPT-27 C4） |
+| 2026-09-22 | C6 `batch.js` 落地（详见下方 C6 落地记录，state.js 扩至 20 字段） | 见 git log（OPT-27 C6） |
 
 ### C2 落地记录（state.js + ui.js）
 
@@ -307,6 +308,37 @@
 6. 批量清单视图点 Excel → 项目级聚合报告下载（project 模式，验证 currentExcelMode 切换）。
 7. 勾选 → 批量排除弹窗 → 排除成功 → 清单刷新且勾选集清空（entrySelKeys clear 归属）。
 8. 已排除区「恢复」→ 回到已确认清单。
+
+### C6 落地记录（state.js 扩展 + batch.js，双向依赖第一战）
+
+**state.js 收编字段（C6 批次 3 个，归属见 state.js 头注释）：**
+
+| 字段 | 初始值 | 归属要点 |
+|---|---|---|
+| `batchModel` | `null` | 写=batch.js resetBatchModel（换批次整体重建，**唯一重赋值权威**，原 :98/:419）/loadAllBatchEntries（槽位与 done/total/failed）/finalizeBatchLoad（loaded/projectFreq）；读=batch.js 内部 + app.js C5 computeBatchFilteredStats + entries.js getBatchModel hook；无置 null 场景（renderBatchSummary 以 `batch !== batchModel.batch` 判重建） |
+| `batchRowStates` | `[]` | 写=batch.js renderBatchSummary（length=0 就地清空 + 逐行填充，**含 rowEl/body DOM 引用**）；读=batch.js 行内展开/搜索标记 + app.js C5 reapplyFilterToTree/updateFilteredStats；清零权威=renderBatchSummary 重绘（与旧 DOM 同生命周期） |
+| `freqFilter` | `'ALL'` | 写=batch.js（showProjectPanels/renderFreqAnalysis 重置 `'ALL'`、freqFilterBar chip 赋值）；读=batch.js renderFreqList/updateFreqFilterChips + entries.js getFreqFilter hook；**重置 `'ALL'` 权威=showProjectPanels 与 renderFreqAnalysis**（原 :96/:511/:1245） |
+
+**freqFilter/batchModel 活读等价方案（team-lead 点名的双向依赖核心）**：采用**方案 (a) 迁入 App.state**——entries.js 自身调用代码**一字未改**（仍执行期调用 `hooks.getFreqFilter()/getBatchModel()`），仅 app.js 中两个 getter hook 的实现改为 `() => App.state.freqFilter` / `() => App.state.batchModel`；batch.js 内部所有读点同样活读 `App.state.*`。理由：与 C3/C4 已确立的 App.state 通道一致；不要求 entries.js 感知 batch.js 的存在；避免为 C6 提前搬 C5/C7 状态面。无任何"注入时快照"路径。
+
+**batch.js 收编函数（逐行搬运，原 IIFE 行号 245-913 与 1242-1632 中的 C6 段）**：批量清单 = `renderBatchSummary`/`toggleEntryBody`/`buildEntryBody`/`closeEntryBody`/`updateCaret`/`loadBatchEntry`/`resetBatchModel`/`fetchEntryFile`/`loadAllBatchEntries`/`finalizeBatchLoad`/`showProjectPanels`/`setBatchLoadState`/`batchMethodKey`；签名工具组 = `readableFullSig`/`sigPartsFromString`/`sigHtmlFromString`/`appendSigFromString`；项目级频率 = `buildProjectFreq`/`currentFreqData`（grep 证实当前无调用方，原样搬运保持）/`refreshFreqView`/`renderProjectFreq`；项目级搜索 = `clearProjectSearch`/`runProjectSearch`/`matchRawMethod`/`computeSearchMarks`/`markOf`/`applyNodeMark`/`applyNodeMarks`/`markEntryRows`/`clearProjectMarks`/`projSearchSummary`/`expandGuided`/`revealHitPath`/`nextProjectHit`/`prevProjectHit`/`buildEntryBodySync`；频次分析 = `renderFreqAnalysis`/`updateFreqFilterChips`/`FREQ_TOP_N`/`resolveFreqSignature`/`normalizeFreqItem`/`_freqRows`/`FREQ_PAGE_SIZE`/`_freqPage`/`renderFreqPage`/`renderFreqList`/`fillFreqCallers`/`setAllFreqCallers`/`splitMethodSignature`/`freqTargetResults`/`graphMethodSig`/`collectMethodCallers`/`exportFreqMethodCallers`。绑定 9 处收进 init()（btnProjectSearch/projectSearchInput/projectSearchNextHit/projectSearchPrevHit/btnProjectSearchClear/freqList 委托/btnFreqExpandAll/btnFreqCollapseAll/freqFilterBar chips，顺序=原行号 909-913→1573-1609→1625-1632）。
+
+**纠缠判定（本簇四段不连续，只搬 C6 段）**：`filterFreqMethod`（7+ 个 C7 依赖：noiseRulesSaveTarget/两层规则缓存/loadNoiseRules/refreshAllFilteredViews/markNoiseConfigured/sameNoiseRule/escapeRegex）**留在 app.js，经 hooks.filterFreqMethod 注入**；`SOURCE_LABEL`（C5 nodeEl 共用）**留在 app.js，经 hooks.getSourceLabel 活读**；`escapeRegex`/`sameNoiseRule`/`noiseRulesSaveTarget`/`isNoiseMethod` 仅被留驻代码调用，留在 app.js。
+
+**晚绑定 hooks（Batch.init 注入）**：C5 结果簇 9 个（renderStats/computeBatchFilteredStats/renderWarnings/hideBatchEntryHeader/renderSingleEntryResult/rootsOf/nodeEl/updateBatchRowStats/graphIndex）+ C5 噪声判定 isNoiseGraphMethod + C7 isNoiseMethod + C7 filterFreqMethod + 3 个共享对象 getter（getNodeRegistry——C5 的 const Map，C6 清空/读、C5 写，身份恒定；getSourceLabel；clearExpandFns——C5 的 expandFns 数组，C6 仅就地 `length=0` 截断、C5 拥有重赋值权）。
+
+**app.js 侧改动**：顶部 10 个薄委托（renderBatchSummary/readableFullSig/sigHtmlFromString/appendSigFromString/clearProjectSearch/expandGuided/applyNodeMark/refreshFreqView/renderFreqAnalysis/splitMethodSignature；applyNodeMark 由残留检查抓出——C5 nodeEl 渲染每行时调用，方案原清单正确）+ `Batch.init`；删除两段被搬代码（含两处声明区 6 个 let/const）；C5 残留读点 5 处机械改名 App.state.*（reapplyFilterToTree 2 处、computeBatchFilteredStats 2 处、updateFilteredStats 1 处）+ 顶部 2 个 getter hook 改读 App.state。注：splitMethodSignature/refreshFreqView/renderFreqAnalysis/clearProjectSearch 的留驻调用方（filterFreqMethod/refreshAllFilteredViews/renderSingleEntryResult/reapplyFilterToTree 的 typeof 守卫）经薄委托零改动。
+
+**C6 人工冒烟清单（⚠️ 需用户在浏览器实测）：**
+1. 批量分析完成 → 清单视图渲染（行统计 chips、失败行标记、标题成功/失败计数）。
+2. 行内展开/收起：首次展开拉缓存渲染行内调用链（80%→100% 进度条），再点收起；展开状态行高亮与箭头方向。
+3. 全量加载完成 → 项目搜索框出现；搜索方法 → 命中/含命中标记（入口行「含命中 N 处」徽标 + 树节点两级标记）。
+4. 「下一个命中/上一个命中」循环定位（引导展开无分叉路径、命中行闪烁居中）；清除搜索 → 标记全消。
+5. 频次区：项目级聚合列表（跨入口去重口径）、Top-N 截断提示、分页器上一页/下一页。
+6. 频次行展开调用方明细；「导出」下载 CSV（含行号）；来源筛选 chips 切换（ALL/PROJECT/DEPENDENCY/EXTERNAL，计数与 active 态正确，验证 freqFilter 活读链路）。
+7. 批量清单视图点 Excel → 项目级报告（验证 entries.js getFreqFilter/getBatchModel 活读到 App.state 新值）。
+8. 规则变更（弹窗加规则/刷新过滤）→ 频次列表与已展开行内树、统计条同步重算（refreshFreqView 薄委托链路）。
+9. 单入口结果 → 返回清单 → 再次展开不重复拉取（batchModel.batch 身份复用分支）。
 
 ---
 
