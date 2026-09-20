@@ -59,6 +59,34 @@
     const renderFreqAnalysis = Batch.renderFreqAnalysis;
     const splitMethodSignature = Batch.splitMethodSignature;
 
+    // 结果树渲染与搜索（renderResult/renderWarnings/nodeEl/rootsOf/统计/搜索/全部展开收起）
+    // 已抽出 js/result.js（OPT-27 C5）：同样保留同名薄委托，调用点零改动；ResultView.init
+    // 注入未搬簇函数（guideRefresh 引导刷新 / C7 噪声判定与规则哈希）。
+    const renderResult = ResultView.renderResult;
+    const renderWarnings = ResultView.renderWarnings;
+    const nodeEl = ResultView.nodeEl;
+    const graphIndex = ResultView.graphIndex;
+    const rootsOf = ResultView.rootsOf;
+    const renderStats = ResultView.renderStats;
+    const computeFilteredStats = ResultView.computeFilteredStats;
+    const renderSingleEntryResult = ResultView.renderSingleEntryResult;
+    const hideBatchEntryHeader = ResultView.hideBatchEntryHeader;
+    const updateBatchRowStats = ResultView.updateBatchRowStats;
+    const computeBatchFilteredStats = ResultView.computeBatchFilteredStats;
+    const backToBatchList = ResultView.backToBatchList;
+    const clearSearchHits = ResultView.clearSearchHits;
+    const resetGlobalSearch = ResultView.resetGlobalSearch;
+    const reapplyFilterToTree = ResultView.reapplyFilterToTree;
+    const runGlobalSearch = ResultView.runGlobalSearch;
+    const expandAll = ResultView.expandAll;
+    const collapseAll = ResultView.collapseAll;
+
+    ResultView.init({
+        guideRefresh: guideRefresh,
+        isNoiseGraphMethod: isNoiseGraphMethod,
+        noiseRulesHash: noiseRulesHash,
+    });
+
     Entries.init({
         renderResult: renderResult,
         guideRefresh: guideRefresh,
@@ -91,9 +119,9 @@
         isNoiseGraphMethod: isNoiseGraphMethod,
         isNoiseMethod: isNoiseMethod,
         filterFreqMethod: filterFreqMethod,
-        getNodeRegistry: () => nodeRegistry,     // C5 const Map，C6 清空/读、C5 写（身份恒定）
-        getSourceLabel: () => SOURCE_LABEL,      // C5 常量表（C5 nodeEl 共用，单一来源）
-        clearExpandFns: () => { expandFns.length = 0; },   // C5 数组，C6 仅就地截断
+        getNodeRegistry: ResultView.getNodeRegistry,     // C5 const Map，C6 清空/读、C5 写（身份恒定）
+        getSourceLabel: ResultView.getSourceLabel,        // C5 常量表（C5 nodeEl 共用，单一来源）
+        clearExpandFns: ResultView.clearExpandFns,        // C5 数组，C6 仅就地截断
     });
 
     // els（150+ 元素 DOM 缓存）已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
@@ -122,11 +150,9 @@
     }
     // entrySelKeys 已迁入 App.state（OPT-27 C4：C4 渲染读 + C8 桥接绑定写，清零归属见 state.js）
     let excludeModalItems = [];    // 批量排除弹窗当前承载的条目（C8 弹窗状态，本簇外零引用，随 C8 外搬）
-    let expandFns = [];      // 全部展开/收起用
     let searchTimer = null;
-    const nodeRegistry = new Map();  // 数据节点 → { rowEl, setExpanded }
-    let hitRows = [];                // 当前搜索高亮的行
-    let activeSearch = null;         // 当前打开的行内搜索栏 { bar, node }
+    // expandFns / nodeRegistry / hitRows / activeSearch 已随结果树簇抽出 js/result.js（OPT-27 C5），
+    // 见顶部薄委托；nodeRegistry 与 expandFns 经 ResultView.getNodeRegistry/clearExpandFns 供 C6 活读。
     // freqFilter / batchModel / batchRowStates 已迁入 App.state（OPT-27 C6：batch.js
     // 读写、C5 统计簇与 entries.js hook 活读，清零/重建归属见 js/state.js 头注释）；
     // freqViewMode / projSearchMarks / projSearchOrder / projSearchCursor 为 batch.js
@@ -243,35 +269,14 @@
     // currentExcelMode 迁入 App.state（写入方=C6 视图切换，归属见 js/state.js 头注释）。
     // ------------------------------------------------------------------
     // ------------------------------------------------------------------
-    // 结果渲染
+    // 结果渲染（renderResult/renderSingleEntryResult/backToBatchList/hideBatchEntryHeader/
+    // renderStats/computeFilteredStats/updateBatchRowStats/computeBatchFilteredStats/
+    // renderWarnings/nodeEl/matchNode/collectMatches/clearSearchHits/toggleSearchBar/
+    // focusMatches/resetGlobalSearch/runGlobalSearch/graphIndex/rootsOf/
+    // invalidateAdapterCache/reapplyFilterToTree 与 SOURCE_LABEL/INVOKE_LABEL 常量、
+    // expandFns/nodeRegistry/hitRows/activeSearch/_adapterCache/_graphIndexCache 状态）
+    // 已抽出 js/result.js（OPT-27 C5），见顶部薄委托。
     // ------------------------------------------------------------------
-
-    const SOURCE_LABEL = { PROJECT: '项目', DEPENDENCY: '依赖', EXTERNAL: '外部' };
-    const INVOKE_LABEL = {
-        VIRTUAL: '虚调用', STATIC: '静态', INTERFACE: '接口',
-        SPECIAL: '构造/super', DYNAMIC: 'lambda', IMPL: '接口实现分派',
-    };
-
-    function renderResult(result) {
-        App.state.guideHasResult = true;
-        App.state.guideResultStale = false;
-        guideRefresh();
-        // 批量分析结果 = 轻量清单索引（kind === 'batch'）→ 渲染入口清单视图
-        if (result && result.kind === 'batch') {
-            renderBatchSummary(result);
-            if (window.Guide) {
-                Guide.tipOnce('result-area', els.statsBar,
-                    '过滤规则改完会自动作用到这里；也可点右上角「⟳ 刷新过滤」手动重刷统计与调用链。');
-            }
-            return;
-        }
-        // 单个入口的完整结果
-        renderSingleEntryResult(result, null);
-        if (window.Guide) {
-            Guide.tipOnce('result-area', els.statsBar,
-                '过滤规则改完会自动作用到这里；也可点右上角「⟳ 刷新过滤」手动重刷统计与调用链。');
-        }
-    }
 
 
     // ------------------------------------------------------------------
@@ -284,11 +289,9 @@
     // 图结构适配层：把 schema=2 的 result.graph 惰性还原为树视图节点。
     // 不整体物化冗余树：每个节点的 children 是 getter，首次访问才构建子节点；
     // 环方法作为叶子返回（子树已在上层路径，避免全局搜索无限递归）。
+    // 惰性根缓存 _adapterCache 已随 C5 抽出（rootsOf 内部，result.js）。
     // ------------------------------------------------------------------
 
-    // 结果对象 → 其惰性根节点缓存的映射（保证渲染与全局搜索共用同一对象身份，命中 nodeRegistry）
-    // 额外按 noise 规则哈希失效：规则变更时自动重建
-    let _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
     // noise 判定记忆：同一对象只判定一次（规则变更时由 compileActiveNoiseRules 整体丢弃）
     let noiseMemo = new WeakMap();       // graph.methods 原始方法对象 → 是否噪声
     let freqNoiseMemo = new WeakMap();   // methodFrequency 条目对象 → 是否噪声
@@ -307,272 +310,6 @@
             (gm.owner || '').replace(/\//g, '.'), gm.name || '', Sig.paramCountFromDescriptor(gm.descriptor));
         noiseMemo.set(gm, v);
         return v;
-    }
-
-    /** 清 adapter cache（规则变更/项目切换时调用） */
-    function invalidateAdapterCache() {
-        _adapterCache = { node: null, idx: null, noiseHash: '', roots: [] };
-    }
-
-    // 图索引缓存：同一 result 的邻接表/父表只建一次（原实现每次重算都重建）
-    let _graphIndexCache = new WeakMap();
-
-    /** 取（并缓存）某 result 的图索引：{adj: 出边表, parents: 父节点表} */
-    function graphIndex(result) {
-        let cached = _graphIndexCache.get(result);
-        if (cached) return cached;
-        const g = (result && result.graph) || {};
-        const adj = {};
-        const parents = new Map();
-        (g.edges || []).forEach((e) => {
-            (adj[e.from] = adj[e.from] || []).push(e);
-            const arr = parents.get(e.to) || [];
-            arr.push(e.from);
-            parents.set(e.to, arr);
-        });
-        cached = { adj: adj, parents: parents };
-        _graphIndexCache.set(result, cached);
-        return cached;
-    }
-
-    /** 规则变更后自动重绘所有已展开的调用链（剪枝即时生效） */
-    function reapplyFilterToTree() {
-        // 先清搜索标记（依赖旧 registry 上的行元素，须在清空 registry 之前调用）
-        if (typeof clearProjectSearch === 'function') clearProjectSearch();
-        invalidateAdapterCache();
-
-        // 批量清单视图：els.tree 里是 .bt-row 行，不能整树重绘
-        const inBatchList = !!(els.tree && els.tree.querySelector('.bt-row'));
-
-        // 重建已展开的批量行内调用链；同时清掉旧节点注册，避免残留
-        nodeRegistry.clear();
-        expandFns.length = 0;
-        if (Array.isArray(App.state.batchRowStates)) {
-            App.state.batchRowStates.forEach((st) => {
-                if (!st || !st.result || !st.rendered || !st.body) return;
-                st.body.innerHTML = '';
-                st.roots = rootsOf(st.result, st.idx);
-                st.roots.forEach((root) => st.body.appendChild(nodeEl(root, 0)));
-            });
-        }
-
-        // 单入口视图（非批量清单）：整树重绘
-        if (!inBatchList && els.tree && els.tree.children.length > 0 && App.state.currentResult) {
-            clearSearchHits();
-            els.tree.innerHTML = '';
-            rootsOf(App.state.currentResult).forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
-        }
-    }
-
-    function rootsOf(result, entryIdx) {
-        const curNoiseHash = noiseRulesHash();
-        if (_adapterCache.node === result
-            && _adapterCache.idx === entryIdx
-            && _adapterCache.noiseHash === curNoiseHash) return _adapterCache.roots;
-        // 兼容退路：无 graph 的旧结果（正常不再发生）
-        if (!result || !result.graph) {
-            const legacy = (result && result.roots) || [];
-            return legacy;
-        }
-        const g = result.graph;
-        const adj = graphIndex(result).adj;
-        function methodView(m) {
-            const owner = m.owner || '';
-            const cn = owner.replace(/\//g, '.');
-            const lastSlash = owner.lastIndexOf('/');
-            return {
-                name: m.name,
-                display: readableFullSig(cn, m.name, m.descriptor) || m.display,
-                className: cn,
-                simpleClassName: lastSlash >= 0 ? owner.substring(lastSlash + 1) : owner,
-            };
-        }
-        function makeNode(id, parentEdge, depth) {
-            const m = g.methods[id];
-            if (!m) return null;
-            // —— 剪枝：命中 noise 规则的方法及其整棵子树从视图里消失 ——
-            if (isNoiseGraphMethod(m)) return null;
-            const view = methodView(m);
-            let kidsCache = null;
-            const node = {
-                gid: id,             // 图内方法 id：批量搜索/高亮定位用
-                entryIdx: entryIdx,  // 所属入口序号：项目级搜索标记/引导用
-                source: m.source,
-                invokeType: parentEdge ? parentEdge.invoke : null,
-                line: parentEdge ? (parentEdge.line || 0) : 0,
-                cycle: !!m.cycle,
-                truncated: false,
-                method: view,
-                get children() {
-                    if (kidsCache) return kidsCache;
-                    if (m.cycle) { kidsCache = []; return kidsCache; }
-                    kidsCache = (adj[id] || [])
-                        .map((e) => makeNode(e.to, e, depth + 1))
-                        .filter(Boolean);   // 被 noise 过滤的子节点 makeNode 返回 null，此处剔除
-                    return kidsCache;
-                }
-            };
-            return node;
-        }
-        const roots = (g.roots || [])
-            .map((id) => makeNode(id, null, 0))
-            .filter(Boolean);   // 根方法自己就命中 noise 的情况
-        _adapterCache = { node: result, idx: entryIdx, noiseHash: curNoiseHash, roots: roots };
-        return _adapterCache.roots;
-    }
-
-    /** 单个入口的完整结果渲染（批量展开时 fileName 非空，显示「返回清单」） */
-    function renderSingleEntryResult(result, fileName) {
-        const entryCount = result.stats && result.stats.entryCount
-            ? result.stats.entryCount
-            : (result.roots ? result.roots.length : 0);
-        els.resultTitle.innerHTML =
-            '<span class="result-title-text">交易链路分析结果</span>'
-            + '<span class="entry-count-inline">（共 ' + entryCount + ' 个入口）</span>'
-            + (fileName
-                ? '<span class="entry-count-inline"> · ' + escapeHtml(result.className || '')
-                    + (result.methodName ? '#' + escapeHtml(result.methodName) : '') + '</span>'
-                : '');
-        renderStats(computeFilteredStats(result));
-        renderWarnings(result);
-        renderFreqAnalysis(result);
-        expandFns = [];
-        nodeRegistry.clear();
-        clearSearchHits();
-        closeSearchBar();
-        resetGlobalSearch();
-        els.tree.innerHTML = '';
-        rootsOf(result).forEach((root) => els.tree.appendChild(nodeEl(root, 0)));
-        els.resultSection.hidden = false;
-        els.freqSection.hidden = false;
-        els.btnExcel.disabled = false;
-        App.state.currentExcelMode = 'entry';
-        els.btnExcel.title = '导出当前入口的 Excel 报告';
-        els.btnExpandAll.style.display = '';
-        els.btnCollapseAll.style.display = '';
-        els.legend.style.display = '';
-        els.globalSearch.style.display = '';
-        // 批量模式下显示「返回清单」
-        if (fileName && App.state.currentBatchSummary) {
-            els.btnBackToList.hidden = false;
-        } else {
-            els.btnBackToList.hidden = true;
-        }
-    }
-
-    /** 回到批量清单视图 */
-    function backToBatchList() {
-        if (!App.state.currentBatchSummary) return;
-        App.state.currentResult = App.state.currentBatchSummary;
-        App.state.currentCacheFileName = null;
-        renderBatchSummary(App.state.currentBatchSummary);
-    }
-
-    function hideBatchEntryHeader() {
-        els.btnBackToList.hidden = true;
-    }
-
-    function renderStats(stats) {
-        const chips = [
-            ['总节点', stats.totalNodes],
-            ['项目方法', stats.projectMethods],
-            ['依赖方法', stats.dependencyMethods],
-            ['外部方法', stats.externalMethods],
-            ['入口方法', stats.entryCount],
-            ['耗时', stats.durationMs + ' ms'],
-        ];
-        els.statsBar.innerHTML = chips.map(([k, v]) =>
-            '<span class="stat-chip">' + k + '<b>' + v + '</b></span>').join('')
-            + (stats.truncated
-                ? '<span class="stat-chip" style="color:#b91c1c;border-color:#fecaca">结果已截断（深度/节点上限）</span>'
-                : '');
-    }
-
-    /** 按当前生效过滤规则重算统计（口径同后端 fillStats：图内去重方法数；noise 方法及其子树不计入） */
-    function computeFilteredStats(result) {
-        const base = (result && result.stats) || {};
-        const out = {
-            entryCount: base.entryCount || 0,
-            totalNodes: 0,
-            projectMethods: 0,
-            dependencyMethods: 0,
-            externalMethods: 0,
-            truncated: !!base.truncated,
-            durationMs: base.durationMs || 0,
-        };
-        if (!result) return out;
-        if (!result.graph || !result.graph.methods) {
-            // 兼容退路：旧结果无图结构，按展示树迭代统计
-            const stack = (result.roots || []).slice();
-            while (stack.length) {
-                const n = stack.pop();
-                out.totalNodes++;
-                const s = n.source || 'EXTERNAL';
-                if (s === 'PROJECT') out.projectMethods++;
-                else if (s === 'DEPENDENCY') out.dependencyMethods++;
-                else out.externalMethods++;
-                (n.children || []).forEach((c) => stack.push(c));
-            }
-            return out;
-        }
-        const g = result.graph;
-        const adj = graphIndex(result).adj;
-        const seen = new Set();
-        const stack = (g.roots || []).slice();
-        while (stack.length) {
-            const id = stack.pop();
-            if (seen.has(id)) continue;
-            seen.add(id);
-            const m = g.methods[id];
-            // 剪枝口径与 rootsOf/makeNode 一致：noise 方法及其整棵子树不可见，不计数
-            if (!m || isNoiseGraphMethod(m)) continue;
-            out.totalNodes++;
-            const s = m.source || 'EXTERNAL';
-            if (s === 'PROJECT') out.projectMethods++;
-            else if (s === 'DEPENDENCY') out.dependencyMethods++;
-            else out.externalMethods++;
-            if (m.cycle) continue;   // 环方法同树视图：展示但不展开
-            const edges = adj[id] || [];
-            for (let i = 0; i < edges.length; i++) stack.push(edges[i].to);
-        }
-        return out;
-    }
-
-    /** 批量清单某行：按生效规则重算该行的行内统计 chips（格式同 renderBatchSummary） */
-    function updateBatchRowStats(st) {
-        if (!st || !st.result || !st.rowEl) return;
-        const fs = computeFilteredStats(st.result);
-        const st0 = st.result.stats || {};
-        const chips = [
-            '节点 ' + fs.totalNodes,
-            '项目 ' + fs.projectMethods,
-            '依赖 ' + fs.dependencyMethods,
-            '外部 ' + fs.externalMethods,
-            st0.durationMs != null ? st0.durationMs + 'ms' : null,
-            st0.truncated ? '截断' : null,
-        ].filter(Boolean).join(' · ');
-        const span = st.rowEl.querySelector('.bt-stats');
-        if (span) span.textContent = chips;
-    }
-
-    /** 批量清单聚合统计：全量加载完成时按生效规则重算，否则退回后端统计 */
-    function computeBatchFilteredStats(batch) {
-        if (!(App.state.batchModel && App.state.batchModel.loaded && App.state.batchModel.entries)) return batch.stats || {};
-        const agg = { entryCount: 0, totalNodes: 0, projectMethods: 0, dependencyMethods: 0, externalMethods: 0, truncated: false, durationMs: 0 };
-        let counted = 0;
-        App.state.batchModel.entries.forEach((slot) => {
-            if (!slot || !slot.result) return;
-            const fs = computeFilteredStats(slot.result);
-            agg.entryCount += 1;
-            agg.totalNodes += fs.totalNodes;
-            agg.projectMethods += fs.projectMethods;
-            agg.dependencyMethods += fs.dependencyMethods;
-            agg.externalMethods += fs.externalMethods;
-            if (fs.truncated) agg.truncated = true;
-            agg.durationMs += fs.durationMs || 0;
-            counted++;
-        });
-        return counted > 0 ? agg : (batch.stats || {});
     }
 
     /** 依据当前生效规则刷新统计条：单入口重算；批量清单重算聚合 + 已展开行的行内统计 */
@@ -1193,313 +930,6 @@
     els.btnNoiseRuleSave.addEventListener('click', saveNoiseRules);
     els.btnNrPageSave.addEventListener('click', saveNoiseRules);
 
-    function renderWarnings(result) {
-        const items = [];
-        if (result.warnings) result.warnings.forEach((w) => items.push('⚠ ' + w));
-        if (items.length === 0) {
-            els.warnings.hidden = true;
-            return;
-        }
-        els.warnings.innerHTML = items.map((i) => '<div>' + escapeHtml(i) + '</div>').join('');
-        els.warnings.hidden = false;
-    }
-
-    function nodeEl(node, depth) {
-        const wrap = document.createElement('div');
-        wrap.className = 'node-wrap';
-
-        const row = document.createElement('div');
-        row.className = 'node-row' + (depth === 0 ? ' root' : '');
-
-        const hasKids = node.children && node.children.length > 0;
-        const toggle = document.createElement('span');
-        toggle.className = 'toggle';
-        toggle.textContent = hasKids ? '▸' : '•';
-
-        const method = document.createElement('span');
-        method.className = 'method';
-        // 分色渲染：全限定类名 / 方法名 / 入参 一眼可分
-        appendSigFromString(method, node.method.display);
-
-        const badges = document.createElement('span');
-        badges.className = 'row-badges';
-        badges.appendChild(badge('source-' + node.source.toLowerCase(),
-            SOURCE_LABEL[node.source] || node.source));
-        if (node.invokeType) {
-            badges.appendChild(badge('invoke', INVOKE_LABEL[node.invokeType] || node.invokeType));
-        }
-        if (node.line && node.line > 0) {
-            const lineNo = document.createElement('span');
-            lineNo.className = 'line-no';
-            lineNo.textContent = 'L' + node.line;
-            badges.appendChild(lineNo);
-        }
-        if (node.cycle) badges.appendChild(badge('cycle', '♻ 环'));
-        if (node.truncated) badges.appendChild(badge('truncated', '✂ 截断'));
-
-        row.appendChild(toggle);
-        row.appendChild(method);
-        row.appendChild(badges);
-        applyNodeMark(node, row);
-
-        // 每个方法行一个搜索按钮：查它的调用链里是否调用了某方法
-        const searchBtn = document.createElement('button');
-        searchBtn.type = 'button';
-        searchBtn.className = 'row-search-btn';
-        searchBtn.title = '搜索此方法的调用链是否调用了某方法（模糊/精确）';
-        searchBtn.textContent = '🔎';
-        searchBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            toggleSearchBar(node, wrap);
-        });
-        row.appendChild(searchBtn);
-
-        wrap.appendChild(row);
-
-        const entry = { rowEl: row, setExpanded: null };
-        nodeRegistry.set(node, entry);
-
-        if (hasKids) {
-            const kids = document.createElement('div');
-            kids.className = 'children';
-            kids.style.display = 'none';
-            let rendered = false;
-            const setExpanded = (show) => {
-                if (show && !rendered) {
-                    // 懒渲染：首次展开时才构建子 DOM（大树不卡顿）
-                    node.children.forEach((c) => kids.appendChild(nodeEl(c, depth + 1)));
-                    rendered = true;
-                }
-                kids.style.display = show ? '' : 'none';
-                toggle.textContent = show ? '▾' : '▸';
-            };
-            entry.setExpanded = setExpanded;
-            expandFns.push(setExpanded);
-            // 展开时：命中路径若无分叉则一路穿透，遇分叉只展开这一层（逐层引导）
-            row.addEventListener('click', () => {
-                if (kids.style.display === 'none') expandGuided(node, setExpanded);
-                else setExpanded(false);
-            });
-            wrap.appendChild(kids);
-        } else {
-            row.addEventListener('click', () => { /* 叶子/环节点无可展开 */ });
-        }
-        return wrap;
-    }
-
-    // badge / badgeHtml / escapeHtml 已抽出 js/ui.js（OPT-27 C2），见顶部薄委托。
-
-    // ------------------------------------------------------------------
-    // 调用链搜索：每个方法行的 🔎，搜其子树是否调用了某方法
-    // ------------------------------------------------------------------
-
-    function matchNode(n, term, exact) {
-        const m = n.method || {};
-        const q = term.trim();
-        if (exact) {
-            // 精确：方法名 / display / 全限定 类.方法 / 简单类名.方法
-            return m.name === q
-                || m.display === q
-                || (m.className || '') + '.' + m.name === q
-                || (m.simpleClassName || '') + '.' + m.name === q;
-        }
-        // 模糊：包含即命中（忽略大小写）
-        const needle = q.toLowerCase();
-        return [m.name, m.display, m.className, m.simpleClassName]
-            .some((v) => v && v.toLowerCase().indexOf(needle) >= 0);
-    }
-
-    /** 收集 startNode 子树内所有命中节点及展开路径（不含 startNode 自身） */
-    function collectMatches(startNode, term, exact) {
-        const results = [];
-        (function walk(n, ancestors) {
-            (n.children || []).forEach((c) => {
-                if (matchNode(c, term, exact)) results.push({ node: c, ancestors });
-                walk(c, ancestors.concat([c]));
-            });
-        })(startNode, []);
-        return results;
-    }
-
-    function clearSearchHits() {
-        hitRows.forEach((r) => r.classList.remove('search-hit'));
-        hitRows = [];
-    }
-
-    function closeSearchBar() {
-        if (activeSearch) {
-            activeSearch.bar.remove();
-            activeSearch = null;
-        }
-    }
-
-    /** 展开命中节点的祖先路径（懒渲染同步注册子节点）并高亮命中行 */
-    function focusMatches(root, matches) {
-        matches.forEach((mt) => {
-            [root].concat(mt.ancestors).forEach((anc) => {
-                const reg = nodeRegistry.get(anc);
-                if (reg && reg.setExpanded) reg.setExpanded(true);
-            });
-            const reg = nodeRegistry.get(mt.node);
-            if (reg && reg.rowEl) {
-                reg.rowEl.classList.add('search-hit');
-                hitRows.push(reg.rowEl);
-            }
-        });
-        if (hitRows[0] && hitRows[0].scrollIntoView) {
-            hitRows[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
-        }
-    }
-
-    function toggleSearchBar(node, wrap) {
-        if (activeSearch && activeSearch.node === node) { closeSearchBar(); return; }
-        closeSearchBar();
-        clearSearchHits();
-
-        const row = nodeRegistry.get(node).rowEl;
-
-        const bar = document.createElement('div');
-        bar.className = 'node-search-bar';
-
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.placeholder = '方法名 / 类名，如 buildRoots 或 ClassReader';
-
-        const mode = document.createElement('select');
-        const optFuzzy = document.createElement('option');
-        optFuzzy.value = 'fuzzy'; optFuzzy.textContent = '模糊';
-        const optExact = document.createElement('option');
-        optExact.value = 'exact'; optExact.textContent = '精确';
-        mode.appendChild(optFuzzy);
-        mode.appendChild(optExact);
-
-        const btnGo = document.createElement('button');
-        btnGo.type = 'button';
-        btnGo.className = 'btn small';
-        btnGo.textContent = '搜索';
-
-        const btnClose = document.createElement('button');
-        btnClose.type = 'button';
-        btnClose.className = 'btn small';
-        btnClose.textContent = '✕';
-        btnClose.title = '关闭';
-
-        const result = document.createElement('span');
-        result.className = 'search-result';
-
-        bar.appendChild(input);
-        bar.appendChild(mode);
-        bar.appendChild(btnGo);
-        bar.appendChild(btnClose);
-        bar.appendChild(result);
-
-        wrap.insertBefore(bar, row.nextSibling);
-
-        const run = () => {
-            const term = input.value.trim();
-            clearSearchHits();
-            result.textContent = '';
-            result.className = 'search-result';
-            if (!term) return;
-            const exact = mode.value === 'exact';
-            const matches = collectMatches(node, term, exact);
-            if (matches.length === 0) {
-                result.className = 'search-result err';
-                result.textContent = '未命中 —— ' + (node.method ? node.method.display : '')
-                    + ' 的调用链没有调用 "' + term + '"';
-                return;
-            }
-            matches.forEach((mt) => {
-                // 自上而下展开祖先路径（懒渲染同步注册子节点），再高亮命中行
-                mt.ancestors.forEach((anc) => {
-                    const reg = nodeRegistry.get(anc);
-                    if (reg && reg.setExpanded) reg.setExpanded(true);
-                });
-                const reg = nodeRegistry.get(mt.node);
-                if (reg && reg.rowEl) {
-                    reg.rowEl.classList.add('search-hit');
-                    hitRows.push(reg.rowEl);
-                }
-            });
-            result.className = 'search-result ok';
-            result.textContent = '命中 ' + matches.length + ' 个方法';
-            if (hitRows[0] && hitRows[0].scrollIntoView) {
-                hitRows[0].scrollIntoView({ block: 'center', behavior: 'smooth' });
-            }
-        };
-
-        btnGo.addEventListener('click', run);
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') run(); });
-        btnClose.addEventListener('click', closeSearchBar);
-
-        activeSearch = { bar, node };
-        input.focus();
-    }
-
-    // ------------------------------------------------------------------
-    // 全局搜索：搜所有入口方法的调用链是否调用了某方法（类分析多入口场景）
-    // ------------------------------------------------------------------
-
-    function resetGlobalSearch() {
-        els.globalSearchInput.value = '';
-        els.globalSearchResult.textContent = '';
-        els.globalSearchResult.className = 'search-result';
-        els.globalSearchChips.innerHTML = '';
-    }
-
-    function runGlobalSearch() {
-        const term = els.globalSearchInput.value.trim();
-        clearSearchHits();
-        closeSearchBar();
-        els.globalSearchChips.innerHTML = '';
-        els.globalSearchResult.textContent = '';
-        els.globalSearchResult.className = 'search-result';
-        if (!term || !App.state.currentResult) return;
-
-        const exact = els.globalSearchMode.value === 'exact';
-
-        // 每个入口：入口自身 + 其子树内全部命中
-        const roots = rootsOf(App.state.currentResult);
-        const perRoot = [];
-        roots.forEach((root) => {
-            const matches = [];
-            if (matchNode(root, term, exact)) matches.push({ node: root, ancestors: [] });
-            collectMatches(root, term, exact).forEach((m) => matches.push(m));
-            if (matches.length > 0) perRoot.push({ root, matches });
-        });
-
-        const total = perRoot.reduce((s, p) => s + p.matches.length, 0);
-        const entryCount = roots.length;
-
-        if (perRoot.length === 0) {
-            els.globalSearchResult.className = 'search-result err';
-            els.globalSearchResult.textContent =
-                '未命中 —— ' + entryCount + ' 个入口方法的调用链均没有调用 "' + term + '"';
-            return;
-        }
-
-        els.globalSearchResult.className = 'search-result ok';
-        els.globalSearchResult.textContent = '命中 ' + perRoot.length + ' / '
-            + entryCount + ' 个入口 · 共 ' + total + ' 处调用（点击入口名查看）';
-
-        // 每个命中入口一个 chip：点击展开该入口全部命中并高亮
-        perRoot.forEach((p) => {
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'search-chip';
-            chip.innerHTML = '<span class="chip-name"></span>'
-                + '<span class="chip-count">' + p.matches.length + '</span>';
-            appendSigFromString(chip.querySelector('.chip-name'),
-                p.root.method ? p.root.method.display : '');
-            chip.title = '定位 ' + (p.root.method ? p.root.method.display : '') + ' 的 '
-                + p.matches.length + ' 处命中';
-            chip.addEventListener('click', () => {
-                clearSearchHits();
-                focusMatches(p.root, p.matches);
-            });
-            els.globalSearchChips.appendChild(chip);
-        });
-    }
 
     els.btnGlobalSearch.addEventListener('click', runGlobalSearch);
     els.globalSearchInput.addEventListener('keydown', (e) => {
@@ -1514,17 +944,9 @@
     // 全部展开 / 收起
     // ------------------------------------------------------------------
 
-    els.btnExpandAll.addEventListener('click', () => {
-        showLoading('正在展开全部节点……');
-        setTimeout(() => {
-            expandFns.forEach((f) => f(true));
-            hideLoading();
-        }, 20);
-    });
+    els.btnExpandAll.addEventListener('click', expandAll);
 
-    els.btnCollapseAll.addEventListener('click', () => {
-        expandFns.forEach((f) => f(false));
-    });
+    els.btnCollapseAll.addEventListener('click', collapseAll);
 
     // 结果区「刷新过滤」：重新拉取两层规则（含项目覆盖）→ 重算调用链剪枝 + 统计 + 频率
     els.btnResultRefresh.addEventListener('click', () => {
