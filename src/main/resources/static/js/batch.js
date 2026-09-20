@@ -42,6 +42,12 @@
     const escapeHtml = Ui.escapeHtml;
     const fetchJson = Api.fetchJson;
 
+    // 模块私有状态（见文件头注释第 19-21 行说明）
+    let freqViewMode = 'entry';
+    let projSearchMarks = null;
+    let projSearchOrder = [];
+    let projSearchCursor = -1;
+
     // 晚绑定钩子：app.js 在 init 时注入
     const hooks = {
         renderStats: null,                // C5 统计条（未搬）
