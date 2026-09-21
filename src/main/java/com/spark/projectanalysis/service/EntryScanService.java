@@ -44,7 +44,7 @@ public class EntryScanService {
     /** Job TTL（毫秒）：完成/失败后保留 5 分钟 */
     private static final long JOB_TTL_MS = 5 * 60 * 1000L;
 
-    private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final List<EntryPointDetector> detectors;
     private final ScanStrategyService strategyService;
 
@@ -57,9 +57,9 @@ public class EntryScanService {
         return t;
     });
 
-    public EntryScanService(AnalysisService analysisService, List<EntryPointDetector> detectors,
+    public EntryScanService(ClassMetadataService classMetadataService, List<EntryPointDetector> detectors,
                             ScanStrategyService strategyService) {
-        this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.detectors = detectors;
         this.strategyService = strategyService;
     }
@@ -145,7 +145,7 @@ public class EntryScanService {
 
             // 5-85%：注册表构建（Builder 回调每个 entry，真实渐增）
             // phase 0→10%, phase 1→20%, phase 2→20~80% 按 entry 比例, phase 3→85%
-            AnalysisService.RegistryHandle handle = analysisService.registryFor(path, new AnalysisService.ProgressCallback() {
+            ClassMetadataService.RegistryHandle handle = classMetadataService.registryFor(path, new ClassMetadataService.ProgressCallback() {
                 @Override
                 public void accept(int phase, int done, int total, String desc) {
                     switch (phase) {

@@ -5,9 +5,8 @@ import com.spark.projectanalysis.service.AnalysisCacheService;
 import com.spark.projectanalysis.service.AnalysisException;
 import com.spark.projectanalysis.service.AnalysisService;
 import com.spark.projectanalysis.service.BatchAnalyzeService;
+import com.spark.projectanalysis.service.ClassMetadataService;
 import com.spark.projectanalysis.service.GitPrepareService;
-import com.spark.projectanalysis.service.JavacCompileService;
-import com.spark.projectanalysis.service.MavenCompileService;
 import com.spark.projectanalysis.service.dto.AnalyzeRequest;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
 import com.spark.projectanalysis.service.dto.BatchAnalyzeStatus;
@@ -47,15 +46,18 @@ import java.util.stream.Stream;
 public class AnalysisController {
 
     private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final ExcelReportGenerator excelReportGenerator;
     private final GitPrepareService gitPrepareService;
     private final BatchAnalyzeService batchAnalyzeService;
     private final AnalysisCacheService cacheService;
 
-    public AnalysisController(AnalysisService analysisService, ExcelReportGenerator excelReportGenerator,
+    public AnalysisController(AnalysisService analysisService, ClassMetadataService classMetadataService,
+                              ExcelReportGenerator excelReportGenerator,
                               GitPrepareService gitPrepareService,
                               BatchAnalyzeService batchAnalyzeService, AnalysisCacheService cacheService) {
         this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.excelReportGenerator = excelReportGenerator;
         this.gitPrepareService = gitPrepareService;
         this.batchAnalyzeService = batchAnalyzeService;
@@ -64,19 +66,19 @@ public class AnalysisController {
 
     @GetMapping("/project/info")
     public ProjectInfo info(@RequestParam("path") String path) {
-        return analysisService.projectInfo(path);
+        return classMetadataService.projectInfo(path);
     }
 
     @GetMapping("/classes/search")
     public List<String> search(@RequestParam("path") String path,
                                 @RequestParam(value = "q", required = false, defaultValue = "") String q) {
-        return analysisService.searchClasses(path, q);
+        return classMetadataService.searchClasses(path, q);
     }
 
     @GetMapping("/classes/methods")
     public List<Map<String, String>> methods(@RequestParam("path") String path,
                                               @RequestParam("class") String cls) {
-        return analysisService.getMethods(path, cls);
+        return classMetadataService.getMethods(path, cls);
     }
 
     @GetMapping("/classes/verify")
@@ -84,7 +86,7 @@ public class AnalysisController {
                                     @RequestParam("class") String cls,
                                     @RequestParam(value = "method", required = false) String method,
                                     @RequestParam(value = "descriptor", required = false, defaultValue = "") String descriptor) {
-        return analysisService.verifyEntry(path, cls, method, descriptor);
+        return classMetadataService.verifyEntry(path, cls, method, descriptor);
     }
 
     @PostMapping("/analyze")

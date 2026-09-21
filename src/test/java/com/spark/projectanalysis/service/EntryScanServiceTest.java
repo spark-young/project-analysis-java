@@ -24,14 +24,14 @@ import static org.mockito.Mockito.when;
  */
 class EntryScanServiceTest {
 
-    private final AnalysisService analysisService = mock(AnalysisService.class);
+    private final ClassMetadataService classMetadataService = mock(ClassMetadataService.class);
     private final ScanStrategyService strategyService = mock(ScanStrategyService.class);
     private EntryScanService service;
 
     /** 每次返回一个空白策略（activeProfile() 为 null），使扫描在校验阶段即结束，避免触碰真实注册表。 */
     private EntryScanService newService() {
         when(strategyService.effectiveForProject(any())).thenReturn(new ScanStrategy());
-        service = new EntryScanService(analysisService,
+        service = new EntryScanService(classMetadataService,
                 Collections.<EntryPointDetector>emptyList(), strategyService);
         return service;
     }

@@ -21,6 +21,7 @@ class BatchAnalyzeServiceTest {
 
     private final BatchAnalyzeService service = new BatchAnalyzeService(
             mock(AnalysisService.class),
+            mock(ClassMetadataService.class),
             mock(AnalysisCacheService.class),
             mock(EntryListService.class));
 

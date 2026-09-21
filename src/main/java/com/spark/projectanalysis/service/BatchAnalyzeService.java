@@ -52,6 +52,7 @@ public class BatchAnalyzeService {
     private static final int MAX_JOBS = 200;
 
     private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final AnalysisCacheService cacheService;
     private final EntryListService entryListService;
 
@@ -65,9 +66,11 @@ public class BatchAnalyzeService {
     });
 
     public BatchAnalyzeService(AnalysisService analysisService,
+                               ClassMetadataService classMetadataService,
                                AnalysisCacheService cacheService,
                                EntryListService entryListService) {
         this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
     }
@@ -114,7 +117,7 @@ public class BatchAnalyzeService {
 
             // 5-40%：注册表构建（复用缓存，回调真实渐增）
             job.update(BatchAnalyzeStatus.State.INDEXING, 5, "构建类注册表...");
-            AnalysisService.RegistryHandle handle = analysisService.registryFor(path,
+            ClassMetadataService.RegistryHandle handle = classMetadataService.registryFor(path,
                     (phase, done, total, desc) -> {
                         switch (phase) {
                             case 0: job.update(BatchAnalyzeStatus.State.INDEXING, 10, desc); break;
@@ -158,7 +161,7 @@ public class BatchAnalyzeService {
                 try {
                     long entryStart = System.currentTimeMillis();
                     List<MethodKey> roots =
-                            analysisService.resolveEntryRoots(handle.getRegistry(), ref);
+                            classMetadataService.resolveEntryRoots(handle.getRegistry(), ref);
                     if (roots.isEmpty()) {
                         entry.setFailed(true);
                         entry.setError("未解析到根方法");

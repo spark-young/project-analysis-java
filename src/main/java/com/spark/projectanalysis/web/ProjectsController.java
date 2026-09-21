@@ -3,7 +3,7 @@ package com.spark.projectanalysis.web;
 import com.spark.projectanalysis.engine.ClasspathResolver;
 import com.spark.projectanalysis.service.AnalysisException;
 import com.spark.projectanalysis.service.AnalysisCacheService;
-import com.spark.projectanalysis.service.AnalysisService;
+import com.spark.projectanalysis.service.ClassMetadataService;
 import com.spark.projectanalysis.service.CompileOrchestrationService;
 import com.spark.projectanalysis.service.EntryListService;
 import com.spark.projectanalysis.service.GitCloneService;
@@ -69,19 +69,19 @@ public class ProjectsController {
     private static final String STATUS_ERROR = "ERROR";
 
     private final ProjectRegistry registry;
-    private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final AnalysisCacheService cacheService;
     private final EntryListService entryListService;
     private final GitCloneService gitCloneService;
     private final GitRefService gitRefService;
     private final CompileOrchestrationService compileOrchestrationService;
 
-    public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
+    public ProjectsController(ProjectRegistry registry, ClassMetadataService classMetadataService,
                               AnalysisCacheService cacheService, EntryListService entryListService,
                               GitCloneService gitCloneService, GitRefService gitRefService,
                               CompileOrchestrationService compileOrchestrationService) {
         this.registry = registry;
-        this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
         this.gitCloneService = gitCloneService;
@@ -307,7 +307,7 @@ public class ProjectsController {
 
         ProjectInfo info;
         try {
-            info = analysisService.projectInfo(path);
+            info = classMetadataService.projectInfo(path);
         } catch (Exception e) {
             throw new AnalysisException(HttpStatus.BAD_REQUEST, "无法识别该路径为有效 Java 项目：" + e.getMessage());
         }
