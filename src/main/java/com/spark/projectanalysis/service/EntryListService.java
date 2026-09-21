@@ -351,6 +351,14 @@ public class EntryListService {
         );
     }
 
+    /**
+     * 手工候选：用户在「手动添加」里明确指定的类+方法。
+     * 不走扫描策略，来源标记为 MANUAL，保证「方法能选出来就一定能加入清单」。
+     */
+    public static EntryItem manualEntry(String className, String methodName, String descriptor) {
+        return new EntryItem(className, methodName, descriptor, "MANUAL", "MANUAL");
+    }
+
     private static Path cacheDir(String projectPath) {
         return CallgraphPaths.projectDataDir(projectPath);
     }

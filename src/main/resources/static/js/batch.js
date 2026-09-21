@@ -47,6 +47,7 @@
     let projSearchMarks = null;
     let projSearchOrder = [];
     let projSearchCursor = -1;
+    let projSearchFilteredCount = 0;   // 命中但被过滤规则剪掉的方法数（页面上不可见，Excel 的「被过滤方法」Sheet 有）
 
     // 晚绑定钩子：app.js 在 init 时注入
     const hooks = {
@@ -522,6 +523,7 @@
     function clearProjectSearch() {
         els.projectSearchResult.textContent = '';
         els.projectSearchResult.className = 'search-result';
+        projSearchFilteredCount = 0;
         clearProjectMarks();
     }
 
@@ -535,10 +537,16 @@
             return;
         }
         const exact = els.projectSearchMode.value === 'exact';
-        const { marks, order } = computeSearchMarks(term, exact);
+        const { marks, order, filtered } = computeSearchMarks(term, exact);
+        projSearchFilteredCount = filtered;
         if (order.length === 0) {
             els.projectSearchResult.className = 'search-result err';
-            els.projectSearchResult.textContent = '未命中 —— 项目内没有方法匹配 "' + term + '"';
+            // 与 Excel 口径对齐：页面上看不见的方法是被「过滤规则」剪掉的，不是项目里没有。
+            // 不说明白的话，用户会以为搜索漏了（Excel 的「被过滤方法」Sheet 确实能搜到）。
+            els.projectSearchResult.textContent = filtered > 0
+                ? '未命中可见调用链 —— 但有 ' + filtered + ' 处匹配被「过滤规则」剪掉了（Excel 的「被过滤方法」Sheet 可查；'
+                    + '想在这里看到，可在「过滤规则」里停用对应规则后点「⟳ 刷新过滤」）'
+                : '未命中 —— 项目内没有方法匹配 "' + term + '"';
             return;
         }
         projSearchMarks = marks;
@@ -568,6 +576,7 @@
     function computeSearchMarks(term, exact) {
         const marks = new Map();
         const order = [];
+        let filtered = 0;
         const entries = (App.state.batchModel && App.state.batchModel.entries) || [];
         entries.forEach((slot, idx) => {
             const g = slot.result && slot.result.graph;
@@ -575,8 +584,12 @@
             const targets = [];
             g.methods.forEach((m, i) => {
                 if (!m) return;
-                // 被 noise 规则剪掉的方法不参与搜索（视图里本来就看不到）
-                if (hooks.isNoiseGraphMethod(m)) return;
+                // 被 noise 规则剪掉的方法在视图里不存在，不能标记；但命中数要单独统计出来，
+                // 否则用户会以为"项目里没有这个方法"（Excel 的「被过滤方法」Sheet 里能看到）
+                if (hooks.isNoiseGraphMethod(m)) {
+                    if (matchRawMethod(m, term, exact)) filtered++;
+                    return;
+                }
                 if (matchRawMethod(m, term, exact)) targets.push(i);
             });
             if (targets.length === 0) return;
@@ -595,7 +608,7 @@
             marks.set(idx, { hit, hasHit });
             targets.slice().sort((a, b) => a - b).forEach((gid) => order.push({ entryIdx: idx, gid }));
         });
-        return { marks, order };
+        return { marks, order, filtered };
     }
 
     /** 节点所属入口的搜索标记；无标记返回 null */
@@ -664,8 +677,12 @@
         const cursor = projSearchCursor >= 0
             ? ' · 当前位置 ' + (projSearchCursor + 1) + '/' + projSearchOrder.length
             : '';
+        // 被过滤规则剪掉的命中单独提示，避免与"项目里没有"混淆（Excel 的「被过滤方法」Sheet 能查到）
+        const filtered = projSearchFilteredCount > 0
+            ? ' · 另有 ' + projSearchFilteredCount + ' 处被过滤规则剪掉（Excel「被过滤方法」可查）'
+            : '';
         return '命中 ' + projSearchOrder.length + ' 处 · 已标记 ' + projSearchMarks.size
-            + ' 个入口（展开逐层引导，点「下一个命中」可跳转）' + cursor;
+            + ' 个入口（展开逐层引导，点「下一个命中」可跳转）' + cursor + filtered;
     }
 
     /** 引导展开：无分叉（只有一个含命中的子节点）就一路穿透，遇分叉只展开这一层 */

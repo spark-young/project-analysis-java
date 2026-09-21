@@ -1,5 +1,6 @@
 package com.spark.projectanalysis.web;
 
+import com.spark.projectanalysis.service.ClassMetadataService;
 import com.spark.projectanalysis.service.EntryListService;
 import com.spark.projectanalysis.service.EntryScanService;
 import com.spark.projectanalysis.service.ProjectRegistry;
@@ -27,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -50,13 +52,16 @@ public class EntryListController {
 
     private final EntryListService entryListService;
     private final EntryScanService entryScanService;
+    private final ClassMetadataService classMetadataService;
     private final ProjectRegistry registry;
 
     public EntryListController(EntryListService entryListService,
                                EntryScanService entryScanService,
+                               ClassMetadataService classMetadataService,
                                ProjectRegistry registry) {
         this.entryListService = entryListService;
         this.entryScanService = entryScanService;
+        this.classMetadataService = classMetadataService;
         this.registry = registry;
     }
 
@@ -110,21 +115,26 @@ public class EntryListController {
         return resp;
     }
 
-    /** 手动扫描：按类名从当前扫描策略的结果中提取匹配的入口方法候选（不落库） */
+    /**
+     * 手动扫描：把用户填的「类名 / 包名」下面的全部方法枚举为候选，供勾选加入清单。
+     * <p>
+     * 与「自动扫描」不同，这里**不套用扫描策略**——手动添加的语义是"用户已经知道要哪些方法"，
+     * 所以只做枚举（排除构造器与编译器合成方法），是否算入口由用户勾选决定。
+     * 包名只列本层类，不递归子包（产品约定）。
+     */
     @PostMapping("/{id}/entries/scan-manual")
     public EntryScanManualResponse scanManual(@PathVariable String id,
                                               @RequestBody(required = false) Map<String, String> body) {
         String path = resolvePath(id);
-        String className = body == null ? null : body.get("className");
+        String query = body == null ? null : body.get("className");
         String methodName = body == null ? null : body.get("methodName");
-        String profileId = body == null ? null : body.get("profileId");
-        EntryScanResult scanResult = (profileId != null && !profileId.isEmpty())
-                ? entryScanService.scan(path, profileId)
-                : entryScanService.scan(path);
-        List<EntryItem> matched = entryListService.extractByClass(scanResult, className);
-        if (methodName != null && !methodName.trim().isEmpty()) {
-            String needle = methodName.trim();
-            matched.removeIf(item -> !needle.equals(item.getMethodName()));
+
+        ClassMetadataService.MethodQuery found = classMetadataService.methodsUnder(path, query);
+        String needle = methodName == null ? "" : methodName.trim();
+        List<EntryItem> matched = new ArrayList<>();
+        for (ClassMetadataService.MethodRef m : found.getMethods()) {
+            if (!needle.isEmpty() && !needle.equals(m.getMethodName())) continue;
+            matched.add(EntryListService.manualEntry(m.getClassName(), m.getMethodName(), m.getDescriptor()));
         }
         EntryListService.ScanDiffResult diff = entryListService.diffItems(path, matched);
 
@@ -132,9 +142,13 @@ public class EntryListController {
         resp.setCandidates(diff.candidates);
         resp.setExisted(diff.existed);
         resp.setTotal(matched.size());
+        resp.setMode(found.getMode());
+        resp.setResolvedName(found.getResolvedName());
+        resp.setTruncated(found.isTruncated());
         resp.setProjectPath(path);
-        log.info("[入口] 手动扫描 {}：匹配 {} 条，新增候选 {} 条，已存在 {} 条",
-                className, matched.size(), diff.candidates.size(), diff.existed);
+        log.info("[入口] 手动扫描 {}「{}」({})：匹配 {} 条，新增候选 {} 条，已存在 {} 条",
+                id, found.getResolvedName(), found.getMode(),
+                matched.size(), diff.candidates.size(), diff.existed);
         return resp;
     }
 

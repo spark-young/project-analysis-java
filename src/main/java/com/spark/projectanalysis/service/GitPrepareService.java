@@ -195,6 +195,9 @@ public class GitPrepareService {
             job.progress = 96;
             job.step = "正在注册项目...";
 
+            // 记录克隆后实际所在的引用，供分析视图展示"当前版本"（否则前端只有占位符）
+            String[] cur = gitCloneService.currentRef(job.dir);
+
             // 自动注册到项目注册表
             try {
                 ProjectRegistry.RegisteredProject existing = registry.getByPath(job.projectPath);
@@ -206,12 +209,18 @@ public class GitPrepareService {
                     p.projectPath = job.projectPath;
                     p.gitUrl = repoUrl;
                     p.gitBranch = req.getBranch() == null ? "" : req.getBranch();
+                    p.currentRef = cur[0];
+                    p.currentRefType = cur[1];
                     p.createdAt = System.currentTimeMillis();
                     p.lastOpenedAt = p.createdAt;
                     registry.save(p);
                 } else {
                     existing.lastOpenedAt = System.currentTimeMillis();
                     existing.lastError = null;
+                    if (cur[0] != null && !cur[0].isEmpty()) {
+                        existing.currentRef = cur[0];
+                        existing.currentRefType = cur[1];
+                    }
                     registry.save(existing);
                 }
             } catch (Exception ex) {

@@ -18,6 +18,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.everyItem;
+import static org.hamcrest.Matchers.hasItem;
+import static org.hamcrest.Matchers.not;
+import static org.hamcrest.Matchers.startsWith;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -121,6 +126,55 @@ class EntryListControllerTest {
                 .andExpect(jsonPath("$.existed").isNumber())
                 .andExpect(jsonPath("$.total").isNumber())
                 .andExpect(jsonPath("$.projectPath").value(demoClasses.toString()));
+    }
+
+    // ------------------------------------------------------------------
+    // 手动添加：类名 / 包名 → 枚举方法（不套用扫描策略）
+    // ------------------------------------------------------------------
+
+    @Test
+    void test_scanManual_class_listsAllMethods_excludingCtorAndSynthetic() throws Exception {
+        String id = registerProject(demoClasses);
+        mvc.perform(post("/api/projects/" + id + "/entries/scan-manual")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"className\":\"com.demo.OrderService\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("CLASS"))
+                .andExpect(jsonPath("$.resolvedName").value("com.demo.OrderService"))
+                .andExpect(jsonPath("$.candidates[*].methodName", hasItem("place")))
+                // 构造器(<init>/<clinit>)与编译器合成方法(lambda$/access$)不作为候选
+                .andExpect(jsonPath("$.candidates[*].methodName", everyItem(not(startsWith("<")))))
+                .andExpect(jsonPath("$.candidates[*].methodName", everyItem(not(containsString("$")))));
+    }
+
+    @Test
+    void test_scanManual_package_listsOnlyThisLevel_notSubPackages() throws Exception {
+        String id = registerProject(demoClasses);
+        mvc.perform(post("/api/projects/" + id + "/entries/scan-manual")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"className\":\"com.demo\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("PACKAGE"))
+                .andExpect(jsonPath("$.resolvedName").value("com.demo"))
+                .andExpect(jsonPath("$.candidates[*].methodName", hasItem("place")));
+        // 父包 com 本层没有类：若递归子包就会返回 com.demo 的全部方法，这里必须为 0
+        mvc.perform(post("/api/projects/" + id + "/entries/scan-manual")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"className\":\"com\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("PACKAGE"))
+                .andExpect(jsonPath("$.total").value(0));
+    }
+
+    @Test
+    void test_scanManual_unknownQuery_reportsNone() throws Exception {
+        String id = registerProject(demoClasses);
+        mvc.perform(post("/api/projects/" + id + "/entries/scan-manual")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"className\":\"com.no.such.pkg\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.mode").value("NONE"))
+                .andExpect(jsonPath("$.total").value(0));
     }
 
     // ------------------------------------------------------------------

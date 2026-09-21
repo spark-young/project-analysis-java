@@ -111,6 +111,12 @@ class GitPrepareServiceTest {
                 "克隆的项目应就位");
         assertEquals(done.getProjectPath(), stub.compiledDir.toString(), "编译步骤应收到克隆目录");
         assertEquals("remote", done.getProjectName(), "项目名应取仓库末段并去掉 .git");
+        // 导入时要把当前分支/Tag 落进注册表，否则分析视图「当前版本」只有占位符
+        ProjectRegistry.RegisteredProject saved = new ProjectRegistry().getByPath(done.getProjectPath());
+        assertNotNull(saved, "克隆后应自动注册到项目注册表");
+        assertNotNull(saved.currentRef, "应记录当前分支/Tag");
+        assertFalse(saved.currentRef.isEmpty(), "currentRef 不应为空");
+        assertEquals("BRANCH", saved.currentRefType, "克隆默认落在分支上");
     }
 
     @Test

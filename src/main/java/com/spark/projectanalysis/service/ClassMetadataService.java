@@ -19,6 +19,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,11 +121,15 @@ public class ClassMetadataService {
         String needle = q.trim();
         List<String> startsWith = new ArrayList<>();
         List<String> contains = new ArrayList<>();
+        List<String> packages = new ArrayList<>();
         for (ClassInfo ci : registry.allClasses()) {
             if (ci.getSource() != SourceType.PROJECT) continue;
             String fqcn = ci.getInternalName().replace('/', '.');
             if (fqcn.startsWith(needle)) {
                 startsWith.add(fqcn);
+                // 同时给出包名建议：手动添加处可直接填包名，列出该包本层的方法
+                String pkg = fqcn.lastIndexOf('.') > 0 ? fqcn.substring(0, fqcn.lastIndexOf('.')) : "";
+                if (pkg.startsWith(needle) && !packages.contains(pkg)) packages.add(pkg);
             } else if (fqcn.toLowerCase().contains(needle.toLowerCase())) {
                 contains.add(fqcn);
             }
@@ -135,6 +140,9 @@ public class ClassMetadataService {
             if (out.size() >= 20) break;
             out.add(c);
         }
+        // 包名建议排在类名之后（调用方按 $[0] 取类名的既有契约保持不变）
+        int pkgCap = Math.min(10, packages.size());
+        for (int i = 0; i < pkgCap && out.size() < 30; i++) out.add(packages.get(i));
         return out;
     }
 
@@ -154,6 +162,117 @@ public class ClassMetadataService {
         }
         out.sort((a, b) -> a.get("name").compareTo(b.get("name")));
         return out;
+    }
+
+    // ------------------------------------------------------------------
+    // 「类名 / 包名 → 方法列表」：手动添加入口的枚举能力
+    // ------------------------------------------------------------------
+
+    /** 单次枚举的返回上限：防止一个超大包把弹窗列表撑爆 */
+    private static final int METHODS_UNDER_MAX = 500;
+
+    /** 单条候选方法（全限定类名 + 方法名 + 描述符） */
+    public static final class MethodRef {
+        private final String className;
+        private final String methodName;
+        private final String descriptor;
+
+        MethodRef(String className, String methodName, String descriptor) {
+            this.className = className;
+            this.methodName = methodName;
+            this.descriptor = descriptor;
+        }
+
+        public String getClassName() { return className; }
+        public String getMethodName() { return methodName; }
+        public String getDescriptor() { return descriptor; }
+    }
+
+    /** 「类名 / 包名」解析结果 */
+    public static final class MethodQuery {
+        /** CLASS = 命中一个类；PACKAGE = 按包名处理（可能本层没有类）；NONE = 既不是类也不是包 */
+        private final String mode;
+        private final String resolvedName;   // 解析出的全限定类名 / 包名
+        private final List<MethodRef> methods;
+        private final boolean truncated;     // 命中数超过上限，只返回了前 N 个
+
+        MethodQuery(String mode, String resolvedName, List<MethodRef> methods, boolean truncated) {
+            this.mode = mode;
+            this.resolvedName = resolvedName;
+            this.methods = methods;
+            this.truncated = truncated;
+        }
+
+        public String getMode() { return mode; }
+        public String getResolvedName() { return resolvedName; }
+        public List<MethodRef> getMethods() { return methods; }
+        public boolean isTruncated() { return truncated; }
+    }
+
+    /**
+     * 解析用户填的"类名或包名"，列出其下面的全部方法（供手动添加入口挑选）。
+     * <p>
+     * 解析顺序：全限定类名精确命中 → 唯一简单类名命中（与 verifyEntry 同语义）→ 按包名处理。
+     * 包名**只列本层**，不递归子包（产品约定）。构造器 / 静态初始化 / 编译器合成方法（含 $）不作为候选。
+     */
+    public MethodQuery methodsUnder(String path, String query) {
+        String q = query == null ? "" : query.trim();
+        if (q.isEmpty()) return new MethodQuery("NONE", "", new ArrayList<>(), false);
+
+        ClassMetadataRegistry registry = obtainRegistry(path).registry;
+        String internal = q.replace('.', '/');
+
+        ClassInfo ci = registry.get(internal);
+        if (ci == null) {
+            String simple = internal.substring(internal.lastIndexOf('/') + 1);
+            Collection<String> bySimple = registry.classesBySimpleName(simple);
+            if (bySimple != null && bySimple.size() == 1) ci = registry.get(bySimple.iterator().next());
+        }
+        if (ci != null) {
+            List<MethodRef> out = new ArrayList<>();
+            boolean truncated = false;
+            String fqcn = ci.getInternalName().replace('/', '.');
+            for (MethodKey mk : ci.methodKeys()) {
+                if (isNotCandidate(mk.getName())) continue;
+                if (out.size() >= METHODS_UNDER_MAX) { truncated = true; break; }
+                out.add(new MethodRef(fqcn, mk.getName(), mk.getDescriptor()));
+            }
+            out.sort(Comparator.comparing(MethodRef::getMethodName)
+                    .thenComparing(MethodRef::getDescriptor));
+            return new MethodQuery("CLASS", fqcn, out, truncated);
+        }
+
+        // 包名：只取本层（internalName 以 pkg/ 开头且其后不再有 '/'）
+        String prefix = internal + "/";
+        List<MethodRef> out = new ArrayList<>();
+        boolean truncated = false;
+        boolean packageExists = false;
+        for (ClassInfo c : registry.allClasses()) {
+            if (c.getSource() != SourceType.PROJECT) continue;
+            String n = c.getInternalName();
+            if (!n.startsWith(prefix)) continue;
+            packageExists = true;
+            if (n.indexOf('/', prefix.length()) >= 0) continue;   // 子包，跳过
+            String fqcn = n.replace('/', '.');
+            for (MethodKey mk : c.methodKeys()) {
+                if (isNotCandidate(mk.getName())) continue;
+                if (out.size() >= METHODS_UNDER_MAX) { truncated = true; break; }
+                out.add(new MethodRef(fqcn, mk.getName(), mk.getDescriptor()));
+            }
+        }
+        if (!packageExists) return new MethodQuery("NONE", q, out, false);
+        out.sort(Comparator.comparing(MethodRef::getClassName)
+                .thenComparing(MethodRef::getMethodName)
+                .thenComparing(MethodRef::getDescriptor));
+        return new MethodQuery("PACKAGE", internal.replace('/', '.'), out, truncated);
+    }
+
+    /** 构造器 / 静态初始化块 / 编译器合成方法（lambda$、access$、$default 等）不作为候选入口 */
+    private static boolean isNotCandidate(String methodName) {
+        return methodName == null
+                || "<init>".equals(methodName)
+                || "<clinit>".equals(methodName)
+                || methodName.indexOf('$') >= 0;
     }
 
     /** 验证 className + methodName + descriptor 是否在项目中真实存在 */

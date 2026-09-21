@@ -171,7 +171,12 @@
         showLoading('正在进入项目…（工程较大时首次加载会慢一些）', { steps: steps });
         try {
             loadingSetStep(0, 'active', '打开项目');
-            await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
+            const opened = await postJson('/api/projects/' + encodeURIComponent(id) + '/open', {});
+            // 后端会顺带补齐 currentRef 等字段，用最新记录覆盖本地缓存（否则信息栏读到旧值）
+            if (opened && opened.id) {
+                Object.assign(p, opened);
+                projectIndex[id] = p;
+            }
             App.state.currentProjectId = id;
             App.state.currentResult = null;
             App.state.currentRequest = null;

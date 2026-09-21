@@ -337,6 +337,10 @@ public class ProjectsController {
         registry.save(p);
         // 进入项目时让状态缓存失效，避免卡片状态滞后
         invalidateStatusCache(p.projectPath);
+        // Git 项目：历史记录里可能没记当前分支/Tag（早期导入），这里补齐后再返回给前端
+        if ("GIT".equals(p.type) && (p.currentRef == null || p.currentRef.isEmpty())) {
+            gitRefService.refreshCurrentRef(p);
+        }
         return p;
     }
 

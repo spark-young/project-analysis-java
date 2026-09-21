@@ -5,13 +5,13 @@ import com.spark.projectanalysis.service.dto.GitSwitchResult;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
 import com.spark.projectanalysis.service.dto.SwitchRequest;
 import com.spark.projectanalysis.service.dto.SwitchStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PreDestroy;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,6 +39,8 @@ import java.util.stream.Stream;
  */
 @Service
 public class GitRefService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitRefService.class);
 
     private final GitCloneService gitCloneService;
     private final MavenCompileService mavenCompileService;
@@ -306,51 +308,31 @@ public class GitRefService {
     }
 
     /**
-     * 识别当前检出引用。
+     * 识别当前检出引用（委托 GitCloneService，避免与 GitPrepareService 各写一套）。
      *
      * @return [refName, refType]，refType ∈ BRANCH / TAG / DETACHED / UNKNOWN
      */
     String[] detectCurrentRef(Path gitRoot) {
-        try {
-            String branch = localGit(gitRoot, "symbolic-ref", "--short", "HEAD");
-            if (branch != null && !branch.isEmpty()) return new String[]{branch, "BRANCH"};
-        } catch (Exception ignored) {
-            // detached HEAD
-        }
-        try {
-            String tag = localGit(gitRoot, "describe", "--tags", "--exact-match", "HEAD");
-            if (tag != null && !tag.isEmpty()) return new String[]{tag, "TAG"};
-        } catch (Exception ignored) {
-            // 不在某个 Tag 上
-        }
-        try {
-            String sha = localGit(gitRoot, "rev-parse", "--short", "HEAD");
-            if (sha != null && !sha.isEmpty()) return new String[]{sha, "DETACHED"};
-        } catch (Exception ignored) {
-            // 空仓库
-        }
-        return new String[]{null, "UNKNOWN"};
+        return gitCloneService.currentRef(gitRoot);
     }
 
-    /** 执行本地 git 命令（无网络、无认证需求），非零退出码抛异常。 */
-    private String localGit(Path dir, String... args) throws IOException, InterruptedException {
-        List<String> cmd = new ArrayList<>();
-        cmd.add("git");
-        cmd.add("-C");
-        cmd.add(dir.toString());
-        for (String a : args) cmd.add(a);
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out;
-        try (InputStream in = p.getInputStream()) {
-            out = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+    /**
+     * 探测并回写当前引用，供历史记录补齐（早期导入的项目没记 currentRef）。
+     * 探测失败/未变化时不做任何写入；不抛异常，不阻断打开项目。
+     */
+    public void refreshCurrentRef(ProjectRegistry.RegisteredProject p) {
+        try {
+            Path gitRoot = findGitRoot(Paths.get(p.projectPath));
+            if (gitRoot == null) return;
+            String[] cur = detectCurrentRef(gitRoot);
+            if (cur[0] == null || cur[0].isEmpty()) return;
+            if (cur[0].equals(p.currentRef) && cur[1].equals(p.currentRefType)) return;
+            p.currentRef = cur[0];
+            p.currentRefType = cur[1];
+            registry.save(p);
+        } catch (Exception e) {
+            log.warn("[Git] 探测当前引用失败 {}: {}", p.projectPath, e.getMessage());
         }
-        int code = p.waitFor();
-        if (code != 0) {
-            throw new IOException((out + "\n(退出码 " + code + ")").trim());
-        }
-        return out;
     }
 
     private ProjectRegistry.RegisteredProject requireGitProject(String projectId) {

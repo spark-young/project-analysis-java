@@ -72,6 +72,8 @@
     let addEntryVerified = false;
     let currentScanCandidates = [];
     let currentScanExisted = 0;
+    let currentScanScope = '';         // 本次手动扫描的范围描述（类「x」/ 包「x」本层）
+    let currentScanTruncated = false;  // 命中数超过后端上限，只返回了前 N 个
     let addEntryModalMode = 'manual';
     let addEntrySearchTimer = null;
 
@@ -428,10 +430,21 @@
             await putJson(ctx.saveUrl, ctx.strategy);
             renderSsProfileList();
             if (dsContext === 'modal') renderScanProfileSelect();
+            await refreshAnalyzeViewStrategy();
             showToast('✓ 扫描策略已保存', 'success');
         } catch (e) {
             showToast('保存失败: ' + e.message, 'error');
         }
+    }
+
+    /**
+     * 系统配置页改了全局策略后，分析视图的方案下拉框仍持有"进入项目时"加载的旧快照
+     * （只有 dsContext === 'modal' 的老路径才重绘过），表现为"改了策略要重新进入项目才生效"。
+     * 这里在页面上下文保存/重置后补一次项目生效策略的重载 + 重绘。
+     */
+    async function refreshAnalyzeViewStrategy() {
+        if (dsContext !== 'page' || !App.state.currentProjectId) return;
+        await loadScanStrategy();
     }
 
     async function resetSsStrategy() {
@@ -450,6 +463,7 @@
             renderSsProfileList();
             renderSsEditor();
             if (dsContext === 'modal') renderScanProfileSelect();
+            await refreshAnalyzeViewStrategy();
             showToast('已恢复默认扫描策略', 'success');
         } catch (e) {
             showToast('重置失败: ' + e.message, 'error');
@@ -522,6 +536,7 @@
         renderSsProfileList();
         renderSsEditor();
         if (dsContext === 'modal') renderScanProfileSelect();
+        await refreshAnalyzeViewStrategy();
         showToast('已删除方案', 'success');
     }
 
@@ -803,7 +818,7 @@
                 setVerifyStatus('扫描完成', 'warn');
             } else {
                 currentScanCandidates = candidates;
-                renderScanResults(candidates, scanExisted);
+                renderScanResults(candidates, scanExisted, true);   // 自动扫描的候选已按策略筛过，保持默认全选
                 setVerifyStatus('扫描完成，请选择要加入的方法', 'ok');
             }
         } catch (e) {
@@ -825,7 +840,7 @@
             els.addEntryInputArea.hidden = false;
             els.addEntryVerify.hidden = false;
             els.addEntryClass.value = '';
-            els.addEntryMethod.innerHTML = '<option value="">留空（扫描该类下所有命中规则的方法）</option>';
+            els.addEntryMethod.innerHTML = '<option value="">留空（列出该类下所有方法）</option>';
             els.addEntryMethodText.value = '';
             els.addEntryPaste.value = '';
         }
@@ -867,13 +882,16 @@
         }
     }
 
-    function renderScanResults(candidates, existed) {
+    function renderScanResults(candidates, existed, defaultChecked) {
         els.addEntryScanWrap.hidden = false;
         const listEl = els.addEntryScanList;
         listEl.innerHTML = '';
+        scanShiftAnchorCb = null;   // 列表重建，旧的连选锚点已失效
         currentScanExisted = existed || 0;
         if (candidates.length === 0) {
-            listEl.innerHTML = '<div class="scan-result-empty">未扫描到可加入的新方法，可尝试放宽方法名或调整扫描规则</div>';
+            listEl.innerHTML = '<div class="scan-result-empty">没有可加入的方法'
+                + (currentScanExisted > 0 ? '（' + currentScanExisted + ' 个已在清单中）' : '')
+                + '。可改填类名 / 包名，或用方法名缩小范围</div>';
         } else {
             candidates.forEach((item) => {
                 const sig = readableFullSig(item.className, item.methodName, item.descriptor) || entryKey(item);
@@ -881,7 +899,8 @@
                 const row = document.createElement('div');
                 row.className = 'scan-result-item';
                 row.innerHTML =
-                    '<input type="checkbox" class="scan-item-cb" data-key="' + key.replace(/"/g, '&quot;') + '" checked>'
+                    '<input type="checkbox" class="scan-item-cb" data-key="' + key.replace(/"/g, '&quot;') + '"'
+                    + (defaultChecked ? ' checked' : '') + '>'
                     + '<span class="scan-item-sig">' + sigHtmlFromString(sig) + '</span>'
                     + (item.group ? '<span class="scan-item-group">' + escapeHtml(item.group) + '</span>' : '');
                 listEl.appendChild(row);
@@ -896,9 +915,29 @@
         els.addEntryScanAll.checked = all.length > 0 && all.length === checked;
         els.addEntryConfirm.textContent = '确定加入（' + checked + '）';
         els.addEntryConfirm.disabled = checked === 0;
-        let statsText = '扫描到 ' + all.length + ' 个可加入的方法，勾选 ' + checked + ' 个';
+        let statsText = (currentScanScope ? currentScanScope + '：' : '')
+            + '扫描到 ' + all.length + ' 个可加入的方法，勾选 ' + checked + ' 个';
         if (currentScanExisted > 0) statsText += '；' + currentScanExisted + ' 个已在清单中（不会重复加入）';
+        if (currentScanTruncated) statsText += '；命中过多，仅显示前 ' + all.length + ' 个';
         els.addEntryScanStats.textContent = statsText;
+    }
+
+    /** 本次扫描范围的展示文案；包名明确标注"仅本层"，避免用户误以为包含子包 */
+    function scanScopeLabel(resp) {
+        if (resp.mode === 'PACKAGE') return '包「' + (resp.resolvedName || '') + '」仅本层（不含子包）';
+        if (resp.mode === 'CLASS') return '类「' + (resp.resolvedName || '') + '」';
+        return '';
+    }
+
+    /** 扫描完成后的状态行文案：区分"找不到"与"范围下没有方法" */
+    function scanStatusText(resp, hitCount) {
+        if (resp.mode === 'NONE') return '未找到类或包：' + (resp.resolvedName || '');
+        if (hitCount === 0) {
+            return resp.mode === 'PACKAGE'
+                ? '该包本层没有类（方法都在子包里，本工具不递归子包）'
+                : '该类下没有可加入的方法（已排除构造器与合成方法）';
+        }
+        return '扫描完成，请选择要加入的方法';
     }
 
     function readAddEntryInput() {
@@ -955,11 +994,14 @@
         try {
             const resp = await fetch('/api/classes/methods?path=' + encodeURIComponent(path)
                 + '&class=' + encodeURIComponent(fullClassName));
-            if (!resp.ok) return;
-            const methods = await resp.json();
-            if (!Array.isArray(methods) || methods.length === 0) return;
-            els.addEntryMethod.innerHTML =
-                '<option value="">留空（整个类所有方法都作为入口）</option>'
+            const methods = resp.ok ? await resp.json() : [];
+            // 下拉框只对"类"有意义；填的是包名（或类不存在）时重置，避免残留上一个类的选项
+            const base = '<option value="">留空（列出该类下所有方法）</option>';
+            if (!Array.isArray(methods) || methods.length === 0) {
+                els.addEntryMethod.innerHTML = base;
+                return;
+            }
+            els.addEntryMethod.innerHTML = base
                 + methods.map(m => `<option value="${m.name}" data-desc="${m.descriptor || ''}">${m.name}()</option>`).join('');
         } catch (e) { /* 忽略 */ }
     }
@@ -990,17 +1032,23 @@
         els.addEntryScanStats.textContent = '扫描中...';
         setVerifyStatus('扫描中...', '');
         currentScanCandidates = [];
+        currentScanScope = '';
+        currentScanTruncated = false;
         try {
             const resp = await postJson('/api/projects/' + App.state.currentProjectId + '/entries/scan-manual', {
                 className: input.className,
-                methodName: input.methodName || '',
-                profileId: (scanStrategy ? scanStrategy.activeProfileId : undefined)
+                methodName: input.methodName || ''
             });
             const candidates = resp.candidates || [];
             const existed = resp.existed || 0;
             currentScanCandidates = candidates;
-            renderScanResults(candidates, existed);
-            setVerifyStatus('扫描完成', candidates.length > 0 ? 'ok' : 'warn');
+            currentScanScope = scanScopeLabel(resp);
+            currentScanTruncated = !!resp.truncated;
+            // 手动扫描枚举的是"该范围下全部方法"，动辄上百个，默认不勾选由用户挑选；
+            // 自动扫描的候选已按策略筛过，沿用原来的默认全选。
+            renderScanResults(candidates, existed, false);
+            setVerifyStatus(scanStatusText(resp, candidates.length),
+                resp.mode === 'NONE' ? 'err' : (candidates.length > 0 ? 'ok' : 'warn'));
             addEntryVerified = true;
         } catch (e) {
             els.addEntryScanWrap.hidden = true;
@@ -1018,10 +1066,25 @@
     });
 
     els.addEntryScanList.addEventListener('change', (e) => {
-        if (e.target.classList.contains('scan-item-cb')) {
-            updateScanStats();
-        }
+        if (!e.target.classList.contains('scan-item-cb')) return;
+        // Shift 连选：整段设为与本行相同的勾选态
+        applyScanRangeSelect(scanShiftAnchorCb, e.target);
+        scanShiftAnchorCb = e.target;
+        updateScanStats();
     });
+
+    /** 扫描候选弹窗的 Shift 连选锚点（列表每次扫描都会重建，锚点失效时自动退化为普通单选） */
+    let scanShiftAnchorCb = null;
+
+    function applyScanRangeSelect(anchorCb, targetCb) {
+        if (!anchorCb || !targetCb) return false;
+        const cbs = Array.from(els.addEntryScanList.querySelectorAll('.scan-item-cb'));
+        const a = cbs.indexOf(anchorCb);
+        const b = cbs.indexOf(targetCb);
+        if (a < 0 || b < 0) return false;
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) cbs[i].checked = targetCb.checked;
+        return true;
+    }
 
     els.addEntryClass.addEventListener('input', resetVerify);
     els.addEntryMethodText.addEventListener('input', resetVerify);
@@ -1090,11 +1153,52 @@
         if (!e.target.classList.contains('entry-cb')) return;
         const row = e.target.closest('.entry-row');
         if (!row) return;
-        const key = row.dataset.key;
-        if (e.target.checked) App.state.entrySelKeys.add(key); else App.state.entrySelKeys.delete(key);
-        row.classList.toggle('selected', e.target.checked);
+        // Shift 连选：把「上次点击的行 → 本行」整段设为同一勾选态（按当前可见顺序，被过滤隐藏的行不参与）
+        if (e.shiftKey && applyEntryRangeSelect(entryShiftAnchorRow, row)) {
+            syncEntrySelFromRows();
+        } else {
+            const key = row.dataset.key;
+            if (e.target.checked) App.state.entrySelKeys.add(key); else App.state.entrySelKeys.delete(key);
+            row.classList.toggle('selected', e.target.checked);
+        }
+        entryShiftAnchorRow = row;
         updateEntryToolbar();
     });
+
+    /** 清单行 Shift 连选锚点（元素引用而非下标：过滤/重排后下标会漂移） */
+    let entryShiftAnchorRow = null;
+
+    /** 当前可见的清单行（清单过滤把行 display 设成 none） */
+    function visibleEntryRows() {
+        return Array.from(els.entryConfirmedList.querySelectorAll('.entry-row'))
+            .filter((row) => row.style.display !== 'none');
+    }
+
+    /** 把 anchor 与 target 之间的可见行整段设为 target 的勾选态；anchor 已不可见时返回 false */
+    function applyEntryRangeSelect(anchorRow, targetRow) {
+        if (!anchorRow || !targetRow) return false;
+        const rows = visibleEntryRows();
+        const a = rows.indexOf(anchorRow);
+        const b = rows.indexOf(targetRow);
+        if (a < 0 || b < 0) return false;
+        const checked = targetRow.querySelector('.entry-cb').checked;
+        for (let i = Math.min(a, b); i <= Math.max(a, b); i++) {
+            const cb = rows[i].querySelector('.entry-cb');
+            if (cb) cb.checked = checked;
+        }
+        return true;
+    }
+
+    /** 以 DOM 勾选态为准重建 entrySelKeys（连选会批量改动多次勾选，逐行加减容易漏） */
+    function syncEntrySelFromRows() {
+        App.state.entrySelKeys.clear();
+        els.entryConfirmedList.querySelectorAll('.entry-row').forEach((row) => {
+            const cb = row.querySelector('.entry-cb');
+            if (!cb) return;
+            row.classList.toggle('selected', cb.checked);
+            if (cb.checked && row.dataset.key) App.state.entrySelKeys.add(row.dataset.key);
+        });
+    }
 
     els.entryCheckAll.addEventListener('change', () => {
         const confirmed = (App.state.currentEntryList && App.state.currentEntryList.confirmed) || [];

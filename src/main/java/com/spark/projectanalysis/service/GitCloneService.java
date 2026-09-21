@@ -138,6 +138,33 @@ public class GitCloneService {
     }
 
     /**
+     * 读取工作区当前所在的引用（纯本地 git 命令，无网络、无需认证）。
+     *
+     * @return {引用名, 类型}；类型为 BRANCH / TAG / DETACHED / UNKNOWN，无法确定时引用名为空串
+     */
+    public String[] currentRef(Path repoDir) {
+        try {
+            String branch = git(new String[]{"-C", repoDir.toString(), "symbolic-ref", "--short", "HEAD"}).trim();
+            if (!branch.isEmpty()) return new String[]{branch, "BRANCH"};
+        } catch (Exception ignored) {
+            // detached HEAD
+        }
+        try {
+            String tag = git(new String[]{"-C", repoDir.toString(), "describe", "--tags", "--exact-match", "HEAD"}).trim();
+            if (!tag.isEmpty()) return new String[]{tag, "TAG"};
+        } catch (Exception ignored) {
+            // 不在某个 Tag 上
+        }
+        try {
+            String sha = git(new String[]{"-C", repoDir.toString(), "rev-parse", "--short", "HEAD"}).trim();
+            if (!sha.isEmpty()) return new String[]{sha, "DETACHED"};
+        } catch (Exception ignored) {
+            // 空仓库
+        }
+        return new String[]{"", "UNKNOWN"};
+    }
+
+    /**
      * 切换到指定分支或 Tag。
      * 流程：脏工作区先 git stash（含未跟踪文件）→ fetch → checkout → stash pop。
      * 冲突时保留 stash（改动不丢失）并置 conflict 标记。
