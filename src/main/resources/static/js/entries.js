@@ -61,77 +61,6 @@
 
     let entryItems = [];  // { dto, rowEl, checkEl }（模块私有，见头注释）
 
-    function renderEntries(result) {
-        entryItems = [];
-        els.entryGroups.innerHTML = '';
-        els.entryProjectName.textContent = result.projectName
-            ? '· ' + result.projectName : '';
-        els.entryFilter.value = '';
-
-        let total = 0;
-        result.groups.forEach((g) => {
-            const box = document.createElement('div');
-            box.className = 'entry-group';
-            const head = document.createElement('div');
-            head.className = 'entry-group-head';
-            const title = document.createElement('span');
-            title.className = 'entry-group-title';
-            title.textContent = g.label + '（' + g.entries.length + '）';
-            const typeBadge = document.createElement('span');
-            typeBadge.className = 'badge entry-type-' + g.type.toLowerCase();
-            typeBadge.textContent = g.type;
-            const checkAll = document.createElement('button');
-            checkAll.type = 'button';
-            checkAll.className = 'btn small';
-            checkAll.textContent = '选组';
-            head.appendChild(title);
-            head.appendChild(typeBadge);
-            head.appendChild(checkAll);
-            box.appendChild(head);
-
-            const list = document.createElement('div');
-            list.className = 'entry-list';
-            g.entries.forEach((dto) => {
-                const row = document.createElement('label');
-                row.className = 'entry-row';
-                const check = document.createElement('input');
-                check.type = 'checkbox';
-                const disp = document.createElement('span');
-                disp.className = 'entry-display';
-                disp.textContent = dto.display;
-                const cls = document.createElement('span');
-                cls.className = 'entry-class';
-                cls.textContent = dto.className + '.' + dto.methodName;
-                row.appendChild(check);
-                row.appendChild(disp);
-                row.appendChild(cls);
-                list.appendChild(row);
-                entryItems.push({ dto, rowEl: row, checkEl: check });
-                total++;
-            });
-            checkAll.addEventListener('click', () => {
-                const allOn = g.entries.every((dto) => {
-                    const it = entryItems.find((i) => i.dto === dto);
-                    return it && it.checkEl.checked;
-                });
-                g.entries.forEach((dto) => {
-                    const it = entryItems.find((i) => i.dto === dto);
-                    if (it) it.checkEl.checked = !allOn;
-                });
-                updateEntryCount();
-            });
-            box.appendChild(list);
-            els.entryGroups.appendChild(box);
-        });
-
-        if (total === 0) {
-            els.entryGroups.innerHTML = '<div class="hint">未发现交易入口（REST / Dubbo / ElasticJob / main），可改用手动填类名分析</div>';
-        }
-        updateEntryCount();
-        els.entrySection.hidden = false;
-        els.entrySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
     function collectCheckedEntries() {
         return entryItems.filter((i) => i.checkEl.checked);
     }
@@ -406,7 +335,6 @@
     // ------------------------------------------------------------------
     return {
         init: init,
-        renderEntries: renderEntries,
         collectCheckedEntries: collectCheckedEntries,
         buildEntryRequest: buildEntryRequest,
         analyzeCheckedEntries: analyzeCheckedEntries,

@@ -40,9 +40,7 @@ SIGNATURES.cases.forEach((c) => {
     eq(tag + ' · paramNamesFromDescriptor', Sig.paramNamesFromDescriptor(c.descriptor), c.paramTypes);
     // 2) 由(类名,方法名,描述符)生成权威签名
     eq(tag + ' · fullSignature(descriptor)', Sig.fullSignature(c.className, c.methodName, c.descriptor), c.identifier);
-    // 3) 由(类名,方法名,参数短名列表)生成权威签名
-    eq(tag + ' · fullSignatureFromTypes', Sig.fullSignatureFromTypes(c.className, c.methodName, c.paramTypes), c.identifier);
-    // 4) 描述符参数个数 == 参数列表长度
+    // 3) 描述符参数个数 == 参数列表长度
     eq(tag + ' · paramCountFromDescriptor', Sig.paramCountFromDescriptor(c.descriptor), c.paramTypes.length);
 });
 

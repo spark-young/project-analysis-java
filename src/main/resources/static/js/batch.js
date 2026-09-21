@@ -288,30 +288,6 @@
         if (caret) caret.textContent = openState ? '▾' : '▸';
     }
 
-    /** 加载批量中某个入口的完整分析结果并渲染（优先用已在内存的全量加载缓存，避免重复请求） */
-    async function loadBatchEntry(fileName) {
-        if (App.state.batchModel) {
-            const slot = App.state.batchModel.entries.find((s) => s.entry && s.entry.fileName === fileName);
-            if (slot && slot.result) {
-                hooks.renderSingleEntryResult(slot.result, fileName);
-                return;
-            }
-        }
-        try {
-            showLoading('正在加载该入口的完整调用链...');
-            const data = await fetchJson('/api/projects/' + encodeURIComponent(App.state.currentProjectId)
-                + '/cache/load-file?file=' + encodeURIComponent(fileName));
-            if (!data.ok) { showError(data.error || '加载失败'); return; }
-            App.state.currentResult = data.result;
-            App.state.currentCacheFileName = fileName;
-            hooks.renderSingleEntryResult(data.result, fileName);
-        } catch (e) {
-            showError(e.message);
-        } finally {
-            hideLoading();
-        }
-    }
-
     // ------------------------------------------------------------------
     // 批量全量加载：浏览器端并发拉取全部入口缓存 → 建项目级方法索引 + 项目级频率，
     // 树的 DOM 仍按入口按需渲染。统一进度：分析 0~80%，链加载 80~100%。
@@ -522,12 +498,6 @@
                 callCount: r.sites.size,
                 callers: Array.from(r.callers.entries()).map(([caller, line]) => ({ caller, line })),
             }));
-    }
-
-    /** 频率区数据源：项目级聚合 或 当前单入口的 methodFrequency */
-    function currentFreqData() {
-        if (freqViewMode === 'project' && App.state.batchModel && App.state.batchModel.projectFreq) return App.state.batchModel.projectFreq;
-        return (App.state.currentResult && App.state.currentResult.methodFrequency) || [];
     }
 
     /** 规则变更后刷新频次列表：自动按当前视图取数（项目级聚合 / 单入口） */
@@ -1084,7 +1054,6 @@
         renderBatchSummary: renderBatchSummary,
         toggleEntryBody: toggleEntryBody,
         buildEntryBody: buildEntryBody,
-        loadBatchEntry: loadBatchEntry,
         resetBatchModel: resetBatchModel,
         loadAllBatchEntries: loadAllBatchEntries,
         finalizeBatchLoad: finalizeBatchLoad,

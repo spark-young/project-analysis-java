@@ -131,13 +131,6 @@
     // 规范化：生成权威签名字符串
     // ------------------------------------------------------------------
 
-    /** 由「已解析的参数类型短名列表」拼出权威签名：类名#方法名(参1, 参2)，无参为 () */
-    function fullSignatureFromTypes(className, methodName, paramTypes) {
-        var cls = className || '';
-        var params = paramTypes || [];
-        return cls + '#' + methodName + '(' + params.join(', ') + ')';
-    }
-
     /**
      * 统一可读签名：全限定类名#方法名(参数...)。
      * 无方法名（整类入口）只显示类名；有方法名但无描述符时不再补括号（保持既有展示行为）。
@@ -321,7 +314,6 @@
         paramNamesFromDescriptor: paramNamesFromDescriptor,
         paramCountFromDescriptor: paramCountFromDescriptor,
         paramCountFromSignature: paramCountFromSignature,
-        fullSignatureFromTypes: fullSignatureFromTypes,
         fullSignature: fullSignature,
         splitSignature: splitSignature,
         looksLikeDescriptor: looksLikeDescriptor,

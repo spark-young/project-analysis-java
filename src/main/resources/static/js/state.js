@@ -151,7 +151,7 @@
  *                  唯一清理点=stopGitSwitchPoll（原 :709，判空后 clear 置 null，可安全重复
  *                  调用；hideGitInfoBar/切换终态/提交失败均会调用，重入无泄漏）
  *   gitRefsCache   仅 loadGitRefs 写入（原 :636），当前无读取方（下拉数据直写 DOM）
- *   entryItems     仅 entries.js 内部使用（renderEntries 建行模型、勾选/过滤/统计读取；
+ *   entryItems     仅 entries.js 内部使用（勾选/过滤/统计读取；
  *                  含 rowEl/checkEl DOM 引用，grep 确认本簇外零引用，与 gitSwitchTimer 同判例）
  *   excludeModalItems 仅 app.js C8 批量排除弹窗区使用（本簇外零引用；C8 外搬时随簇走）
  *   freqViewMode / projSearchMarks / projSearchOrder / projSearchCursor / _freqRows /

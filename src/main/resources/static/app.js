@@ -263,7 +263,7 @@
     // ------------------------------------------------------------------
 
     // ------------------------------------------------------------------
-    // 交易入口扫描 + 勾选分析（renderEntries/collectCheckedEntries/buildEntryRequest/
+    // 交易入口扫描 + 勾选分析（collectCheckedEntries/buildEntryRequest/
     // analyzeCheckedEntries/updateEntryCount/applyEntryFilter）与 Excel 下载
     // （btnExcel 绑定/downloadProjectExcel）已抽出 js/entries.js（OPT-27 C4），见顶部薄委托；
     // entryItems 为该模块私有（含 DOM 引用，本簇外零引用，不进 App.state）；
