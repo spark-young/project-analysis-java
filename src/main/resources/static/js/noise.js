@@ -29,6 +29,7 @@
     const els = Ui.els;
     const escapeHtml = Ui.escapeHtml;
     const showToast = Ui.showToast;
+    const showConfirm = Ui.showConfirm;
     const switchView = Ui.switchView;
 
     // C3 项目模块
@@ -472,10 +473,10 @@
     }
 
     // ---- 导入规则 ----
-    function handleNoiseRuleImportFile(e, fileInput) {
+    async function handleNoiseRuleImportFile(e, fileInput) {
         const file = e.target.files[0];
         if (!file) return;
-        if (!confirm('导入将覆盖当前层级的所有规则，确定继续？')) {
+        if (!(await showConfirm('导入将覆盖当前层级的所有规则，确定继续？', '导入规则'))) {
             fileInput.value = '';
             return;
         }
@@ -499,7 +500,7 @@
                 renderNoiseRulesList();
                 refreshAllFilteredViews();
             })
-            .catch((err) => alert('导入失败：' + err.message + '（请确认是合法的 noise-rules.json 文件）'));
+            .catch((err) => showToast('导入失败：' + err.message + '（请确认是合法的 noise-rules.json 文件）', 'error', 5000));
     }
 
     // ---- 新增规则 ----
@@ -539,11 +540,11 @@
     }
 
     // ---- 恢复默认 / 清空规则 ----
-    function resetNoiseRules() {
+    async function resetNoiseRules() {
         const msg = noiseRuleScope === 'project'
             ? '确定清空当前项目的规则？清空后将回退到仅使用全局默认。'
             : '确定恢复默认规则？当前未保存的修改将丢失。';
-        if (!confirm(msg)) return;
+        if (!(await showConfirm(msg, noiseRuleScope === 'project' ? '清空项目规则' : '恢复默认规则'))) return;
         let url = 'api/noise-rules/reset';
         if (noiseRuleScope === 'project') {
             const pp = currentProjectPath();
@@ -583,7 +584,7 @@
                 refreshAllFilteredViews();
                 markNoiseConfigured();
                 showToast('✓ 项目级过滤规则已保存并生效');
-            }).catch(() => alert('保存失败，请检查规则格式'));
+            }).catch(() => showToast('保存失败，请检查规则格式', 'error', 5000));
             return;
         }
         const rules = collectNoiseRulesFromPanel();
@@ -602,7 +603,7 @@
             markNoiseConfigured();
             const scopeLabel = noiseRuleScope === 'project' ? '项目级' : '全局';
             showToast('✓ ' + scopeLabel + '过滤规则已保存并生效');
-        }).catch(() => alert('保存失败，请检查规则格式'));
+        }).catch(() => showToast('保存失败，请检查规则格式', 'error', 5000));
     }
 
     /** 引导用：记下"用户已经动过过滤规则"，并刷新引导 */

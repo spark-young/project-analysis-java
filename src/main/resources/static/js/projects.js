@@ -98,10 +98,12 @@
             btn.addEventListener('click', () => enterProject(btn.dataset.id));
         });
         els.projectsList.querySelectorAll('.pc-delete').forEach((btn) => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', async () => {
                 const name = btn.dataset.name;
-                if (!confirm('确定从列表删除项目"' + name + '"？\n（只移除记录，不删除磁盘文件）')) return;
-                deleteProject(btn.dataset.id);
+                const ok = await showConfirm(
+                    '确定移除项目「' + name + '」？\n（只移除记录，不删除磁盘文件）',
+                    '移除项目');
+                if (ok) deleteProject(btn.dataset.id);
             });
         });
         hooks.guideRefresh();
@@ -160,7 +162,7 @@
                 p = projectIndex[id];
             } catch (e) { /* 忽略，下面统一报错 */ }
         }
-        if (!p) { alert('项目不存在或已被删除'); refreshProjectList(); return; }
+        if (!p) { showToast('项目不存在或已被删除', 'error', 5000); refreshProjectList(); return; }
 
         const isGit = p.type === 'GIT';
         const steps = ['读取项目信息', '同步过滤规则与扫描策略'];
@@ -312,7 +314,7 @@
                 switchView('projects');
             }
             refreshProjectList();
-        } catch (e) { alert(e.message); }
+        } catch (e) { showToast('✕ 删除失败: ' + e.message, 'error', 5000); }
     }
 
     // ------------------------------------------------------------------
@@ -682,7 +684,7 @@
 
         // 原 :373
         els.navToAnalyze.addEventListener('click', () => {
-            if (!App.state.currentProjectId) { alert('请先在项目列表中选择一个项目'); switchView('projects'); return; }
+            if (!App.state.currentProjectId) { showToast('请先在项目列表中选择一个项目', 'warn'); switchView('projects'); return; }
             switchView('analyze');
         });
 
