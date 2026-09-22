@@ -10,12 +10,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import com.spark.projectanalysis.service.dto.CacheFileInfo;
+import org.springframework.http.HttpStatus;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.FileVisitResult;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -35,6 +39,21 @@ public class AnalysisCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(AnalysisCacheService.class);
 
+    /**
+     * 指纹算法版本：算法升级后旧缓存自动失效。
+     * fp1 → fp2：methodFrequency 由"完整签名"改为"methodId/callerId"（OPT-19），
+     * 旧 JSON 反序列化后 methodId 会缺失/错位，故提升版本让旧缓存失效、强制重析。
+     */
+    private static final String FINGERPRINT_VERSION = "fp2";
+
+    /** 需要纳入指纹的 class 产物目录（相对项目根的路径段） */
+    private static final String[][] CLASS_OUTPUT_DIRS = {
+            {"target", "classes"},
+            {"bin", "classes"},
+            {"out", "production"},
+            {"build", "classes"},
+    };
+
     private final ObjectMapper mapper;
 
     public AnalysisCacheService() {
@@ -53,8 +72,17 @@ public class AnalysisCacheService {
                 if (!Files.isRegularFile(legacy)) return Optional.empty();
                 file = legacy;
             }
+            AnalysisResult parsed = mapper.readValue(file.toFile(), AnalysisResult.class);
+            String expected = analysisFingerprint(projectPath, className, methodName,
+                    maxDepth, maxNodes, freqSourceFilter);
+            String actual = parsed == null ? null : parsed.getFingerprint();
+            // 没有指纹字段的旧缓存无法验证新鲜度，一律视为失效；指纹不一致说明代码或参数已变
+            if (actual == null || actual.isEmpty() || !expected.equals(actual)) {
+                log.info("[缓存] 指纹不匹配（代码或分析参数已变更），作废重析: {}", file.getFileName());
+                return Optional.empty();
+            }
             log.info("[缓存] 命中 {}", file.getFileName());
-            return Optional.of(mapper.readValue(file.toFile(), AnalysisResult.class));
+            return Optional.of(parsed);
         } catch (Exception e) {
             log.warn("[缓存] 读取失败，将重新分析: {}", e.getMessage());
             return Optional.empty();
@@ -68,6 +96,9 @@ public class AnalysisCacheService {
             Path file = cacheDir(projectPath)
                     .resolve(cacheName(className, methodName, maxDepth, maxNodes, freqSourceFilter));
             Files.createDirectories(file.getParent());
+            // 写入新鲜度指纹：load 时重算比对，代码或分析参数变了就自动作废
+            result.setFingerprint(analysisFingerprint(projectPath, className, methodName,
+                    maxDepth, maxNodes, freqSourceFilter));
             mapper.writeValue(file.toFile(), result);
             log.info("[缓存] 已写入 {}", file.getFileName());
         } catch (Exception e) {
@@ -82,12 +113,13 @@ public class AnalysisCacheService {
 
     /**
      * 缓存目录：强制放项目根目录下的 ".callgraph/cache/"。
+     * 项目路径指向 jar 文件时（支持直接分析 fat jar），落在 <jar>.callgraph/cache（见 CallgraphPaths.projectDataDir）。
      * 不可写时 warn 日志但仍然返回该路径，由调用方 catch IOException。
      * 缓存跟着项目走，项目搬去哪缓存就去哪，不再兜底全局。
      */
     private Path cacheDir(String projectPath) {
         if (projectPath != null && !projectPath.isEmpty()) {
-            Path projectCache = Paths.get(projectPath, ".callgraph", "cache");
+            Path projectCache = CallgraphPaths.projectDataDir(projectPath).resolve("cache");
             try {
                 Files.createDirectories(projectCache);
             } catch (IOException e) {
@@ -101,11 +133,10 @@ public class AnalysisCacheService {
         return global;
     }
 
-    /** 某项目是否有任意分析缓存文件（只查项目内目录） */
+    /** 某项目是否有任意分析缓存文件（只查项目内目录，不创建） */
     public boolean hasAnyCache(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return false;
-        Path local = cacheDir(projectPath);
-        return hasJsonFile(local);
+        return hasJsonFile(CallgraphPaths.projectDataDir(projectPath).resolve("cache"));
     }
 
     // ==================================================================
@@ -223,7 +254,7 @@ public class AnalysisCacheService {
     public List<CacheFileInfo> listAll(String projectPath) {
         List<CacheFileInfo> result = new ArrayList<>();
         if (projectPath == null || projectPath.isEmpty()) return result;
-        Path dir = Paths.get(projectPath, ".callgraph", "cache");
+        Path dir = CallgraphPaths.projectDataDir(projectPath).resolve("cache");
         if (!Files.isDirectory(dir)) return result;
         try (java.util.stream.Stream<Path> walk = Files.walk(dir, 2)) {
             walk.filter(Files::isRegularFile)
@@ -251,11 +282,27 @@ public class AnalysisCacheService {
         return loadByFileName(projectPath, list.get(0).fileName);
     }
 
-    /** 按具体文件名加载（用于下拉切换） */
+    /**
+     * 按具体文件名加载（用于下拉切换）。
+     * <p>
+     * 安全约束：fileName 来自请求参数，必须是缓存目录内的相对文件名。
+     * 绝对跨盘符路径（如 C:\...\x.json）会被 Path.resolve 直接当作结果返回，
+     * 等于任意文件读；".." 则可穿越出缓存目录。因此这里先归一化再逐段校验，
+     * 非法输入一律 400。
+     */
     public Optional<AnalysisResult> loadByFileName(String projectPath, String fileName) {
+        Path root = cacheDir(projectPath).normalize();
         Path file;
         try {
-            file = cacheDir(projectPath).resolve(fileName);
+            file = root.resolve(safeRelativeFileName(fileName)).normalize();
+        } catch (IllegalArgumentException e) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST, e.getMessage());
+        }
+        // 兜底：任何逃逸出缓存目录的结果都拒绝（覆盖 normalize 未消解的写法）
+        if (!file.startsWith(root)) {
+            throw new AnalysisException(HttpStatus.BAD_REQUEST, "非法的缓存文件名: " + fileName);
+        }
+        try {
             if (!Files.isRegularFile(file)) {
                 log.warn("[缓存] 文件不存在: {}", file);
                 return Optional.empty();
@@ -265,6 +312,35 @@ public class AnalysisCacheService {
             return Optional.empty();
         }
         return loadCached(file, fileName);
+    }
+
+    /**
+     * 校验缓存文件名：必须是非空的相对路径，且不含 ".." 穿越段。
+     *
+     * @throws IllegalArgumentException 非法输入（调用方转为 400）
+     */
+    private static Path safeRelativeFileName(String fileName) {
+        if (fileName == null || fileName.trim().isEmpty()) {
+            throw new IllegalArgumentException("缓存文件名不能为空");
+        }
+        Path name;
+        try {
+            name = Paths.get(fileName.trim()).normalize();
+        } catch (java.nio.file.InvalidPathException e) {
+            throw new IllegalArgumentException("非法的缓存文件名: " + fileName);
+        }
+        if (name.isAbsolute()) {
+            throw new IllegalArgumentException("缓存文件名必须是相对文件名，不接受绝对路径: " + fileName);
+        }
+        if (name.getFileName() == null || name.getNameCount() == 0) {
+            throw new IllegalArgumentException("非法的缓存文件名: " + fileName);
+        }
+        for (Path part : name) {
+            if ("..".equals(part.toString())) {
+                throw new IllegalArgumentException("缓存文件名不允许包含路径穿越段 ..: " + fileName);
+            }
+        }
+        return name;
     }
 
     // ------------------------------------------------------------------
@@ -392,15 +468,43 @@ public class AnalysisCacheService {
     }
 
     /**
-     * 项目指纹：用于判断源码/构建是否有变化。
-     * 优先级：Git HEAD > pom.xml/build.gradle 时间 > target/classes 最新 .class 时间。
-     * 注意：仅作源码变更判断用，不参与缓存文件名计算。
+     * 项目指纹：判断"代码 / 依赖 / 过滤规则是否变过"，决定缓存是否仍然新鲜。
+     * <p>
+     * 覆盖四个方面，任一变化都会让指纹变化：
+     * <ol>
+     *   <li>Git HEAD（仓库提交点）</li>
+     *   <li>构建文件内容哈希（根 pom.xml / build.gradle(.kts)，以及一层子目录里的 pom.xml）</li>
+     *   <li>class 文件的 相对路径 + mtime + size 集合（target/classes、bin/classes、out/production、build/classes）</li>
+     *   <li>全局过滤规则文件（noise-rules.json）</li>
+     * </ol>
+     * 注意：仅作变更判断用，不参与缓存文件名计算。
      */
     static String projectFingerprint(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return "";
         Path root = Paths.get(projectPath);
+        StringBuilder sb = new StringBuilder(FINGERPRINT_VERSION);
+        sb.append("|git=").append(gitHead(root));
+        sb.append("|build=").append(buildFileSignature(root));
+        sb.append("|classes=").append(classFilesSignature(root));
+        sb.append("|rules=").append(noiseRulesSignature());
+        return sha1(sb.toString());
+    }
 
-        // Git HEAD
+    /**
+     * 一次分析的完整指纹 = 项目指纹 + 入口 + 分析参数。
+     * 入口与分析参数（maxDepth / maxNodes / 过滤规则）变化同样让缓存失效。
+     */
+    private static String analysisFingerprint(String projectPath, String className, String methodName,
+                                              int maxDepth, int maxNodes, String freqSourceFilter) {
+        return sha1(String.join("|",
+                projectFingerprint(projectPath),
+                safe(className), safe(methodName),
+                String.valueOf(maxDepth), String.valueOf(maxNodes),
+                safe(freqSourceFilter)));
+    }
+
+    /** Git HEAD：优先解析 ref 指向的提交号，否则用 HEAD 内容本身 */
+    private static String gitHead(Path root) {
         Path head = root.resolve(".git").resolve("HEAD");
         try {
             if (Files.isRegularFile(head)) {
@@ -408,29 +512,102 @@ public class AnalysisCacheService {
                 if (ref.startsWith("ref:")) {
                     Path refFile = root.resolve(".git").resolve(ref.substring(5).trim());
                     if (Files.isRegularFile(refFile)) {
-                        return "git:" + readFile(refFile);
+                        return readFile(refFile);
                     }
                 } else {
-                    return "git:" + ref.trim();
+                    return ref.trim();
                 }
             }
-        } catch (IOException ignored) {}
-
-        // pom.xml / build.gradle
-        Path pom = root.resolve("pom.xml");
-        if (Files.isRegularFile(pom)) {
-            try { return "pom:" + Files.getLastModifiedTime(pom).toMillis(); } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+            // 读不到 HEAD 按无仓库处理
         }
-        for (String name : new String[]{"build.gradle", "build.gradle.kts"}) {
-            Path g = root.resolve(name);
-            if (Files.isRegularFile(g)) {
-                try { return "gradle:" + Files.getLastModifiedTime(g).toMillis(); } catch (IOException ignored) {}
+        return "-";
+    }
+
+    /** 构建文件内容签名：根 pom.xml / build.gradle(.kts)，以及一层子目录里的 pom.xml（多模块） */
+    private static String buildFileSignature(Path root) {
+        List<Path> files = new ArrayList<>();
+        for (String name : new String[]{"pom.xml", "build.gradle", "build.gradle.kts"}) {
+            Path f = root.resolve(name);
+            if (Files.isRegularFile(f)) files.add(f);
+        }
+        try (Stream<Path> walk = Files.walk(root, 2)) {
+            walk.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName() != null
+                            && p.getFileName().toString().equals("pom.xml"))
+                    .forEach(p -> {
+                        if (!files.contains(p)) files.add(p);
+                    });
+        } catch (IOException ignored) {
+            // 遍历失败不阻断，仅损失子模块 pom 的覆盖
+        }
+        if (files.isEmpty()) return "-";
+        List<String> sigs = new ArrayList<>();
+        for (Path f : files) {
+            try {
+                sigs.add(root.relativize(f).toString().replace('\\', '/') + "=" + sha1OfFile(f));
+            } catch (IOException ignored) {
+                // 读不到就跳过该文件
             }
         }
+        java.util.Collections.sort(sigs);
+        return String.join(";", sigs);
+    }
 
-        // 最新 .class 文件
-        long newest = newestClassTime(root);
-        return newest > 0 ? "class:" + newest : "";
+    /** class 文件集合签名：相对路径 + mtime + size，覆盖常见产物目录 */
+    private static String classFilesSignature(Path root) {
+        StringBuilder sb = new StringBuilder();
+        for (String[] segs : CLASS_OUTPUT_DIRS) {
+            Path dir = root;
+            for (String seg : segs) dir = dir.resolve(seg);
+            if (!Files.isDirectory(dir)) continue;
+            List<String> parts = new ArrayList<>();
+            collectClassSignatures(dir, parts);
+            java.util.Collections.sort(parts);
+            sb.append(String.join("/", segs)).append('{');
+            for (String p : parts) sb.append(p).append(',');
+            sb.append('}');
+        }
+        return sb.length() == 0 ? "-" : sb.toString();
+    }
+
+    /** 递归收集 class 文件的 相对路径:mtime:size（walkFileTree 顺带拿到属性，避免重复 stat） */
+    private static void collectClassSignatures(Path dir, List<String> out) {
+        try {
+            Files.walkFileTree(dir, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (attrs.isRegularFile() && file.getFileName().toString().endsWith(".class")) {
+                        out.add(dir.relativize(file).toString().replace('\\', '/')
+                                + ":" + attrs.lastModifiedTime().toMillis()
+                                + ":" + attrs.size());
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException ignored) {
+            // 遍历失败按空处理
+        }
+    }
+
+    /** 全局过滤规则文件签名（改了规则也应让旧缓存失效） */
+    private static String noiseRulesSignature() {
+        try {
+            Path f = CallgraphPaths.noiseRulesFile();
+            if (!Files.isRegularFile(f)) return "-";
+            return Files.getLastModifiedTime(f).toMillis() + ":" + Files.size(f);
+        } catch (Exception e) {
+            return "-";
+        }
+    }
+
+    private static String sha1OfFile(Path p) throws IOException {
+        return sha1(new String(Files.readAllBytes(p), StandardCharsets.UTF_8));
     }
 
     private static String readFile(Path p) throws IOException {
@@ -438,34 +615,4 @@ public class AnalysisCacheService {
         return new String(bytes, StandardCharsets.UTF_8).trim();
     }
 
-    private static long newestClassTime(Path root) {
-        long newest = 0L;
-        Path[] dirs = {
-                root.resolve("target").resolve("classes"),
-                root.resolve("bin").resolve("classes"),
-                root.resolve("out").resolve("production"),
-        };
-        for (Path dir : dirs) {
-            if (!Files.isDirectory(dir)) continue;
-            try {
-                java.util.List<Path> classFiles = new java.util.ArrayList<>();
-                collectClassFiles(dir, classFiles);
-                for (Path p : classFiles) {
-                    try {
-                        long t = Files.getLastModifiedTime(p).toMillis();
-                        if (t > newest) newest = t;
-                    } catch (IOException ignored) {}
-                }
-            } catch (IOException ignored) {}
-        }
-        return newest;
-    }
-
-    private static void collectClassFiles(Path dir, java.util.List<Path> out) throws IOException {
-        java.util.List<Path> list = Files.list(dir).collect(java.util.stream.Collectors.toList());
-        for (Path p : list) {
-            if (Files.isDirectory(p)) collectClassFiles(p, out);
-            else if (p.toString().endsWith(".class")) out.add(p);
-        }
-    }
 }

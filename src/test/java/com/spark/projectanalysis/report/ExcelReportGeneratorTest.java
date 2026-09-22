@@ -30,7 +30,22 @@ import static org.junit.jupiter.api.Assertions.*;
 class ExcelReportGeneratorTest {
 
     static ClassMetadataRegistry registry;
-    static ExcelReportGenerator generator = new ExcelReportGenerator(new NoiseRuleService());
+
+    /**
+     * 测试专用：与"环境噪声配置"解耦的 NoiseRuleService（过滤恒为否），本用例只校验 Excel 结构。
+     * <p>
+     * 背景：{@link NoiseRuleService} 从 {@code callgraph.home/noise-rules.json} 加载全局规则，
+     * 文件缺失时回退为**内置规则默认启用**。开启测试隔离（OPT-14，home 指向临时目录）后，
+     * 本机 {@code D:\.callgraph} 中"全部禁用内置规则"的既有配置不再生效，getter/构造器等
+     * 样板方法会被过滤，使"行数 = 图方法数"的断言退化为依赖本机环境。这里显式关闭过滤，
+     * 消除该隐藏依赖；样板规则本身由 NoiseRuleService 相关测试覆盖。
+     */
+    static ExcelReportGenerator generator = new ExcelReportGenerator(new NoiseRuleService() {
+        @Override
+        public boolean isNoise(String methodIdentifier, String source, String projectPath) {
+            return false;
+        }
+    });
 
     @BeforeAll
     static void setUp() throws Exception {

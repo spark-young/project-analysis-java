@@ -1,10 +1,19 @@
 package com.spark.projectanalysis.web;
 
+import com.spark.projectanalysis.service.ClassMetadataService;
 import com.spark.projectanalysis.service.EntryListService;
 import com.spark.projectanalysis.service.EntryScanService;
 import com.spark.projectanalysis.service.ProjectRegistry;
+import com.spark.projectanalysis.service.dto.EntryAddBatchResponse;
+import com.spark.projectanalysis.service.dto.EntryAddResponse;
+import com.spark.projectanalysis.service.dto.EntryExcludedResponse;
 import com.spark.projectanalysis.service.dto.EntryList;
 import com.spark.projectanalysis.service.dto.EntryList.EntryItem;
+import com.spark.projectanalysis.service.dto.EntryMergeResponse;
+import com.spark.projectanalysis.service.dto.EntryOkResponse;
+import com.spark.projectanalysis.service.dto.EntryRemovedResponse;
+import com.spark.projectanalysis.service.dto.EntryScanDiffResponse;
+import com.spark.projectanalysis.service.dto.EntryScanManualResponse;
 import com.spark.projectanalysis.service.dto.EntryScanResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +28,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.HashMap;
-import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -44,13 +52,16 @@ public class EntryListController {
 
     private final EntryListService entryListService;
     private final EntryScanService entryScanService;
+    private final ClassMetadataService classMetadataService;
     private final ProjectRegistry registry;
 
     public EntryListController(EntryListService entryListService,
                                EntryScanService entryScanService,
+                               ClassMetadataService classMetadataService,
                                ProjectRegistry registry) {
         this.entryListService = entryListService;
         this.entryScanService = entryScanService;
+        this.classMetadataService = classMetadataService;
         this.registry = registry;
     }
 
@@ -70,8 +81,8 @@ public class EntryListController {
 
     /** 自动扫描 → 返回新增候选 + 已存在数（不自动合并，让用户决定）。可传 profileId 指定扫描方案 */
     @PostMapping("/{id}/entries/scan")
-    public Map<String, Object> scanAndDiff(@PathVariable String id,
-                                           @RequestBody(required = false) Map<String, String> body) {
+    public EntryScanDiffResponse scanAndDiff(@PathVariable String id,
+                                             @RequestBody(required = false) Map<String, String> body) {
         String path = resolvePath(id);
         String profileId = body == null ? null : body.get("profileId");
         EntryScanResult scanResult = (profileId != null && !profileId.isEmpty())
@@ -79,14 +90,14 @@ public class EntryListController {
                 : entryScanService.scan(path);
         EntryListService.ScanDiffResult diff = entryListService.diffScanCandidates(path, scanResult);
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("candidates", diff.candidates);
-        resp.put("existed", diff.existed);
-        resp.put("scanTotalGroups", scanResult.getGroups() == null ? 0 : scanResult.getGroups().size());
-        resp.put("scanTotalEntries", scanResult.getGroups() == null ? 0 :
+        EntryScanDiffResponse resp = new EntryScanDiffResponse();
+        resp.setCandidates(diff.candidates);
+        resp.setExisted(diff.existed);
+        resp.setScanTotalGroups(scanResult.getGroups() == null ? 0 : scanResult.getGroups().size());
+        resp.setScanTotalEntries(scanResult.getGroups() == null ? 0 :
                 scanResult.getGroups().stream()
                         .mapToInt(g -> g.getEntries() == null ? 0 : g.getEntries().size()).sum());
-        resp.put("projectPath", path);
+        resp.setProjectPath(path);
         log.info("[入口] 项目 {} 扫描完成：候选 {} 条，已存在 {} 条",
                 id, diff.candidates.size(), diff.existed);
         return resp;
@@ -94,113 +105,122 @@ public class EntryListController {
 
     /** 把候选合并进 confirmed，返回 {added, existed} */
     @PostMapping("/{id}/entries/merge")
-    public Map<String, Object> merge(@PathVariable String id,
-                                     @RequestBody List<EntryItem> candidates) {
+    public EntryMergeResponse merge(@PathVariable String id,
+                                    @RequestBody List<EntryItem> candidates) {
         String path = resolvePath(id);
         Map<String, Integer> r = entryListService.mergeCandidates(path, candidates);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("added", r.get("added"));
-        resp.put("existed", r.get("existed"));
+        EntryMergeResponse resp = new EntryMergeResponse();
+        resp.setAdded(r.get("added"));
+        resp.setExisted(r.get("existed"));
         return resp;
     }
 
-    /** 手动扫描：按类名从当前扫描策略的结果中提取匹配的入口方法候选（不落库） */
+    /**
+     * 手动扫描：把用户填的「类名 / 包名」下面的全部方法枚举为候选，供勾选加入清单。
+     * <p>
+     * 与「自动扫描」不同，这里**不套用扫描策略**——手动添加的语义是"用户已经知道要哪些方法"，
+     * 所以只做枚举（排除构造器与编译器合成方法），是否算入口由用户勾选决定。
+     * 包名只列本层类，不递归子包（产品约定）。
+     */
     @PostMapping("/{id}/entries/scan-manual")
-    public Map<String, Object> scanManual(@PathVariable String id,
-                                          @RequestBody(required = false) Map<String, String> body) {
+    public EntryScanManualResponse scanManual(@PathVariable String id,
+                                              @RequestBody(required = false) Map<String, String> body) {
         String path = resolvePath(id);
-        String className = body == null ? null : body.get("className");
+        String query = body == null ? null : body.get("className");
         String methodName = body == null ? null : body.get("methodName");
-        String profileId = body == null ? null : body.get("profileId");
-        EntryScanResult scanResult = (profileId != null && !profileId.isEmpty())
-                ? entryScanService.scan(path, profileId)
-                : entryScanService.scan(path);
-        List<EntryItem> matched = entryListService.extractByClass(scanResult, className);
-        if (methodName != null && !methodName.trim().isEmpty()) {
-            String needle = methodName.trim();
-            matched.removeIf(item -> !needle.equals(item.getMethodName()));
+
+        ClassMetadataService.MethodQuery found = classMetadataService.methodsUnder(path, query);
+        String needle = methodName == null ? "" : methodName.trim();
+        List<EntryItem> matched = new ArrayList<>();
+        for (ClassMetadataService.MethodRef m : found.getMethods()) {
+            if (!needle.isEmpty() && !needle.equals(m.getMethodName())) continue;
+            matched.add(EntryListService.manualEntry(m.getClassName(), m.getMethodName(), m.getDescriptor()));
         }
         EntryListService.ScanDiffResult diff = entryListService.diffItems(path, matched);
 
-        Map<String, Object> resp = new LinkedHashMap<>();
-        resp.put("candidates", diff.candidates);
-        resp.put("existed", diff.existed);
-        resp.put("total", matched.size());
-        resp.put("projectPath", path);
-        log.info("[入口] 手动扫描 {}：匹配 {} 条，新增候选 {} 条，已存在 {} 条",
-                className, matched.size(), diff.candidates.size(), diff.existed);
+        EntryScanManualResponse resp = new EntryScanManualResponse();
+        resp.setCandidates(diff.candidates);
+        resp.setExisted(diff.existed);
+        resp.setTotal(matched.size());
+        resp.setMode(found.getMode());
+        resp.setResolvedName(found.getResolvedName());
+        resp.setTruncated(found.isTruncated());
+        resp.setProjectPath(path);
+        log.info("[入口] 手动扫描 {}「{}」({})：匹配 {} 条，新增候选 {} 条，已存在 {} 条",
+                id, found.getResolvedName(), found.getMode(),
+                matched.size(), diff.candidates.size(), diff.existed);
         return resp;
     }
 
     /** 批量手动添加（直接进 confirmed），返回 {added, existed, list} */
     @PostMapping("/{id}/entries/add-batch")
-    public Map<String, Object> addManualBatch(@PathVariable String id,
-                                              @RequestBody List<EntryItem> items) {
+    public EntryAddBatchResponse addManualBatch(@PathVariable String id,
+                                                @RequestBody List<EntryItem> items) {
         String path = resolvePath(id);
         Map<String, Integer> r = entryListService.addManualBatch(path, items);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("added", r.get("added"));
-        resp.put("existed", r.get("existed"));
-        resp.put("list", entryListService.load(path));
+        EntryAddBatchResponse resp = new EntryAddBatchResponse();
+        resp.setAdded(r.get("added"));
+        resp.setExisted(r.get("existed"));
+        resp.setList(entryListService.load(path));
         return resp;
     }
 
     /** 手动添加一个入口（路径 B） */
     @PostMapping("/{id}/entries/add")
-    public Map<String, Object> addManual(@PathVariable String id,
-                                         @RequestBody Map<String, String> body) {
+    public EntryAddResponse addManual(@PathVariable String id,
+                                      @RequestBody Map<String, String> body) {
         String path = resolvePath(id);
         boolean added = entryListService.addManual(path,
                 body.get("className"),
                 body.get("methodName"),
                 body.get("descriptor"));
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("added", added);
-        resp.put("list", entryListService.load(path));
+        EntryAddResponse resp = new EntryAddResponse();
+        resp.setAdded(added);
+        resp.setList(entryListService.load(path));
         return resp;
     }
 
     /** 排除一个入口（confirmed → excluded） */
     @PostMapping("/{id}/entries/exclude")
-    public Map<String, Object> exclude(@PathVariable String id,
-                                       @RequestBody Map<String, String> body) {
+    public EntryOkResponse exclude(@PathVariable String id,
+                                   @RequestBody Map<String, String> body) {
         String path = resolvePath(id);
         boolean ok = entryListService.exclude(path, body.get("key"), body.get("reason"));
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("ok", ok);
+        EntryOkResponse resp = new EntryOkResponse();
+        resp.setOk(ok);
         return resp;
     }
 
     /** 批量排除（confirmed → excluded），body 为 [{key, reason}, ...] */
     @PostMapping("/{id}/entries/exclude/batch")
-    public Map<String, Object> excludeBatch(@PathVariable String id,
-                                            @RequestBody List<Map<String, String>> items) {
+    public EntryExcludedResponse excludeBatch(@PathVariable String id,
+                                              @RequestBody List<Map<String, String>> items) {
         String path = resolvePath(id);
         int excluded = entryListService.excludeBatch(path, items);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("excluded", excluded);
+        EntryExcludedResponse resp = new EntryExcludedResponse();
+        resp.setExcluded(excluded);
         return resp;
     }
 
     /** 恢复一个入口（excluded → confirmed） */
     @PostMapping("/{id}/entries/restore")
-    public Map<String, Object> restore(@PathVariable String id,
-                                       @RequestBody Map<String, String> body) {
+    public EntryOkResponse restore(@PathVariable String id,
+                                   @RequestBody Map<String, String> body) {
         String path = resolvePath(id);
         boolean ok = entryListService.restore(path, body.get("key"));
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("ok", ok);
+        EntryOkResponse resp = new EntryOkResponse();
+        resp.setOk(ok);
         return resp;
     }
 
     /** 彻底删除一条 */
     @DeleteMapping("/{id}/entries")
-    public Map<String, Object> delete(@PathVariable String id,
-                                      @RequestParam String key) {
+    public EntryRemovedResponse delete(@PathVariable String id,
+                                       @RequestParam String key) {
         String path = resolvePath(id);
         int removed = entryListService.delete(path, key);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("removed", removed);
+        EntryRemovedResponse resp = new EntryRemovedResponse();
+        resp.setRemoved(removed);
         return resp;
     }
 }

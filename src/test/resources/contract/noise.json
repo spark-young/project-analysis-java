@@ -1,0 +1,258 @@
+{
+  "_comment": "OPT-24 噪声规则判定契约夹具。前端 Sig.matchCompiledRules(Sig.compileRules(rules), source, className, methodName, paramCount) 与后端 NoiseRuleService.isNoiseOnRules(rules, identifier, source) 都必须对每个用例产出相同的 expected。identifier 由前端用的 (className, methodName, paramCount) 构造而来，供后端解析。",
+  "cases": [
+    {
+      "name": "方法名正则命中（source=ALL）",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "getInstance",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#getInstance()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "工厂", "methodPattern": "getInstance", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "方法名正则未命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "doWork",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#doWork()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "工厂", "methodPattern": "getInstance", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "规则未启用 → 不命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "getInstance",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#getInstance()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "工厂", "methodPattern": "getInstance", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": false}
+      ]
+    },
+    {
+      "name": "类名正则命中",
+      "source": "PROJECT",
+      "className": "com.foo.OrderController",
+      "methodName": "handle",
+      "paramCount": 0,
+      "identifier": "com.foo.OrderController#handle()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "控制器", "methodPattern": ".*", "classPattern": ".*Controller.*", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "类名正则未命中",
+      "source": "PROJECT",
+      "className": "com.foo.OrderService",
+      "methodName": "handle",
+      "paramCount": 0,
+      "identifier": "com.foo.OrderService#handle()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "控制器", "methodPattern": ".*", "classPattern": ".*Controller.*", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "类名正则为空 → 不限制类",
+      "source": "PROJECT",
+      "className": "whatever.Class",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "whatever.Class#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "run", "methodPattern": "run", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "参数个数命中（setter，1 参，PROJECT）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "setName",
+      "paramCount": 1,
+      "identifier": "com.foo.Bar#setName(a)",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "简单 setter", "methodPattern": "^set[A-Z]", "classPattern": "", "source": "PROJECT", "paramCount": 1, "enabled": true}
+      ]
+    },
+    {
+      "name": "参数个数不符 → 不命中",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "setName",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#setName()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "简单 setter", "methodPattern": "^set[A-Z]", "classPattern": "", "source": "PROJECT", "paramCount": 1, "enabled": true}
+      ]
+    },
+    {
+      "name": "来源不匹配（规则 PROJECT，方法 EXTERNAL）",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "项目内", "methodPattern": ".*", "classPattern": "", "source": "PROJECT", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "来源 ALL 不限来源（方法 DEPENDENCY）",
+      "source": "DEPENDENCY",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "全部", "methodPattern": ".*", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "非法正则 → 永不命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "x",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#x()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "坏正则", "methodPattern": "(", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "方法名正则为空 → 命中全部",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "whatever",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#whatever()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "全匹配", "methodPattern": "", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "多条规则：第二条命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "target",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#target()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "不命中", "methodPattern": "nope", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true},
+        {"id": "r2", "name": "命中", "methodPattern": "target", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "构造器规则（<init>）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "<init>",
+      "paramCount": 1,
+      "identifier": "com.foo.Bar#<init>(String)",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "构造器", "methodPattern": "<init>", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "泛型参数个数解析（Map<String, Integer> 记 1 个）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "query",
+      "paramCount": 1,
+      "identifier": "com.foo.Bar#query(Map<String, Integer>)",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "query", "methodPattern": "^query$", "classPattern": "", "source": "ALL", "paramCount": 1, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"all\" 视作 ALL（不限来源）→ 命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "小写 all", "methodPattern": ".*", "classPattern": "", "source": "all", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"Project\" 对方法 PROJECT 命中（equalsIgnoreCase）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "混合大小写", "methodPattern": ".*", "classPattern": "", "source": "Project", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-1 来源大小写：rule.source=\"Project\" 对方法 EXTERNAL 不命中",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "混合大小写", "methodPattern": ".*", "classPattern": "", "source": "Project", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-2 方法名正则仅空白：按字面编译 find → 不命中（不再视为匹配全部）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "空白方法名", "methodPattern": " ", "classPattern": "", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "D3-3 类名正则仅空白：按字面编译 find → 不命中（不再视为不限类）",
+      "source": "PROJECT",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": false,
+      "rules": [
+        {"id": "r1", "name": "空白类名", "methodPattern": ".*", "classPattern": " ", "source": "ALL", "paramCount": null, "enabled": true}
+      ]
+    },
+    {
+      "name": "来源为空串 → 不限来源（与后端 isEmpty 同口径）",
+      "source": "EXTERNAL",
+      "className": "com.foo.Bar",
+      "methodName": "run",
+      "paramCount": 0,
+      "identifier": "com.foo.Bar#run()",
+      "expected": true,
+      "rules": [
+        {"id": "r1", "name": "空来源", "methodPattern": ".*", "classPattern": "", "source": "", "paramCount": null, "enabled": true}
+      ]
+    }
+  ]
+}

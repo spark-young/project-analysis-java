@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Java工程分析工具</title>
-    <link rel="stylesheet" href="style.css?v=20260915a">
+    <link rel="stylesheet" href="style.css?v=20260917a">
 </head>
 <body>
 <header class="header">
@@ -59,7 +59,7 @@
                 <div class="form-item span-2">
                     <label for="projectPath">项目路径 <span class="req">*</span></label>
                     <div class="input-group">
-                        <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（需已编译，或指向 .jar 文件）">
+                        <input id="projectPath" type="text" placeholder="例如 D:\code\my-project（指向工程根目录即可，含 target 那一层；也可直接指向 .jar 文件）">
                         <button id="btnInfo" type="button" class="btn ghost">检查</button>
                         <button id="btnImportLocal" type="button" class="btn primary">导入项目</button>
                     </div>
@@ -90,6 +90,7 @@
                 </div>
                 <div class="form-item span-2">
                     <div id="gitStatus" class="git-status" hidden></div>
+                    <pre id="gitPrepareLog" class="job-log" hidden></pre>
                 </div>
             </div>
             <div id="projectsImportError" class="error-banner" hidden></div>
@@ -162,6 +163,7 @@
                                 <div id="gitSwitchProgressBar" class="scan-progress-bar" style="width:0%"></div>
                             </div>
                             <div id="gitSwitchProgressText" class="scan-progress-text">准备中...</div>
+                            <pre id="gitSwitchLog" class="job-log" hidden></pre>
                         </div>
                     </div>
                 </div>
@@ -465,22 +467,22 @@
             <div id="addEntryInputArea">
                 <!-- 类名 -->
                 <div class="modal-field">
-                    <label class="modal-label">类名 <span class="required">*</span></label>
+                    <label class="modal-label">类名 / 包名 <span class="required">*</span></label>
                     <input id="addEntryClass" type="text" list="addEntryClassList"
-                           placeholder="支持简名 OrderController，同名类需填全限定名">
+                           placeholder="类名 com.demo.OrderController 或 OrderController；也可填包名 com.demo.api">
                     <datalist id="addEntryClassList"></datalist>
-                    <div class="modal-hint">示例：com.demo.OrderController 或 OrderController</div>
+                    <div class="modal-hint">填类名 → 列出该类下所有方法；填包名 → 只列该包<b>本层</b>的方法，<b>不含子包</b></div>
                 </div>
                 <!-- 方法名 -->
                 <div class="modal-field">
                     <label class="modal-label">方法名 <span class="modal-hint">（可选，扫描时可缩小范围）</span></label>
                     <select id="addEntryMethod" class="modal-select">
-                        <option value="">留空（扫描该类下所有命中规则的方法）</option>
+                        <option value="">留空（列出该类下所有方法）</option>
                     </select>
                     <input id="addEntryMethodText" type="text"
                            placeholder="也可以直接输入方法名（覆盖上面的下拉）"
                            style="margin-top:6px;">
-                    <div class="modal-hint">类名填好后，下拉会自动列出该类的方法；扫描时按此范围过滤</div>
+                    <div class="modal-hint">填类名后下拉会列出该类的方法；填包名时下拉为空，可直接在右侧输入方法名跨类筛选</div>
                 </div>
                 <!-- 快捷粘贴 -->
                 <div class="modal-field">
@@ -488,8 +490,8 @@
                     <textarea id="addEntryPaste" rows="2"
                               placeholder="com.demo.OrderController#createOrder(Order)"></textarea>
                     <div class="modal-hint">支持 3 种格式：<br>
-                        ① com.demo.OrderController（扫描整个类）<br>
-                        ② com.demo.OrderController#createOrder（扫描指定方法）<br>
+                        ① com.demo.OrderController（列出整个类的方法）<br>
+                        ② com.demo.OrderController#createOrder（只列该方法）<br>
                         ③ com.demo.OrderController#createOrder(Order)（精确重载，类型名可简化）</div>
                 </div>
             </div>
@@ -677,13 +679,6 @@
     </div>
 </footer>
 
-<div id="loading" class="loading-overlay" hidden>
-    <div class="loading-box">
-        <div class="spinner"></div>
-        <div id="loadingText">正在分析……</div>
-    </div>
-</div>
-
 <footer class="footer">
     <div class="container">
         内网工具 · 零出站网络 · 对被分析项目只读不执行 ·
@@ -708,17 +703,32 @@
     </div>
 </div>
 
-<!-- 全屏加载遮罩（进入项目等耗时操作） -->
+<!-- 全屏加载遮罩：支持「单行文案」与「分步进度」两种模式 -->
 <div id="loadingOverlay" class="loading-overlay" hidden>
     <div class="loading-box">
         <div class="loading-spinner"></div>
-        <div id="loadingText" class="loading-text">正在加载...</div>
+        <div id="loadingOverlayText" class="loading-text">正在加载...</div>
+        <div id="loadingSteps" class="loading-steps" hidden></div>
+        <div id="loadingBarWrap" class="loading-bar-wrap" hidden>
+            <div id="loadingBar" class="loading-bar"></div>
+        </div>
+        <div id="loadingElapsed" class="loading-elapsed" hidden></div>
     </div>
 </div>
 
 <div id="toast" class="toast" hidden></div>
 
-<script src="guide.js?v=20260915a"></script>
-<script src="app.js?v=20260915a"></script>
+<script src="guide.js?v=20260916b"></script>
+<script src="js/sig.js?v=20260918b"></script>
+<script src="js/api.js?v=20260919a"></script>
+<script src="js/state.js?v=20260921a"></script>
+<script src="js/ui.js?v=20260919a"></script>
+<script src="js/projects.js?v=20260923c"></script>
+<script src="js/entries.js?v=20260921a"></script>
+<script src="js/batch.js?v=20260922e"></script>
+<script src="js/result.js?v=20260922b"></script>
+<script src="js/noise.js?v=20260923c"></script>
+<script src="js/strategy.js?v=20260923a"></script>
+<script src="app.js?v=20260922d"></script>
 </body>
 </html>

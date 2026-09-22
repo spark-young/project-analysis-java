@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.spark.projectanalysis.service.dto.NoiseProjectDetail;
 import com.spark.projectanalysis.service.dto.NoiseRule;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +14,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -45,6 +45,14 @@ public class NoiseRuleService {
     private static final Logger log = LoggerFactory.getLogger(NoiseRuleService.class);
     private static final ObjectMapper MAPPER = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+    /**
+     * 正则编译结果缓存：key = 正则本体（本匹配路径的 flags 恒为默认 0）。
+     * isNoise/getMatchedRule 是导出与页面的热路径，同一规则会反复匹配成千上万个方法，
+     * 缓存后避免每次调用都 Pattern.compile。
+     * 非法正则的 PatternSyntaxException 由 computeIfAbsent 抛出且不入缓存，行为与改前一致。
+     */
+    private static final Map<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
 
     /** 全局规则文件路径 */
     private static final Path GLOBAL_RULES_FILE = CallgraphPaths.noiseRulesFile();
@@ -242,7 +250,7 @@ public class NoiseRuleService {
     /** 项目级规则文件路径：<项目>/.callgraph/noise-rules.json */
     public static Path projectRulesFile(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return GLOBAL_RULES_FILE;
-        return Paths.get(projectPath, ".callgraph", "noise-rules.json");
+        return CallgraphPaths.projectDataDir(projectPath).resolve("noise-rules.json");
     }
 
     /**
@@ -344,12 +352,12 @@ public class NoiseRuleService {
      * 项目级配置详情（新版结构）：globalRules + globalOverrides + customRules。
      * 前端"项目级 Tab"用它同时渲染"全局规则覆盖区"和"自定义规则区"。
      */
-    public Map<String, Object> getProjectDetail(String projectPath) {
+    public NoiseProjectDetail getProjectDetail(String projectPath) {
         ProjectRuleSet rs = projectRuleSet(projectPath);
-        Map<String, Object> detail = new LinkedHashMap<>();
-        detail.put("globalRules", getRules());
-        detail.put("globalOverrides", new LinkedHashMap<>(rs.overrides));
-        detail.put("customRules", new ArrayList<>(rs.customRules));
+        NoiseProjectDetail detail = new NoiseProjectDetail();
+        detail.setGlobalRules(getRules());
+        detail.setGlobalOverrides(new LinkedHashMap<>(rs.overrides));
+        detail.setCustomRules(new ArrayList<>(rs.customRules));
         return detail;
     }
 
@@ -551,10 +559,15 @@ public class NoiseRuleService {
         if (regex == null || regex.isEmpty()) return true;
         if (input == null) return false;
         try {
-            return Pattern.compile(regex).matcher(input).find();
+            return compiledPattern(regex).matcher(input).find();
         } catch (PatternSyntaxException e) {
             return false;
         }
+    }
+
+    /** 取缓存的编译结果；未命中则由 Pattern.compile 编译后放入（非法正则抛出且不缓存） */
+    private static Pattern compiledPattern(String regex) {
+        return PATTERN_CACHE.computeIfAbsent(regex, Pattern::compile);
     }
 
     private static void saveQuietly(Path file, List<NoiseRule> rules) {

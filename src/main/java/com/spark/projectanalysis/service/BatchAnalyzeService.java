@@ -14,8 +14,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PreDestroy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -24,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 按交易入口清单的批量分析（异步 Job 模式，前端轮询进度）。
@@ -39,15 +42,17 @@ public class BatchAnalyzeService {
     private static final Logger log = LoggerFactory.getLogger(BatchAnalyzeService.class);
 
     private static final int DEFAULT_MAX_DEPTH = 20;
-    /** 每个入口方法独立的节点预算（与同步分析语义一致） */
-    private static final int MAX_NODES_PER_ROOT = 50000;
     /** 频率分析来源筛选（持久化到每入口缓存文件名指纹，与同步分析一致） */
     private static final String FREQ_FILTER = "ALL";
 
     /** Job TTL（毫秒）：完成/失败后保留 5 分钟 */
     private static final long JOB_TTL_MS = 5 * 60 * 1000L;
 
+    /** Job 表硬上限：即使未到 TTL，超过上限也优先淘汰最旧的已结束 Job，避免无上限增长 */
+    private static final int MAX_JOBS = 200;
+
     private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final AnalysisCacheService cacheService;
     private final EntryListService entryListService;
 
@@ -61,9 +66,11 @@ public class BatchAnalyzeService {
     });
 
     public BatchAnalyzeService(AnalysisService analysisService,
+                               ClassMetadataService classMetadataService,
                                AnalysisCacheService cacheService,
                                EntryListService entryListService) {
         this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
     }
@@ -110,7 +117,7 @@ public class BatchAnalyzeService {
 
             // 5-40%：注册表构建（复用缓存，回调真实渐增）
             job.update(BatchAnalyzeStatus.State.INDEXING, 5, "构建类注册表...");
-            AnalysisService.RegistryHandle handle = analysisService.registryFor(path,
+            ClassMetadataService.RegistryHandle handle = classMetadataService.registryFor(path,
                     (phase, done, total, desc) -> {
                         switch (phase) {
                             case 0: job.update(BatchAnalyzeStatus.State.INDEXING, 10, desc); break;
@@ -154,14 +161,14 @@ public class BatchAnalyzeService {
                 try {
                     long entryStart = System.currentTimeMillis();
                     List<MethodKey> roots =
-                            analysisService.resolveEntryRoots(handle.getRegistry(), ref);
+                            classMetadataService.resolveEntryRoots(handle.getRegistry(), ref);
                     if (roots.isEmpty()) {
                         entry.setFailed(true);
                         entry.setError("未解析到根方法");
                         failed++;
                         continue;
                     }
-                    CallGraph graph = builder.buildGraphRoots(roots, maxDepth, MAX_NODES_PER_ROOT);
+                    CallGraph graph = builder.buildGraphRoots(roots, maxDepth, AnalysisService.MAX_NODES);
 
                     AnalysisResult result = analysisService.assembleResult(
                             path, handle, graph, System.currentTimeMillis() - entryStart);
@@ -170,10 +177,10 @@ public class BatchAnalyzeService {
 
                     // 每个入口单独落盘（文件名与同步分析一致，可被 loadByFileName 按名加载）
                     cacheService.save(path, ref.getClassName(), ref.getMethodName(),
-                            maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER, result);
+                            maxDepth, AnalysisService.MAX_NODES, FREQ_FILTER, result);
 
                     entry.setFileName(cacheService.fileNameOf(ref.getClassName(), ref.getMethodName(),
-                            maxDepth, MAX_NODES_PER_ROOT, FREQ_FILTER));
+                            maxDepth, AnalysisService.MAX_NODES, FREQ_FILTER));
                     written.add(entry.getFileName());
                     entry.setStats(result.getStats());
 
@@ -211,6 +218,8 @@ public class BatchAnalyzeService {
             job.update(BatchAnalyzeStatus.State.DONE, 100,
                     "✓ 完成！成功 " + (entries.size() - failed) + " 个，失败 " + failed + " 个",
                     entries.size(), entries.size());
+            // 成功完成的 Job 也记录结束时间：此前只有失败记 doneAt，导致成功 Job 永远不被清理
+            job.doneAt = System.currentTimeMillis();
             log.info("[批量分析] 完成 entries={}, failed={}, totalNodes={}, duration={}ms",
                     entries.size(), failed, combined.getTotalNodes(), combined.getDurationMs());
         } catch (Exception e) {
@@ -290,5 +299,28 @@ public class BatchAnalyzeService {
             if (j.doneAt == 0) return false; // 还在跑
             return now - j.doneAt > JOB_TTL_MS;
         });
+        // 上限兜底：超过 MAX_JOBS 时淘汰最旧的"已结束"任务（正在跑的保留），保证 Job 表有界
+        int overflow = jobs.size() - MAX_JOBS;
+        if (overflow > 0) {
+            jobs.entrySet().stream()
+                    .filter(e -> e.getValue().doneAt > 0)
+                    .sorted(Comparator.comparingLong(e -> e.getValue().doneAt))
+                    .limit(overflow)
+                    .forEach(e -> jobs.remove(e.getKey(), e.getValue()));
+        }
+    }
+
+    /** 应用关闭时优雅关闭异步执行器：先 shutdown，等待收尾，超时再 shutdownNow。 */
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

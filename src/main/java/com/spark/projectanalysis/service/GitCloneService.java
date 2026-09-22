@@ -1,18 +1,24 @@
 package com.spark.projectanalysis.service;
 
 import com.jcraft.jsch.Session;
+import com.spark.projectanalysis.util.CredentialRedactor;
 import com.spark.projectanalysis.service.dto.GitRefs;
 import com.spark.projectanalysis.service.dto.GitSwitchResult;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
 import org.eclipse.jgit.api.CloneCommand;
 import org.eclipse.jgit.api.Git;
+import org.eclipse.jgit.storage.file.FileBasedConfig;
+import org.eclipse.jgit.util.FS;
 import org.eclipse.jgit.transport.JschConfigSessionFactory;
 import org.eclipse.jgit.transport.OpenSshConfig;
 import org.eclipse.jgit.transport.SshTransport;
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -24,6 +30,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -40,6 +47,8 @@ import java.util.regex.Pattern;
  */
 @Service
 public class GitCloneService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitCloneService.class);
 
     /** 每次 clone/pull 时通过 ThreadLocal 注入的进度回调 */
     private final ThreadLocal<java.util.function.BiConsumer<Integer, String>> progressCb = new ThreadLocal<>();
@@ -126,6 +135,33 @@ public class GitCloneService {
             rs.setHint(e.getMessage());
         }
         return rs;
+    }
+
+    /**
+     * 读取工作区当前所在的引用（纯本地 git 命令，无网络、无需认证）。
+     *
+     * @return {引用名, 类型}；类型为 BRANCH / TAG / DETACHED / UNKNOWN，无法确定时引用名为空串
+     */
+    public String[] currentRef(Path repoDir) {
+        try {
+            String branch = git(new String[]{"-C", repoDir.toString(), "symbolic-ref", "--short", "HEAD"}).trim();
+            if (!branch.isEmpty()) return new String[]{branch, "BRANCH"};
+        } catch (Exception ignored) {
+            // detached HEAD
+        }
+        try {
+            String tag = git(new String[]{"-C", repoDir.toString(), "describe", "--tags", "--exact-match", "HEAD"}).trim();
+            if (!tag.isEmpty()) return new String[]{tag, "TAG"};
+        } catch (Exception ignored) {
+            // 不在某个 Tag 上
+        }
+        try {
+            String sha = git(new String[]{"-C", repoDir.toString(), "rev-parse", "--short", "HEAD"}).trim();
+            if (!sha.isEmpty()) return new String[]{sha, "DETACHED"};
+        } catch (Exception ignored) {
+            // 空仓库
+        }
+        return new String[]{"", "UNKNOWN"};
     }
 
     /**
@@ -323,8 +359,14 @@ public class GitCloneService {
             cmd.setCredentialsProvider(new UsernamePasswordCredentialsProvider(user, token.trim()));
         }
 
-        // 3) StrictHostKeyChecking=no 兜底（万一转换失败 / 内网 GitLab 必须 SSH）
+        // 3) 传输层回调：任何传输（https / ssh / 本地）打开时都会触发。
+        //    OPT-16（CVE-2023-4759）：core.symlinks=false 必须早于 checkout 生效。
+        //    CloneCommand.call() 的顺序是 verifyDirectories → fetch（此处打开传输、触发本回调）
+        //    → checkout，因此在 fetch 阶段把该配置落盘，随后 DirCacheCheckout 读到的即为 false，
+        //    首次克隆的 checkout 也不会在启用符号链接的状态下执行。
+        //    （对比：若写在 cmd.call() 之后，checkout 已经完成，保护不到主向量。）
         cmd.setTransportConfigCallback(transport -> {
+            disableSymlinks(targetDir);
             if (transport instanceof SshTransport) {
                 SshTransport ssh = (SshTransport) transport;
                 ssh.setSshSessionFactory(new JschConfigSessionFactory() {
@@ -337,8 +379,32 @@ public class GitCloneService {
             }
         });
 
-        try (Git ignored = cmd.call()) {
-            // try-with-resources 关闭仓库句柄
+        // 克隆与检出都在 call() 内完成；core.symlinks=false 已在上面回调中（checkout 之前）落盘。
+        try (Git git = cmd.call()) {
+            // 句柄仅用于确保仓库资源被释放，无需再做后置处理。
+        }
+    }
+
+    /**
+     * OPT-16：在 checkout 之前把 {@code core.symlinks=false} 写入 {@code <targetDir>/.git/config}，
+     * 规避 CVE-2023-4759（在大小写不敏感文件系统上经符号链接 checkout 导致的攻击）。
+     * <p>
+     * 由 {@link CloneCommand} 的传输回调在 fetch 阶段调用，早于同一次 {@code call()} 内的
+     * checkout；JGit 的仓库配置会在读取时按文件快照自动重载，因此该值对随后的
+     * {@code DirCacheCheckout} 立即可见。
+     */
+    private static void disableSymlinks(Path targetDir) {
+        try {
+            File cfgFile = targetDir.resolve(".git").resolve("config").toFile();
+            if (!cfgFile.isFile()) {
+                return;
+            }
+            FileBasedConfig cfg = new FileBasedConfig(cfgFile, FS.DETECTED);
+            cfg.load();
+            cfg.setBoolean("core", null, "symlinks", false);
+            cfg.save();
+        } catch (Exception e) {
+            log.warn("[OPT-16] 写入 core.symlinks=false 失败: {}", e.getMessage());
         }
     }
 
@@ -389,7 +455,7 @@ public class GitCloneService {
                         authedUrl, safeBranch(branch)}, originalUrl);
                 if (output.toLowerCase().contains("fatal")) {
                     // git pull 非零退出码已在 git() 抛出；这里兜底处理输出里含 fatal 但进程成功的情况
-                    throw new IOException("增量拉取失败：\n" + output.trim());
+                    throw new IOException("增量拉取失败：\n" + CredentialRedactor.redact(output.trim()));
                 }
                 return; // 成功
             } catch (IOException e) {
@@ -431,7 +497,7 @@ public class GitCloneService {
                 if (output.toLowerCase().contains("fatal")
                         && repoDir.toFile().listFiles() == null) {
                     deleteQuietly(repoDir);
-                    throw new IOException("克隆失败：\n" + output.trim());
+                    throw new IOException("克隆失败：\n" + CredentialRedactor.redact(output.trim()));
                 }
                 return; // 成功
             } catch (IOException e) {
@@ -509,6 +575,12 @@ public class GitCloneService {
         return git(args, url, progressCb.get());
     }
 
+    /** 本机 git 命令超时（分钟）：git 卡死（网络挂起 / 认证阻塞）不再永久阻塞调用线程（OPT-26）。 */
+    private static final long GIT_TIMEOUT_MINUTES = 10L;
+
+    /** 进程结束/被强杀后，等待输出采集线程收尾的最长时间（毫秒）。 */
+    private static final long GIT_PUMP_JOIN_MS = 2000L;
+
     /** 执行本机 git 命令；url 非空时注入代理；progressCallback 非空时实时回调 git 输出中的进度。 */
     private String git(String[] args, String url, java.util.function.BiConsumer<Integer, String> progressCallback)
             throws IOException, InterruptedException {
@@ -531,32 +603,51 @@ public class GitCloneService {
         pb.redirectErrorStream(true);
         Process p = pb.start();
 
+        // stdout/stderr 采集（逻辑与原实现一致）放到独立采集线程：git 卡死时从流上读取会长时间阻塞，
+        // 若与 waitFor 同处一个线程，带超时的 waitFor 将永远执行不到。分离后下面的超时才能真正生效（OPT-26）。
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
-        byte[] chunk = new byte[8192];
-        StringBuilder lineBuf = new StringBuilder();  // 用于实时解析进度
-        int n;
-        try (java.io.InputStream in = p.getInputStream()) {
-            while ((n = in.read(chunk)) != -1) {
-                buf.write(chunk, 0, n);
-                if (progressCallback != null) {
-                    // 实时解析：git 进度用 \r 分隔，stderr 里可能是逐字节来的
-                    String piece = new String(chunk, 0, n, StandardCharsets.UTF_8);
-                    for (char c : piece.toCharArray()) {
-                        if (c == '\r' || c == '\n') {
-                            String line = lineBuf.toString().trim();
-                            lineBuf.setLength(0);
-                            if (!line.isEmpty()) parseAndReportProgress(line, progressCallback);
-                        } else {
-                            lineBuf.append(c);
+        Thread pump = new Thread(() -> {
+            byte[] chunk = new byte[8192];
+            StringBuilder lineBuf = new StringBuilder();  // 用于实时解析进度
+            int n;
+            try (java.io.InputStream in = p.getInputStream()) {
+                while ((n = in.read(chunk)) != -1) {
+                    buf.write(chunk, 0, n);
+                    if (progressCallback != null) {
+                        // 实时解析：git 进度用 \r 分隔，stderr 里可能是逐字节来的
+                        String piece = new String(chunk, 0, n, StandardCharsets.UTF_8);
+                        for (char c : piece.toCharArray()) {
+                            if (c == '\r' || c == '\n') {
+                                String line = lineBuf.toString().trim();
+                                lineBuf.setLength(0);
+                                if (!line.isEmpty()) parseAndReportProgress(line, progressCallback);
+                            } else {
+                                lineBuf.append(c);
+                            }
                         }
                     }
                 }
+            } catch (IOException ignore) {
+                // 进程被强制终止时流会中断，采集线程随之退出即可
             }
+        }, "git-stdout-pump");
+        pump.setDaemon(true);
+        pump.start();
+
+        boolean finished = p.waitFor(GIT_TIMEOUT_MINUTES, TimeUnit.MINUTES);
+        if (!finished) {
+            p.destroyForcibly();
+            pump.join(GIT_PUMP_JOIN_MS);
+            throw new IOException("git 命令执行超时（超过 " + GIT_TIMEOUT_MINUTES + " 分钟未结束），已强制终止：git "
+                    + String.join(" ", args));
         }
-        int code = p.waitFor();
+        pump.join();  // 进程已结束，等采集线程把剩余输出读完，保证 buf 完整
+        int code = p.exitValue();
         String output = new String(buf.toByteArray(), StandardCharsets.UTF_8);
         if (code != 0) {
-            throw new IOException((output.trim() + "\n(退出码 " + code + ")").trim());
+            // 脱敏：git 报错输出里常带 authed URL（含 token），禁止回显到异常信息（OPT-10）
+            throw new IOException(CredentialRedactor.redact(
+                    (output.trim() + "\n(退出码 " + code + ")").trim()));
         }
         return output;
     }

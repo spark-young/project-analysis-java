@@ -5,12 +5,13 @@ import com.spark.projectanalysis.service.dto.GitSwitchResult;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
 import com.spark.projectanalysis.service.dto.SwitchRequest;
 import com.spark.projectanalysis.service.dto.SwitchStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PreDestroy;
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,6 +23,8 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -36,6 +39,8 @@ import java.util.stream.Stream;
  */
 @Service
 public class GitRefService {
+
+    private static final Logger log = LoggerFactory.getLogger(GitRefService.class);
 
     private final GitCloneService gitCloneService;
     private final MavenCompileService mavenCompileService;
@@ -66,6 +71,8 @@ public class GitRefService {
         volatile String refType;
         volatile boolean stashed;
         volatile boolean conflict;
+        /** 重新编译时 mvn 的实时输出，供前端滚动展示 */
+        final JobLogBuffer compileLog = new JobLogBuffer();
         long createdAt;
         long doneAt;
     }
@@ -195,7 +202,7 @@ public class GitRefService {
             job.status = "COMPILING";
             job.progress = 82;
             job.step = "正在重新编译...";
-            String err = recompile(gitRoot);
+            String err = recompile(gitRoot, job.compileLog::add);
             if (err != null) {
                 job.status = "FAILED";
                 job.message = "已切换但重新编译失败：\n" + err;
@@ -223,17 +230,19 @@ public class GitRefService {
      * 切换后重新编译，保证分析产物与源码一致。
      * 从 Git 根目录重新探测工程类型（注册表里的 projectPath 可能是子目录）。
      *
+     * @param onLine 编译输出逐行回调（可为 null），用于前端实时展示
      * @return null 表示成功；非空为失败输出
      */
-    private String recompile(Path gitRoot) throws IOException {
+    private String recompile(Path gitRoot, Consumer<String> onLine) throws IOException {
         // 1) Maven：根目录或嵌套子目录存在 pom.xml
         Path mavenDir = findPomDir(gitRoot);
         if (mavenDir != null) {
-            MavenCompileService.CompileResult r = mavenCompileService.compile(mavenDir);
+            MavenCompileService.CompileResult r = mavenCompileService.compile(mavenDir, onLine);
             return r.isSuccess() ? null : r.getOutputTail();
         }
         // 2) 普通 Java 源码 → javac 覆盖 build/
         if (hasJavaSources(gitRoot)) {
+            if (onLine != null) onLine.accept("检测到普通 Java 源码工程，正在用 javac 编译...");
             Path buildRoot = gitRoot.resolve("build");
             Files.createDirectories(buildRoot);
             JavacCompileService.CompileResult r = javacCompileService.compile(gitRoot, buildRoot);
@@ -299,51 +308,31 @@ public class GitRefService {
     }
 
     /**
-     * 识别当前检出引用。
+     * 识别当前检出引用（委托 GitCloneService，避免与 GitPrepareService 各写一套）。
      *
      * @return [refName, refType]，refType ∈ BRANCH / TAG / DETACHED / UNKNOWN
      */
     String[] detectCurrentRef(Path gitRoot) {
-        try {
-            String branch = localGit(gitRoot, "symbolic-ref", "--short", "HEAD");
-            if (branch != null && !branch.isEmpty()) return new String[]{branch, "BRANCH"};
-        } catch (Exception ignored) {
-            // detached HEAD
-        }
-        try {
-            String tag = localGit(gitRoot, "describe", "--tags", "--exact-match", "HEAD");
-            if (tag != null && !tag.isEmpty()) return new String[]{tag, "TAG"};
-        } catch (Exception ignored) {
-            // 不在某个 Tag 上
-        }
-        try {
-            String sha = localGit(gitRoot, "rev-parse", "--short", "HEAD");
-            if (sha != null && !sha.isEmpty()) return new String[]{sha, "DETACHED"};
-        } catch (Exception ignored) {
-            // 空仓库
-        }
-        return new String[]{null, "UNKNOWN"};
+        return gitCloneService.currentRef(gitRoot);
     }
 
-    /** 执行本地 git 命令（无网络、无认证需求），非零退出码抛异常。 */
-    private String localGit(Path dir, String... args) throws IOException, InterruptedException {
-        List<String> cmd = new ArrayList<>();
-        cmd.add("git");
-        cmd.add("-C");
-        cmd.add(dir.toString());
-        for (String a : args) cmd.add(a);
-        ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String out;
-        try (InputStream in = p.getInputStream()) {
-            out = new String(in.readAllBytes(), StandardCharsets.UTF_8).trim();
+    /**
+     * 探测并回写当前引用，供历史记录补齐（早期导入的项目没记 currentRef）。
+     * 探测失败/未变化时不做任何写入；不抛异常，不阻断打开项目。
+     */
+    public void refreshCurrentRef(ProjectRegistry.RegisteredProject p) {
+        try {
+            Path gitRoot = findGitRoot(Paths.get(p.projectPath));
+            if (gitRoot == null) return;
+            String[] cur = detectCurrentRef(gitRoot);
+            if (cur[0] == null || cur[0].isEmpty()) return;
+            if (cur[0].equals(p.currentRef) && cur[1].equals(p.currentRefType)) return;
+            p.currentRef = cur[0];
+            p.currentRefType = cur[1];
+            registry.save(p);
+        } catch (Exception e) {
+            log.warn("[Git] 探测当前引用失败 {}: {}", p.projectPath, e.getMessage());
         }
-        int code = p.waitFor();
-        if (code != 0) {
-            throw new IOException((out + "\n(退出码 " + code + ")").trim());
-        }
-        return out;
     }
 
     private ProjectRegistry.RegisteredProject requireGitProject(String projectId) {
@@ -381,6 +370,7 @@ public class GitRefService {
         s.setRefType(job.refType);
         s.setStashed(job.stashed);
         s.setConflict(job.conflict);
+        s.setCompileLog(job.compileLog.snapshot());
         return s;
     }
 
@@ -394,5 +384,19 @@ public class GitRefService {
             }
         }
         return sb.toString();
+    }
+
+    /** 应用关闭时优雅关闭异步执行器：先 shutdown，等待收尾，超时再 shutdownNow。 */
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

@@ -8,6 +8,7 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -133,8 +134,56 @@ public final class ClasspathResolver {
     // 目录布局
     // ------------------------------------------------------------------
 
+    /** 构建产物目录名：Maven 的 target、Gradle 的 build */
+    private static final Set<String> BUILD_OUTPUT_NAMES = Set.of("target", "build");
+
+    /** 构建文件：有其一即认为该目录是真实工程根 */
+    private static final String[] BUILD_FILES = {"pom.xml", "build.gradle", "build.gradle.kts"};
+
+    /**
+     * 若 dir 位于构建产物目录内（自身或近 3 层祖先名为 target/build），
+     * 向上找最近的含构建文件的祖先目录作为真实工程根；找不到则返回 null（保持原行为）。
+     * 例：D:\code\my-project\target\classes → D:\code\my-project
+     */
+    private static Path resolveBuildRoot(Path dir) {
+        if (!insideBuildOutput(dir)) return null;
+        Path p = dir;
+        for (int i = 0; i < 5 && p != null; i++, p = p.getParent()) {
+            for (String f : BUILD_FILES) {
+                if (Files.isRegularFile(p.resolve(f))) return p;
+            }
+        }
+        return null;
+    }
+
+    private static boolean insideBuildOutput(Path dir) {
+        Path p = dir;
+        for (int i = 0; i < 3 && p != null; i++, p = p.getParent()) {
+            Path name = p.getFileName();
+            if (name != null && BUILD_OUTPUT_NAMES.contains(name.toString().toLowerCase())) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 把用户填的路径归一到真实工程根，用于项目注册（避免把 "target" 当成项目名/项目路径）：
+     * jar 等文件原样返回；构建产物目录（target/build 及其子目录）返回向上找到的工程根；其余目录原样返回。
+     */
+    public static Path projectRootOf(Path path) {
+        if (path == null || !Files.isDirectory(path)) return path;
+        Path root = resolveBuildRoot(path);
+        return root != null ? root : path;
+    }
+
     private static ProjectLayout resolveDirectory(Path dir, Path mavenRepo, List<String> warnings)
             throws IOException {
+        // 用户可能直接指向构建产物目录（如 <工程>/target 或 <工程>/target/classes）。
+        // 只要向上能找到构建文件，就以真实工程根目录为准：项目名是工程名，依赖也能按 pom 正确解析。
+        Path buildRoot = resolveBuildRoot(dir);
+        if (buildRoot != null && !buildRoot.equals(dir)) {
+            return resolveDirectory(buildRoot, mavenRepo, warnings);
+        }
+
         String projectName = dir.getFileName() != null ? dir.getFileName().toString() : dir.toString();
 
         // Maven（单模块 / 多模块聚合）：收集全部模块的 target/classes，依赖取各 pom 并集
@@ -186,8 +235,8 @@ public final class ClasspathResolver {
         }
 
         throw new IllegalArgumentException(
-                "未识别的项目布局（未找到 target/classes、build/classes、classes+lib 或 .class 文件）: " + dir
-                        + "。请先编译项目（如 mvn compile）或提供 jar。");
+                "该项目还没有编译产物，无法分析。本工具不编译本地项目：请在工程根目录（含 target 的那一层）执行 mvn compile"
+                        + "（多模块会一起编译）后再导入；也可改为直接导入已编译好的 jar 文件。 目录：" + dir);
     }
 
     /** 递归收集 Maven 各模块的 target/classes（不深入 target 内部，跳过 .git/.svn 等） */

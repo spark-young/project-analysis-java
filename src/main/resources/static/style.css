@@ -436,7 +436,8 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     font-weight: 700;
     font-size: 13px;
 }
-.mf-item:nth-child(-n+3) .mf-rank { background: #fee2e2; color: #b91c1c; }
+/* 前三名高亮：按名次判定（而非 :nth-child），分页后仍是全局前三名 */
+.mf-item.mf-top3 .mf-rank { background: #fee2e2; color: #b91c1c; }
 
 /* 方法名主体，右上角徽标 */
 .mf-body {
@@ -524,6 +525,31 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     color: var(--text-dim);
     padding: 12px 4px;
 }
+
+/* 频次列表翻页器（OPT-19 前端分页） */
+.freq-pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+.freq-pager-btn {
+    padding: 4px 12px;
+    font-size: 12px;
+    font-family: inherit;
+    color: #334155;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: color .12s, border-color .12s, background .12s;
+}
+.freq-pager-btn:hover:not(:disabled) { color: #2563eb; border-color: #bfdbfe; background: #eff6ff; }
+.freq-pager-btn:disabled { color: #cbd5e1; cursor: not-allowed; background: #f8fafc; }
+.freq-pager-info { font-size: 12px; color: var(--text-dim); }
 
 .warnings {
     margin-bottom: 12px;
@@ -2040,6 +2066,91 @@ input:focus, select:focus { outline: 2px solid #bfdbfe; border-color: var(--prim
     font-size: 14px;
     font-weight: 600;
     color: #334155;
+}
+/* 分步进度：步骤清单 */
+.loading-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 320px;
+    max-width: 420px;
+}
+.loading-step {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 13px;
+    color: #94a3b8;
+    line-height: 1.5;
+}
+.loading-step .ls-dot {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #e2e8f0;
+    position: relative;
+    top: -1px;
+}
+.loading-step .ls-name { flex: 1; }
+.loading-step .ls-note {
+    flex: none;
+    max-width: 180px;
+    font-size: 12px;
+    color: #94a3b8;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.loading-step.active { color: #0f172a; font-weight: 600; }
+.loading-step.active .ls-dot {
+    background: #0ea5e9;
+    box-shadow: 0 0 0 4px rgba(14, 165, 233, .18);
+    animation: loadingPulse 1.2s ease-in-out infinite;
+}
+.loading-step.active .ls-note { color: #0284c7; }
+.loading-step.done { color: #64748b; }
+.loading-step.done .ls-dot { background: #22c55e; }
+.loading-step.error { color: #b91c1c; font-weight: 600; }
+.loading-step.error .ls-dot { background: #ef4444; }
+@keyframes loadingPulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(14, 165, 233, .12); }
+    50% { box-shadow: 0 0 0 6px rgba(14, 165, 233, .28); }
+}
+/* 进度条 */
+.loading-bar-wrap {
+    width: 320px;
+    height: 6px;
+    border-radius: 999px;
+    background: #e2e8f0;
+    overflow: hidden;
+}
+.loading-bar {
+    width: 0;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #0ea5e9, #22c55e);
+    transition: width .35s ease;
+}
+.loading-elapsed {
+    font-size: 12px;
+    color: #64748b;
+}
+/* 任务日志框：进度条下方的编译输出（保持较矮，可滚动，自动跟随最新一行） */
+.job-log {
+    margin-top: 8px;
+    max-height: 132px;
+    overflow-y: auto;
+    padding: 8px 10px;
+    background: #0f172a;
+    color: #cbd5e1;
+    border-radius: 8px;
+    font-family: Consolas, Menlo, Monaco, monospace;
+    font-size: 11.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
 }
 .toast.hide {
     animation: toastOut .25s ease-in forwards;

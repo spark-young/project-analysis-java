@@ -15,7 +15,6 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -66,7 +65,7 @@ public class ScanStrategyService {
     /** 项目级策略文件路径 */
     public static Path projectFile(String projectPath) {
         if (projectPath == null || projectPath.isEmpty()) return null;
-        return Paths.get(projectPath, ".callgraph", FILE_NAME);
+        return CallgraphPaths.projectDataDir(projectPath).resolve(FILE_NAME);
     }
 
     /** 从文件加载全局策略；文件不存在则生成内置方案并保存 */

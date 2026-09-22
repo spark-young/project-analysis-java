@@ -29,6 +29,12 @@ class GitPrepareServiceTest {
             this.compiledDir = projectDir;
             return fail ? CompileResult.failure("模拟编译失败") : CompileResult.success();
         }
+
+        // 生产代码走的是带日志回调的重载；桩必须一并覆写，否则会绕过桩真的去跑 mvn
+        @Override
+        public CompileResult compile(Path projectDir, java.util.function.Consumer<String> onLine) {
+            return compile(projectDir);
+        }
     }
 
     /** javac 编译桩：可记录收到的源码目录，可模拟成功/失败 */
@@ -76,7 +82,8 @@ class GitPrepareServiceTest {
     }
 
     private GitPrepareService service(StubCompileService stub, StubJavacService javac) {
-        return new GitPrepareService(new GitCloneService(), stub, javac, new ProjectRegistry(), temp.toString());
+        return new GitPrepareService(new GitCloneService(), stub, javac, new ProjectRegistry(),
+                temp.toString(), "always", java.util.Collections.emptyList());
     }
 
     private GitPrepareStatus awaitTerminal(GitPrepareService svc, String jobId) throws InterruptedException {
@@ -104,6 +111,12 @@ class GitPrepareServiceTest {
                 "克隆的项目应就位");
         assertEquals(done.getProjectPath(), stub.compiledDir.toString(), "编译步骤应收到克隆目录");
         assertEquals("remote", done.getProjectName(), "项目名应取仓库末段并去掉 .git");
+        // 导入时要把当前分支/Tag 落进注册表，否则分析视图「当前版本」只有占位符
+        ProjectRegistry.RegisteredProject saved = new ProjectRegistry().getByPath(done.getProjectPath());
+        assertNotNull(saved, "克隆后应自动注册到项目注册表");
+        assertNotNull(saved.currentRef, "应记录当前分支/Tag");
+        assertFalse(saved.currentRef.isEmpty(), "currentRef 不应为空");
+        assertEquals("BRANCH", saved.currentRefType, "克隆默认落在分支上");
     }
 
     @Test

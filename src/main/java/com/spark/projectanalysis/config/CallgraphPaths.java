@@ -101,4 +101,22 @@ public final class CallgraphPaths {
     public static Path workspacesDir() {
         return getHome().resolve("workspaces");
     }
+
+    /**
+     * 项目级数据目录（.callgraph）：缓存、入口清单、项目级规则/扫描策略都放这里。
+     *
+     * - 目录型项目：<项目>/.callgraph
+     * - jar 型项目（本工具支持直接把 fat jar 当项目分析）：
+     *   <jar 所在目录>/<jar 文件名>.callgraph
+     *   jar 是文件，不能在它内部建目录；加上文件名后缀也避免同目录多个 jar 互相覆盖。
+     *
+     * 注意：本方法只负责算路径，不负责创建。
+     */
+    public static Path projectDataDir(String projectPath) {
+        Path p = Paths.get(projectPath);
+        if (Files.isRegularFile(p)) {
+            return Paths.get(p.toString() + DIR_NAME);
+        }
+        return p.resolve(DIR_NAME);
+    }
 }

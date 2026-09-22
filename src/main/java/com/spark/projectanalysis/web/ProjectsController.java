@@ -1,18 +1,23 @@
 package com.spark.projectanalysis.web;
 
+import com.spark.projectanalysis.engine.ClasspathResolver;
 import com.spark.projectanalysis.service.AnalysisException;
 import com.spark.projectanalysis.service.AnalysisCacheService;
-import com.spark.projectanalysis.service.AnalysisService;
+import com.spark.projectanalysis.service.ClassMetadataService;
+import com.spark.projectanalysis.service.CompileOrchestrationService;
 import com.spark.projectanalysis.service.EntryListService;
 import com.spark.projectanalysis.service.GitCloneService;
 import com.spark.projectanalysis.service.GitRefService;
 import com.spark.projectanalysis.service.ProjectRegistry;
 import com.spark.projectanalysis.service.ProjectRegistry.RegisteredProject;
 import com.spark.projectanalysis.service.dto.AnalysisResult;
+import com.spark.projectanalysis.service.dto.CacheFileResponse;
 import com.spark.projectanalysis.service.dto.EntryList;
+import com.spark.projectanalysis.service.dto.EntryOkResponse;
 import com.spark.projectanalysis.service.dto.GitRefs;
 import com.spark.projectanalysis.service.dto.ProjectInfo;
 import com.spark.projectanalysis.service.dto.RemoteStatus;
+import com.spark.projectanalysis.service.dto.SingleCacheResponse;
 import com.spark.projectanalysis.service.dto.SwitchRequest;
 import com.spark.projectanalysis.service.dto.SwitchStatus;
 import org.slf4j.Logger;
@@ -21,13 +26,23 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.HashMap;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Stream;
 
 /**
@@ -39,22 +54,39 @@ public class ProjectsController {
 
     private static final Logger log = LoggerFactory.getLogger(ProjectsController.class);
 
+    // ============ 项目变更状态（changeStatus）—— 前端契约 ============
+    // app.js 按这些字面量判断渲染，序列化进 JSON 的值必须逐字不变；
+    // 统一在此持有以消除散落的字符串字面量与拼写风险（OPT-31）。
+    /** 磁盘目录已被移除 */
+    private static final String STATUS_MISSING = "MISSING";
+    /** 无编译产物 / 源码比编译产物新，需重新编译 */
+    private static final String STATUS_NEEDS_COMPILE = "NEEDS_COMPILE";
+    /** 已编译但尚未分析 */
+    private static final String STATUS_NEEDS_ANALYZE = "NEEDS_ANALYZE";
+    /** 一切就绪 */
+    private static final String STATUS_UP_TO_DATE = "UP_TO_DATE";
+    /** 状态检测失败 */
+    private static final String STATUS_ERROR = "ERROR";
+
     private final ProjectRegistry registry;
-    private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final AnalysisCacheService cacheService;
     private final EntryListService entryListService;
     private final GitCloneService gitCloneService;
     private final GitRefService gitRefService;
+    private final CompileOrchestrationService compileOrchestrationService;
 
-    public ProjectsController(ProjectRegistry registry, AnalysisService analysisService,
+    public ProjectsController(ProjectRegistry registry, ClassMetadataService classMetadataService,
                               AnalysisCacheService cacheService, EntryListService entryListService,
-                              GitCloneService gitCloneService, GitRefService gitRefService) {
+                              GitCloneService gitCloneService, GitRefService gitRefService,
+                              CompileOrchestrationService compileOrchestrationService) {
         this.registry = registry;
-        this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.cacheService = cacheService;
         this.entryListService = entryListService;
         this.gitCloneService = gitCloneService;
         this.gitRefService = gitRefService;
+        this.compileOrchestrationService = compileOrchestrationService;
     }
 
     /** 列出所有项目，并附加实时检测的状态 */
@@ -68,6 +100,51 @@ public class ProjectsController {
     }
 
     /**
+     * 状态检测结果缓存：状态检测要遍历编译产物与源码树，很贵。
+     * 这里做短 TTL 缓存（20s），并在打开/注册/删除项目时主动失效。
+     */
+    private static final long STATUS_TTL_MS = 20_000L;
+    private final Map<String, CachedStatus> statusCache = new ConcurrentHashMap<>();
+
+    /** 缓存的状态快照 */
+    private static final class CachedStatus {
+        final boolean existsOnDisk;
+        final boolean compiled;
+        final boolean analyzed;
+        final String changeStatus;
+        final String changeHint;
+        final long expireAt;
+
+        CachedStatus(RegisteredProject p) {
+            this.existsOnDisk = p.existsOnDisk;
+            this.compiled = p.compiled;
+            this.analyzed = p.analyzed;
+            this.changeStatus = p.changeStatus;
+            this.changeHint = p.changeHint;
+            this.expireAt = System.currentTimeMillis() + STATUS_TTL_MS;
+        }
+    }
+
+    private void invalidateStatusCache(String projectPath) {
+        if (projectPath != null) statusCache.remove(projectPath);
+    }
+
+    /** 先查缓存，未命中再实际检测 */
+    private void fillRuntimeStatus(RegisteredProject p) {
+        CachedStatus c = p.projectPath == null ? null : statusCache.get(p.projectPath);
+        if (c != null && c.expireAt > System.currentTimeMillis()) {
+            p.existsOnDisk = c.existsOnDisk;
+            p.compiled = c.compiled;
+            p.analyzed = c.analyzed;
+            p.changeStatus = c.changeStatus;
+            p.changeHint = c.changeHint;
+            return;
+        }
+        computeRuntimeStatus(p);
+        if (p.projectPath != null) statusCache.put(p.projectPath, new CachedStatus(p));
+    }
+
+    /**
      * 为每个项目填充运行时状态（@JsonIgnore 字段不持久化）。
      * 检测规则（按优先级）：
      *   1. 磁盘目录不存在    → MISSING        （用户删了项目目录）
@@ -76,118 +153,83 @@ public class ProjectsController {
      *   4. 源码比 .class 新  → NEEDS_COMPILE   （源码改了没重新编译）
      *   5. 都 OK             → UP_TO_DATE      （一切就绪）
      */
-    private void fillRuntimeStatus(RegisteredProject p) {
+    private void computeRuntimeStatus(RegisteredProject p) {
         try {
             Path root = Paths.get(p.projectPath);
-            p.existsOnDisk = Files.isDirectory(root);
+            // jar 型项目（直接把 fat jar 当项目分析）也是有效的：路径是文件而非目录
+            boolean isJarProject = Files.isRegularFile(root);
+            p.existsOnDisk = isJarProject || Files.isDirectory(root);
             p.analyzed = cacheService.hasAnyCache(p.projectPath);
 
             if (!p.existsOnDisk) {
-                p.changeStatus = "MISSING";
+                p.changeStatus = STATUS_MISSING;
                 p.changeHint = "磁盘目录已被移除，请重新导入";
                 p.compiled = false;
                 return;
             }
 
+            // jar 型项目本身已是编译产物，无需再检测 target/classes
+            if (isJarProject) {
+                p.compiled = true;
+                p.changeStatus = p.analyzed ? STATUS_UP_TO_DATE : STATUS_NEEDS_ANALYZE;
+                p.changeHint = p.analyzed ? "✓ 已就绪" : "未执行过分析，进入项目后点击\"开始分析\"";
+                return;
+            }
+
             // 检查是否有编译产物
-            Path artifact = findArtifactDir(root);
+            Path artifact = compileOrchestrationService.findExistingArtifacts(root);
             p.compiled = (artifact != null);
 
             log.info("[状态] {}: artifactDir={}, compiled={}, analyzed={}",
                     p.name, artifact, p.compiled, p.analyzed);
 
             if (!p.compiled) {
-                p.changeStatus = "NEEDS_COMPILE";
-                p.changeHint = "未编译，进入项目后将自动编译";
+                p.changeStatus = STATUS_NEEDS_COMPILE;
+                p.changeHint = "GIT".equals(p.type)
+                        ? "未找到编译产物，重新导入或切换版本会自动 mvn 编译"
+                        : "未找到编译产物：本工具不编译本地项目，请先自行编译（如 mvn compile），或直接导入 target/classes、jar";
                 return;
             }
 
             // 编译产物 vs 源码：对比 mtime，看源码是否比 .class 新
-            long newestClassMtime = newestMtime(artifact, ".class");
-            long oldestClassMtime = oldestMtime(artifact, ".class");
+            long newestClassMtime = newestMtime(artifact);
             long newestSourceMtime = newestSourceMtime(root);
 
-            log.info("[状态] {}: newestClass={}, oldestClass={}, newestSource={}, diff={}ms",
-                    p.name, newestClassMtime, oldestClassMtime, newestSourceMtime,
+            log.info("[状态] {}: newestClass={}, newestSource={}, diff={}ms",
+                    p.name, newestClassMtime, newestSourceMtime,
                     (newestSourceMtime - newestClassMtime));
 
             // 容忍阈值：5 分钟内的 mtime 差异视为同时（Windows/Git 文件系统精度问题）
             // 只有源码比 .class 晚超过 5 分钟，才认为"真的修改过没重新编译"
             if (newestSourceMtime > newestClassMtime + 5 * 60 * 1000L) {
                 // 源码修改时间晚于编译产物 → 需要重新编译
-                p.changeStatus = "NEEDS_COMPILE";
-                p.changeHint = "源码已修改，需重新编译（点击\"重新分析\"）";
-                return;
-            }
-
-            if (oldestClassMtime == 0) {
-                // 编译目录存在但里面没 .class 文件
-                p.changeStatus = "NEEDS_COMPILE";
-                p.changeHint = "编译产物为空，需重新编译";
+                p.changeStatus = STATUS_NEEDS_COMPILE;
+                p.changeHint = "GIT".equals(p.type)
+                        ? "源码比编译产物新，切换版本会自动重新编译"
+                        : "源码比编译产物新，请自行重新编译后再分析";
                 return;
             }
 
             if (!p.analyzed) {
-                p.changeStatus = "NEEDS_ANALYZE";
+                p.changeStatus = STATUS_NEEDS_ANALYZE;
                 p.changeHint = "未执行过分析，进入项目后点击\"开始分析\"";
                 return;
             }
 
-            p.changeStatus = "UP_TO_DATE";
+            p.changeStatus = STATUS_UP_TO_DATE;
             p.changeHint = "✓ 已就绪";
 
         } catch (Exception e) {
-            p.changeStatus = "ERROR";
+            p.changeStatus = STATUS_ERROR;
             p.changeHint = "状态检测失败: " + e.getMessage();
         }
     }
 
-    /** 查找编译产物目录：目录存在且内部有 .class 文件才认为有效 */
-    private Path findArtifactDir(Path root) {
-        // 优先顺序：标准 Maven/Gradle 目录 → Eclipse bin/ → 嵌套查找
-        Path[] candidates = new Path[] {
-                root.resolve("target").resolve("classes"),
-                root.resolve("build").resolve("classes"),
-                root.resolve("bin"),                           // Eclipse 默认输出
-                root.resolve("build")                          // javac 输出根目录
-        };
-        for (Path c : candidates) {
-            if (Files.isDirectory(c) && hasClassFiles(c)) {
-                return c;
-            }
-        }
-        // 嵌套一层兜底
-        try (Stream<Path> walk = Files.walk(root, 3)) {
-            return walk.filter(Files::isDirectory)
-                    .filter(p -> {
-                        String s = p.toString().replace('\\', '/');
-                        return s.endsWith("/target/classes") || s.endsWith("/build/classes")
-                                || s.endsWith("/out/production");
-                    })
-                    .filter(this::hasClassFiles)
-                    .findFirst().orElse(null);
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    /** 目录或子目录下是否有 .class 文件 */
-    private boolean hasClassFiles(Path dir) {
-        try (Stream<Path> walk = Files.walk(dir, 50)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName() != null
-                            && p.getFileName().toString().endsWith(".class"))
-                    .findFirst().isPresent();
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
     /** 目录下最新 .class 文件的 mtime */
-    private long newestMtime(Path dir, String suffix) {
+    private long newestMtime(Path dir) {
         try (Stream<Path> walk = Files.walk(dir, 50)) {
             return walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName() != null && p.getFileName().toString().endsWith(suffix))
+                    .filter(p -> p.getFileName() != null && p.getFileName().toString().endsWith(".class"))
                     .mapToLong(p -> {
                         try { return Files.getLastModifiedTime(p).toMillis(); }
                         catch (Exception e) { return 0L; }
@@ -198,49 +240,54 @@ public class ProjectsController {
         }
     }
 
-    /** 目录下最旧 .class 文件的 mtime（判断是否为空） */
-    private long oldestMtime(Path dir, String suffix) {
-        try (Stream<Path> walk = Files.walk(dir, 50)) {
-            return walk.filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName() != null && p.getFileName().toString().endsWith(suffix))
-                    .mapToLong(p -> {
-                        try { return Files.getLastModifiedTime(p).toMillis(); }
-                        catch (Exception e) { return Long.MAX_VALUE; }
-                    })
-                    .min().orElse(0L);
-        } catch (Exception e) {
-            return 0L;
-        }
-    }
+    /** 源码树遍历时跳过的目录：编译产物、版本库、依赖与 IDE 元数据 */
+    private static final Set<String> SKIP_DIRS = new HashSet<>(Arrays.asList(
+            ".git", ".svn", ".hg", "target", "build", "out", "bin", "dist",
+            "node_modules", ".idea", ".settings", ".gradle", ".callgraph", "logs"));
 
-    /** 项目下最新源码文件的 mtime（.java + pom.xml + build.gradle） */
+    /** 项目下最新源码文件的 mtime（.java + pom.xml + build.gradle），跳过编译产物与版本库目录 */
     private long newestSourceMtime(Path root) {
-        long max = 0;
+        long init = 0;
         try {
             // pom.xml / build.gradle
             for (String name : new String[]{"pom.xml", "build.gradle", "build.gradle.kts"}) {
                 Path p = root.resolve(name);
                 if (Files.isRegularFile(p)) {
-                    max = Math.max(max, Files.getLastModifiedTime(p).toMillis());
+                    init = Math.max(init, Files.getLastModifiedTime(p).toMillis());
                 }
-            }
-            // .java 文件（深度 100）
-            try (Stream<Path> walk = Files.walk(root, 100)) {
-                max = Math.max(max, walk.filter(Files::isRegularFile)
-                        .filter(p -> {
-                            String n = p.getFileName() == null ? "" : p.getFileName().toString();
-                            return n.endsWith(".java") || n.endsWith(".kt");
-                        })
-                        .mapToLong(p -> {
-                            try { return Files.getLastModifiedTime(p).toMillis(); }
-                            catch (Exception e) { return 0L; }
-                        })
-                        .max().orElse(0L));
             }
         } catch (Exception e) {
             // ignore
         }
-        return max;
+        final long[] max = {init};
+        try {
+            Files.walkFileTree(root, EnumSet.noneOf(FileVisitOption.class), 100, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (!dir.equals(root) && SKIP_DIRS.contains(dir.getFileName().toString())) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    String n = file.getFileName() == null ? "" : file.getFileName().toString();
+                    if (n.endsWith(".java") || n.endsWith(".kt")) {
+                        max[0] = Math.max(max[0], attrs.lastModifiedTime().toMillis());
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFileFailed(Path file, IOException exc) {
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (Exception e) {
+            // ignore
+        }
+        return max[0];
     }
 
     /** 注册本地项目（直接加进列表，不做编译） */
@@ -249,23 +296,33 @@ public class ProjectsController {
         if (req.path == null || req.path.isEmpty()) {
             throw new AnalysisException(HttpStatus.BAD_REQUEST, "请填写项目路径");
         }
+        // 归一化：用户可能填的是构建产物目录（.../target 或 .../target/classes），
+        // 统一存成工程根，项目名才是真实工程名，缓存也不会落在会被 mvn clean 清掉的 target 里。
+        String path = req.path;
+        try {
+            path = ClasspathResolver.projectRootOf(Paths.get(req.path)).toString();
+        } catch (InvalidPathException ignore) {
+            // 路径非法时保持原样，交给下面 projectInfo 统一报 400
+        }
+
         ProjectInfo info;
         try {
-            info = analysisService.projectInfo(req.path);
+            info = classMetadataService.projectInfo(path);
         } catch (Exception e) {
             throw new AnalysisException(HttpStatus.BAD_REQUEST, "无法识别该路径为有效 Java 项目：" + e.getMessage());
         }
-        RegisteredProject existing = registry.getByPath(req.path);
+        RegisteredProject existing = registry.getByPath(path);
         if (existing != null) {
             existing.lastOpenedAt = System.currentTimeMillis();
             registry.save(existing);
+            invalidateStatusCache(existing.projectPath);
             return existing;
         }
         RegisteredProject p = new RegisteredProject();
         p.id = UUID.randomUUID().toString();
         p.name = req.name != null && !req.name.isEmpty() ? req.name : info.getName();
         p.type = "LOCAL";
-        p.projectPath = req.path;
+        p.projectPath = path;
         p.createdAt = System.currentTimeMillis();
         p.lastOpenedAt = p.createdAt;
         return registry.save(p);
@@ -278,6 +335,12 @@ public class ProjectsController {
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
         p.lastOpenedAt = System.currentTimeMillis();
         registry.save(p);
+        // 进入项目时让状态缓存失效，避免卡片状态滞后
+        invalidateStatusCache(p.projectPath);
+        // Git 项目：历史记录里可能没记当前分支/Tag（早期导入），这里补齐后再返回给前端
+        if ("GIT".equals(p.type) && (p.currentRef == null || p.currentRef.isEmpty())) {
+            gitRefService.refreshCurrentRef(p);
+        }
         return p;
     }
 
@@ -342,8 +405,8 @@ public class ProjectsController {
     // --------------------------------------------------------------
 
     @PostMapping("/{id}/cache/save-single")
-    public Map<String, Object> saveSingleCache(@PathVariable String id,
-                                                 @RequestBody Map<String, Object> body) {
+    public EntryOkResponse saveSingleCache(@PathVariable String id,
+                                           @RequestBody Map<String, Object> body) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
@@ -354,13 +417,13 @@ public class ProjectsController {
         int count = entryList.getConfirmed().size();
         cacheService.saveSingle(p.projectPath, result, hash, count);
 
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("ok", true);
+        EntryOkResponse resp = new EntryOkResponse();
+        resp.setOk(true);
         return resp;
     }
 
     @GetMapping("/{id}/cache/load-single")
-    public Map<String, Object> loadSingleCache(@PathVariable String id) {
+    public SingleCacheResponse loadSingleCache(@PathVariable String id) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
@@ -368,11 +431,11 @@ public class ProjectsController {
         int currentEntryCount = entryList.getConfirmed().size();
 
         Map<String, Object> cached = cacheService.loadSingle(p.projectPath);
-        Map<String, Object> resp = new HashMap<>();
-        resp.put("currentEntryCount", currentEntryCount);
+        SingleCacheResponse resp = new SingleCacheResponse();
+        resp.setCurrentEntryCount(currentEntryCount);
 
         if (cached == null) {
-            resp.put("hasCache", false);
+            resp.setHasCache(false);
             return resp;
         }
         // 算当前清单的 hash，让前端判断是否过期
@@ -380,38 +443,40 @@ public class ProjectsController {
         String cachedHash = (String) cached.get("entryListHash");
         boolean dirty = !currentHash.equals(cachedHash);
 
-        resp.put("hasCache", true);
-        resp.put("dirty", dirty);
-        resp.put("cachedEntryCount", cached.get("entryCount"));
-        resp.put("analyzedAt", cached.get("analyzedAt"));
-        resp.put("result", cached.get("result"));
+        resp.setHasCache(true);
+        resp.setDirty(dirty);
+        resp.setCachedEntryCount((Integer) cached.get("entryCount"));
+        resp.setAnalyzedAt(((Number) cached.get("analyzedAt")).longValue());
+        resp.setResult(cached.get("result"));
         return resp;
     }
 
     /** 按缓存文件名加载单个入口的完整分析结果（批量分析展开某入口时用） */
     @GetMapping("/{id}/cache/load-file")
-    public Map<String, Object> loadCacheFile(@PathVariable String id,
-                                             @RequestParam("file") String fileName) {
+    public CacheFileResponse loadCacheFile(@PathVariable String id,
+                                           @RequestParam("file") String fileName) {
         RegisteredProject p = registry.get(id);
         if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
 
         java.util.Optional<AnalysisResult> r = cacheService.loadByFileName(p.projectPath, fileName);
-        Map<String, Object> resp = new HashMap<>();
+        CacheFileResponse resp = new CacheFileResponse();
         if (r.isEmpty()) {
-            resp.put("ok", false);
-            resp.put("error", "缓存文件不存在或已过期: " + fileName);
+            resp.setOk(false);
+            resp.setError("缓存文件不存在或已过期: " + fileName);
             return resp;
         }
-        resp.put("ok", true);
-        resp.put("result", r.get());
+        resp.setOk(true);
+        resp.setResult(r.get());
         return resp;
     }
 
     /** 删除项目（只从注册表移除，不删除磁盘上的工作目录） */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable String id) {
-        if (registry.get(id) == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
+        RegisteredProject p = registry.get(id);
+        if (p == null) throw new AnalysisException(HttpStatus.NOT_FOUND, "项目不存在");
         registry.delete(id);
+        invalidateStatusCache(p.projectPath);
         return ResponseEntity.noContent().build();
     }
 

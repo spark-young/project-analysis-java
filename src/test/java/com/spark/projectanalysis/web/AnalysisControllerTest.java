@@ -117,16 +117,6 @@ class AnalysisControllerTest {
     }
 
     @Test
-    void test_defaults_returnsSelfDemo() throws Exception {
-        mvc.perform(get("/api/defaults"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.className")
-                        .value("com.spark.projectanalysis.service.AnalysisService"))
-                .andExpect(jsonPath("$.methodName").value("analyze"))
-                .andExpect(jsonPath("$.projectPath").isNotEmpty());
-    }
-
-    @Test
     void test_projectInfo() throws Exception {
         mvc.perform(get("/api/project/info").param("path", demoClasses.toString()))
                 .andExpect(status().isOk())
@@ -162,41 +152,8 @@ class AnalysisControllerTest {
     }
 
     // ------------------------------------------------------------------
-    // 入口扫描 + 多入口分析
+    // 多入口分析
     // ------------------------------------------------------------------
-
-    private String scanBody(String path) {
-        return "{\"projectPath\":\"" + escapeWindows(path) + "\"}";
-    }
-
-    @Test
-    void test_scanEntries_groupedByType() throws Exception {
-        mvc.perform(post("/api/scan/entries").contentType(MediaType.APPLICATION_JSON)
-                        .content(scanBody(entriesClasses.toString())))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.groups.length()").value(4))
-                .andExpect(jsonPath("$.groups[0].type").value("REST"))
-                .andExpect(jsonPath("$.groups[0].label").value("REST 接口"))
-                .andExpect(jsonPath("$.groups[0].entries.length()").value(3))
-                .andExpect(jsonPath("$.groups[0].entries[0].className").value("com.demo.OrderController"))
-                .andExpect(jsonPath("$.groups[1].type").value("DUBBO"))
-                .andExpect(jsonPath("$.groups[1].entries.length()").value(2))
-                .andExpect(jsonPath("$.groups[1].entries[0].className").value("com.demo.PayRpcImpl"))
-                .andExpect(jsonPath("$.groups[2].type").value("ELASTIC_JOB"))
-                .andExpect(jsonPath("$.groups[2].entries.length()").value(1))
-                .andExpect(jsonPath("$.groups[2].entries[0].className").value("com.demo.OrderSyncJob"))
-                .andExpect(jsonPath("$.groups[3].type").value("MAIN"))
-                .andExpect(jsonPath("$.groups[3].entries.length()").value(1))
-                .andExpect(jsonPath("$.groups[3].entries[0].className").value("com.demo.Launcher"));
-    }
-
-    @Test
-    void test_scanEntries_badPath_rejected() throws Exception {
-        mvc.perform(post("/api/scan/entries").contentType(MediaType.APPLICATION_JSON)
-                        .content(scanBody("X:/no/such/dir")))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error").exists());
-    }
 
     @Test
     void test_analyzeSelectedEntries_multiRoots() throws Exception {
@@ -229,5 +186,205 @@ class AnalysisControllerTest {
         assertEquals('P', body[0]);
         assertEquals('K', body[1]);
         assertTrue(body.length > 1000, "Excel 应有实际内容");
+    }
+
+    // ------------------------------------------------------------------
+    // 全局异常处理（OPT-11）
+    // ------------------------------------------------------------------
+
+    @Test
+    void test_malformedJson_returns400() throws Exception {
+        mvc.perform(post("/api/analyze").contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"bad\": json }"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").exists());
+    }
+
+    @Test
+    void test_unsupportedMethod_returns405() throws Exception {
+        // /api/analyze 仅接受 POST；发 GET 应返回 405
+        mvc.perform(get("/api/analyze"))
+                .andExpect(status().isMethodNotAllowed());
+    }
+
+    // ------------------------------------------------------------------
+    // 批量分析启动（OPT-28 切片5：Map → BatchJobStartResponse DTO 化）
+    // ------------------------------------------------------------------
+
+    /** 形状锁：响应只有 jobId 一个字段（前端 app.js:5042 消费 const { jobId }） */
+    @Test
+    void test_analyzeBatch_returnsJobIdOnly() throws Exception {
+        String entriesBody = "{\"projectPath\":\"" + escapeWindows(entriesClasses.toString()) + "\",\"entries\":["
+                + "{\"className\":\"com.demo.Launcher\",\"methodName\":\"main\"}"
+                + "]}";
+        MvcResult result = mvc.perform(post("/api/analyze/batch")
+                        .contentType(MediaType.APPLICATION_JSON).content(entriesBody))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.jobId").isString())
+                .andReturn();
+        String json = result.getResponse().getContentAsString();
+        assertTrue(json.matches("\\{\"jobId\":\"[^\"]+\"\\}"),
+                "响应形状应为 {\"jobId\":\"...\"}: " + json);
+    }
+
+    // ------------------------------------------------------------------
+    // GET /api/classes/verify（OPT-28 切片1：Map → EntryVerifyResult DTO 化，
+    // 以下断言为 JSON 形状契约锁：字段名/出现条件与 Map 版本逐字一致）
+    // ------------------------------------------------------------------
+
+    /** 类名为空：ok=false, reason=类名不能为空，其余字段不应出现（non_null 省略 = 原 Map 无该键） */
+    @Test
+    void test_verify_blankClassName() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", " "))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("类名不能为空"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 类不存在：ok=false, reason 前缀固定，无附加字段 */
+    @Test
+    void test_verify_classNotFound() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.nosuch.Foo"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("项目中未找到类: com.nosuch.Foo"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 简单名重复（entries 夹具 2 个 Service）：ok=false + candidates（2 项全限定名，顺序不敏感） */
+    @Test
+    void test_verify_duplicateSimpleName_returnsCandidates() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", entriesClasses.toString())
+                        .param("class", "Service"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason")
+                        .value("找到 2 个同名类，请填全限定名"))
+                .andExpect(jsonPath("$.candidates.length()").value(2))
+                .andExpect(jsonPath("$.candidates", org.hamcrest.Matchers.hasItem(
+                        "com.alibaba.dubbo.config.annotation.Service")))
+                .andExpect(jsonPath("$.candidates", org.hamcrest.Matchers.hasItem(
+                        "org.apache.dubbo.config.annotation.Service")))
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 类存在、未传 method：ok=true + reason=类存在: xxx，无其他字段 */
+    @Test
+    void test_verify_classOnly() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason").value("类存在: com.demo.OrderService"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 方法不存在：ok=false + available 列出可选方法名（去重后集合，顺序不敏感） */
+    @Test
+    void test_verify_methodNotFound_returnsAvailable() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "noSuchMethod"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason").value("类存在但方法 noSuchMethod 不存在"))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("place")))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("pay")))
+                .andExpect(jsonPath("$.available", org.hamcrest.Matchers.hasItem("loop")))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 唯一重载：ok=true + descriptor 给出建议值，无 multipleOverloads */
+    @Test
+    void test_verify_uniqueOverload_returnsDescriptor() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "place"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 已匹配唯一重载，建议 descriptor: ()V"))
+                .andExpect(jsonPath("$.descriptor").value("()V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** 多重载：ok=true + multipleOverloads 共 2 个 descriptor，无 descriptor 字段 */
+    @Test
+    void test_verify_multipleOverloads() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 方法存在但有 2 个重载，建议指定 descriptor 精确匹配"))
+                .andExpect(jsonPath("$.multipleOverloads.length()").value(2))
+                .andExpect(jsonPath("$.multipleOverloads", org.hamcrest.Matchers.hasItem(
+                        "(Ljava/lang/String;)V")))
+                .andExpect(jsonPath("$.multipleOverloads", org.hamcrest.Matchers.hasItem("(I)V")))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist());
+    }
+
+    /** class+method+descriptor 完整匹配：ok=true, reason 前缀 ✓ 完整匹配 */
+    @Test
+    void test_verify_exactDescriptorMatch() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay")
+                        .param("descriptor", "(I)V"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(true))
+                .andExpect(jsonPath("$.reason")
+                        .value("✓ 完整匹配: com.demo.OrderService#pay(I)V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
+    }
+
+    /** descriptor 不匹配：ok=false, reason=类存在，但未找到方法 ...，无附加字段 */
+    @Test
+    void test_verify_descriptorMismatch() throws Exception {
+        mvc.perform(get("/api/classes/verify")
+                        .param("path", demoClasses.toString())
+                        .param("class", "com.demo.OrderService")
+                        .param("method", "pay")
+                        .param("descriptor", "(Z)V"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.ok").value(false))
+                .andExpect(jsonPath("$.reason")
+                        .value("类存在，但未找到方法 pay(Z)V"))
+                .andExpect(jsonPath("$.candidates").doesNotExist())
+                .andExpect(jsonPath("$.available").doesNotExist())
+                .andExpect(jsonPath("$.descriptor").doesNotExist())
+                .andExpect(jsonPath("$.multipleOverloads").doesNotExist());
     }
 }

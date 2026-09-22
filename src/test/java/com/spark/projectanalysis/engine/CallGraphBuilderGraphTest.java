@@ -99,6 +99,29 @@ class CallGraphBuilderGraphTest {
 
     static boolean hasSelfEdge(CallGraph g, int id) { return hasEdge(g, id, id); }
 
+    /**
+     * OPT-12 回归：将 indexOfMethod/markCycle 的 O(N) 线性扫描换成 nodeIndex 后，
+     * 节点表与边表规模必须与原 O(N²) 实现逐字节一致；两次独立构建也必须确定且一致。
+     */
+    @Test
+    void test_nodeAndEdgeCounts_stableAfterIndexOptimization() {
+        CallGraph g1 = place();
+        CallGraph g2 = new CallGraphBuilder(registry)
+                .buildGraph(MethodKey.of("com/demo/OrderService", "place", "()V"), 20, 100000);
+
+        // 两次独立构建必须确定且一致
+        assertEquals(g1.getMethods().size(), g2.getMethods().size(), "节点数应在两次构建间保持一致");
+        assertEquals(g1.getEdges().size(), g2.getEdges().size(), "边数应在两次构建间保持一致");
+
+        // 基线规模（与引入 nodeIndex 前一致；改为 O(1) 不应改变任何产出）
+        assertEquals(PLACE_NODE_COUNT, g1.getMethods().size(), "节点数基线");
+        assertEquals(PLACE_EDGE_COUNT, g1.getEdges().size(), "边数基线");
+    }
+
+    /** 由 mvn test 校准的 place() 图基线规模（OPT-12 优化前后必须一致） */
+    private static final int PLACE_NODE_COUNT = 15;
+    private static final int PLACE_EDGE_COUNT = 21;
+
     // ---------- 用例 ----------
 
     @Test

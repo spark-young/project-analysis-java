@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import javax.annotation.PreDestroy;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 入口扫描编排：构建注册表（复用缓存）→ 运行全部探测器 → 按类型分组。
@@ -42,7 +44,7 @@ public class EntryScanService {
     /** Job TTL（毫秒）：完成/失败后保留 5 分钟 */
     private static final long JOB_TTL_MS = 5 * 60 * 1000L;
 
-    private final AnalysisService analysisService;
+    private final ClassMetadataService classMetadataService;
     private final List<EntryPointDetector> detectors;
     private final ScanStrategyService strategyService;
 
@@ -55,9 +57,9 @@ public class EntryScanService {
         return t;
     });
 
-    public EntryScanService(AnalysisService analysisService, List<EntryPointDetector> detectors,
+    public EntryScanService(ClassMetadataService classMetadataService, List<EntryPointDetector> detectors,
                             ScanStrategyService strategyService) {
-        this.analysisService = analysisService;
+        this.classMetadataService = classMetadataService;
         this.detectors = detectors;
         this.strategyService = strategyService;
     }
@@ -110,7 +112,8 @@ public class EntryScanService {
         Job job = new Job("sync", projectPath);
         runScan(job, profile);
         if (job.error != null) {
-            throw new AnalysisException(HttpStatus.INTERNAL_SERVER_ERROR, job.error);
+            // 状态码由失败点决定：入参问题（空路径/路径不存在）是 400，内部异常才是 500
+            throw new AnalysisException(job.errorStatus, job.error);
         }
         return job.result;
     }
@@ -129,11 +132,11 @@ public class EntryScanService {
         try {
             // 0-5%：校验
             if (job.projectPath == null || job.projectPath.trim().isEmpty()) {
-                job.fail("项目路径不能为空");
+                job.fail("项目路径不能为空", HttpStatus.BAD_REQUEST);
                 return;
             }
             if (!Files.exists(Paths.get(job.projectPath.trim()))) {
-                job.fail("项目路径不存在: " + job.projectPath);
+                job.fail("项目路径不存在: " + job.projectPath, HttpStatus.BAD_REQUEST);
                 return;
             }
             String path = job.projectPath.trim();
@@ -142,7 +145,7 @@ public class EntryScanService {
 
             // 5-85%：注册表构建（Builder 回调每个 entry，真实渐增）
             // phase 0→10%, phase 1→20%, phase 2→20~80% 按 entry 比例, phase 3→85%
-            AnalysisService.RegistryHandle handle = analysisService.registryFor(path, new AnalysisService.ProgressCallback() {
+            ClassMetadataService.RegistryHandle handle = classMetadataService.registryFor(path, new ClassMetadataService.ProgressCallback() {
                 @Override
                 public void accept(int phase, int done, int total, String desc) {
                     switch (phase) {
@@ -236,6 +239,8 @@ public class EntryScanService {
         volatile String step = "排队中...";
         volatile EntryScanResult result;
         volatile String error;
+        /** 失败对应的 HTTP 状态码；默认 500，入参类失败（空路径/路径不存在）置为 400 */
+        volatile HttpStatus errorStatus = HttpStatus.INTERNAL_SERVER_ERROR;
         final long createdAt = System.currentTimeMillis();
         volatile long doneAt = 0;
 
@@ -248,6 +253,11 @@ public class EntryScanService {
             this.state = s;
             this.progress = Math.min(100, Math.max(0, p));
             this.step = step;
+        }
+
+        void fail(String err, HttpStatus status) {
+            this.errorStatus = status == null ? HttpStatus.INTERNAL_SERVER_ERROR : status;
+            fail(err);
         }
 
         void fail(String err) {
@@ -294,5 +304,19 @@ public class EntryScanService {
             if (d.type().equals(type)) return d.label();
         }
         return type;
+    }
+
+    /** 应用关闭时优雅关闭异步执行器：先 shutdown，等待收尾，超时再 shutdownNow。 */
+    @PreDestroy
+    public void shutdown() {
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
